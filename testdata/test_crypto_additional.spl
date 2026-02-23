@@ -1,0 +1,39 @@
+let ok = true;
+
+if (hash("sha256", "abc") != "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad") { ok = false; }
+if (len(hmac("sha256", "key", "abc")) != 64) { ok = false; }
+
+let b64 = base64_encode("hello");
+if (base64_decode(b64) != "hello") { ok = false; }
+
+let hx = hex_encode("hello");
+if (hex_decode(hx) != "hello") { ok = false; }
+
+let encodedUrl = url_encode("a b+c");
+if (url_decode(encodedUrl) != "a b+c") { ok = false; }
+
+let key = "0123456789abcdef";
+let cipher = encrypt("aes_gcm", key, "secret");
+let plain = decrypt("aes_gcm", key, cipher);
+if (plain != "secret") { ok = false; }
+
+let pwdHash = password_hash("s3cr3t");
+if (password_verify("s3cr3t", pwdHash) != true) { ok = false; }
+if (password_verify("bad", pwdHash) != false) { ok = false; }
+
+let api = api_key("sk", 16);
+if (starts_with(api, "sk_") != true) { ok = false; }
+
+if (len(random_bytes(16)) <= 0) { ok = false; }
+if (len(random_string(12, "abc123")) != 12) { ok = false; }
+if (len(uuid_v4()) != 36) { ok = false; }
+
+let js = json_encode({"a": 1, "b": "x"});
+if (contains(js, "\"a\"") != true) { ok = false; }
+let obj = json_decode("{\"a\":1,\"b\":\"x\"}");
+if (obj["a"] != 1 || obj["b"] != "x") { ok = false; }
+
+if (constant_time_eq("abc", "abc") != true) { ok = false; }
+if (constant_time_eq("abc", "abx") != false) { ok = false; }
+
+ok;
