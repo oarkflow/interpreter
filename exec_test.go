@@ -1,6 +1,7 @@
 package interpreter
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -113,8 +114,20 @@ func TestExecStructData(t *testing.T) {
 	// Verify Int access
 	script2 := `cfg.Port`
 	res2, err := Exec(script2, data)
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	if res2.(*Integer).Value != 8080 {
 		t.Errorf("Expected 8080, got %d", res2.(*Integer).Value)
+	}
+}
+
+func TestExecReturnsRuntimeError(t *testing.T) {
+	_, err := Exec(`unknown_fn(1);`, nil)
+	if err == nil {
+		t.Fatalf("expected runtime error, got nil")
+	}
+	if !strings.Contains(err.Error(), "identifier not found") {
+		t.Fatalf("unexpected runtime error: %v", err)
 	}
 }

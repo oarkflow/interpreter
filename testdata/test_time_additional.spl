@@ -15,4 +15,4 @@ if (now() <= 0) { ok = false; }
 if (time_ms() <= 0) { ok = false; }
 if (len(now_iso()) < 20) { ok = false; }
 
-print ok;
+ok;

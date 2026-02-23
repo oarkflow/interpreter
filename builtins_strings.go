@@ -349,6 +349,161 @@ var stringBuiltins = map[string]*Builtin{
 			return &Array{Elements: out}
 		},
 	},
+	"regex_match": {
+		Fn: func(args ...Object) Object {
+			if len(args) != 2 {
+				return &String{Value: fmt.Sprintf("wrong number of arguments. got=%d, want=2", len(args))}
+			}
+			s, errObj := asString(args[0], "s")
+			if errObj != nil {
+				return errObj
+			}
+			pattern, errObj := asString(args[1], "pattern")
+			if errObj != nil {
+				return errObj
+			}
+			re, err := regexp.Compile(pattern)
+			if err != nil {
+				return newError("%s", err)
+			}
+			return nativeBoolToBooleanObject(re.MatchString(s))
+		},
+	},
+	"regex_replace": {
+		Fn: func(args ...Object) Object {
+			if len(args) != 3 {
+				return &String{Value: fmt.Sprintf("wrong number of arguments. got=%d, want=3", len(args))}
+			}
+			s, errObj := asString(args[0], "s")
+			if errObj != nil {
+				return errObj
+			}
+			pattern, errObj := asString(args[1], "pattern")
+			if errObj != nil {
+				return errObj
+			}
+			replacement, errObj := asString(args[2], "replacement")
+			if errObj != nil {
+				return errObj
+			}
+			re, err := regexp.Compile(pattern)
+			if err != nil {
+				return newError("%s", err)
+			}
+			return &String{Value: re.ReplaceAllString(s, replacement)}
+		},
+	},
+	"trim_prefix": {
+		Fn: func(args ...Object) Object {
+			if len(args) != 2 {
+				return &String{Value: fmt.Sprintf("wrong number of arguments. got=%d, want=2", len(args))}
+			}
+			s, errObj := asString(args[0], "s")
+			if errObj != nil {
+				return errObj
+			}
+			prefix, errObj := asString(args[1], "prefix")
+			if errObj != nil {
+				return errObj
+			}
+			return &String{Value: strings.TrimPrefix(s, prefix)}
+		},
+	},
+	"trim_suffix": {
+		Fn: func(args ...Object) Object {
+			if len(args) != 2 {
+				return &String{Value: fmt.Sprintf("wrong number of arguments. got=%d, want=2", len(args))}
+			}
+			s, errObj := asString(args[0], "s")
+			if errObj != nil {
+				return errObj
+			}
+			suffix, errObj := asString(args[1], "suffix")
+			if errObj != nil {
+				return errObj
+			}
+			return &String{Value: strings.TrimSuffix(s, suffix)}
+		},
+	},
+	"pad_left": {
+		Fn: func(args ...Object) Object {
+			if len(args) < 2 || len(args) > 3 {
+				return &String{Value: fmt.Sprintf("wrong number of arguments. got=%d, want=2 or 3", len(args))}
+			}
+			s, errObj := asString(args[0], "s")
+			if errObj != nil {
+				return errObj
+			}
+			width, errObj := asInt(args[1], "width")
+			if errObj != nil {
+				return errObj
+			}
+			pad := " "
+			if len(args) == 3 {
+				pad, errObj = asString(args[2], "pad")
+				if errObj != nil {
+					return errObj
+				}
+			}
+			if width < 0 {
+				return newError("width must be >= 0")
+			}
+			if pad == "" {
+				return newError("pad must not be empty")
+			}
+			runes := []rune(s)
+			if int64(len(runes)) >= width {
+				return &String{Value: s}
+			}
+			padRunes := []rune(pad)
+			need := int(width) - len(runes)
+			out := make([]rune, 0, int(width))
+			for i := 0; i < need; i++ {
+				out = append(out, padRunes[i%len(padRunes)])
+			}
+			out = append(out, runes...)
+			return &String{Value: string(out)}
+		},
+	},
+	"pad_right": {
+		Fn: func(args ...Object) Object {
+			if len(args) < 2 || len(args) > 3 {
+				return &String{Value: fmt.Sprintf("wrong number of arguments. got=%d, want=2 or 3", len(args))}
+			}
+			s, errObj := asString(args[0], "s")
+			if errObj != nil {
+				return errObj
+			}
+			width, errObj := asInt(args[1], "width")
+			if errObj != nil {
+				return errObj
+			}
+			pad := " "
+			if len(args) == 3 {
+				pad, errObj = asString(args[2], "pad")
+				if errObj != nil {
+					return errObj
+				}
+			}
+			if width < 0 {
+				return newError("width must be >= 0")
+			}
+			if pad == "" {
+				return newError("pad must not be empty")
+			}
+			runes := []rune(s)
+			if int64(len(runes)) >= width {
+				return &String{Value: s}
+			}
+			padRunes := []rune(pad)
+			out := make([]rune, 0, int(width))
+			out = append(out, runes...)
+			for len(out) < int(width) {
+				out = append(out, padRunes[(len(out)-len(runes))%len(padRunes)])
+			}
+			return &String{Value: string(out[:int(width)])}
+		},
+	},
 }
 
 func init() {

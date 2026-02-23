@@ -35,6 +35,10 @@ func sumArrayValues(arr *Array) (Object, Object) {
 	return &Float{Value: totalFloat}, nil
 }
 
+func stableObjectKey(obj Object) string {
+	return obj.Type().String() + "::" + obj.Inspect()
+}
+
 var collectionBuiltins = map[string]*Builtin{
 	"first": {
 		Fn: func(args ...Object) Object {
@@ -297,6 +301,82 @@ var collectionBuiltins = map[string]*Builtin{
 				}
 			}
 			return &Hash{Pairs: out}
+		},
+	},
+	"any": {
+		Fn: func(args ...Object) Object {
+			if len(args) != 1 {
+				return &String{Value: fmt.Sprintf("wrong number of arguments. got=%d, want=1", len(args))}
+			}
+			if args[0].Type() != ARRAY_OBJ {
+				return &String{Value: fmt.Sprintf("argument to `any` must be ARRAY, got %s", args[0].Type())}
+			}
+			arr := args[0].(*Array)
+			for _, el := range arr.Elements {
+				if isTruthy(el) {
+					return TRUE
+				}
+			}
+			return FALSE
+		},
+	},
+	"all": {
+		Fn: func(args ...Object) Object {
+			if len(args) != 1 {
+				return &String{Value: fmt.Sprintf("wrong number of arguments. got=%d, want=1", len(args))}
+			}
+			if args[0].Type() != ARRAY_OBJ {
+				return &String{Value: fmt.Sprintf("argument to `all` must be ARRAY, got %s", args[0].Type())}
+			}
+			arr := args[0].(*Array)
+			for _, el := range arr.Elements {
+				if !isTruthy(el) {
+					return FALSE
+				}
+			}
+			return TRUE
+		},
+	},
+	"group_by": {
+		Fn: func(args ...Object) Object {
+			if len(args) != 2 {
+				return &String{Value: fmt.Sprintf("wrong number of arguments. got=%d, want=2", len(args))}
+			}
+			if args[0].Type() != ARRAY_OBJ {
+				return &String{Value: fmt.Sprintf("first argument to `group_by` must be ARRAY, got %s", args[0].Type())}
+			}
+			keyName, errObj := asString(args[1], "key")
+			if errObj != nil {
+				return errObj
+			}
+
+			arr := args[0].(*Array)
+			grouped := make(map[HashKey]HashPair)
+			for _, el := range arr.Elements {
+				var groupKeyObj Object = NULL
+				if h, ok := el.(*Hash); ok {
+					key := &String{Value: keyName}
+					if pair, exists := h.Pairs[key.HashKey()]; exists {
+						groupKeyObj = pair.Value
+					}
+				}
+
+				// Stringify non-hashable keys to keep grouping robust.
+				if _, ok := groupKeyObj.(Hashable); !ok {
+					groupKeyObj = &String{Value: stableObjectKey(groupKeyObj)}
+				}
+				hashableKey := groupKeyObj.(Hashable)
+				hk := hashableKey.HashKey()
+				current, exists := grouped[hk]
+				if !exists {
+					current = HashPair{Key: groupKeyObj, Value: &Array{Elements: []Object{}}}
+				}
+				bucket := current.Value.(*Array)
+				bucket.Elements = append(bucket.Elements, el)
+				grouped[hk] = HashPair{Key: current.Key, Value: bucket}
+			}
+
+			return &Hash{Pairs: grouped}
 		},
 	},
 	"clamp": {

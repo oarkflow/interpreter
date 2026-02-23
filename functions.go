@@ -112,14 +112,14 @@ func objectToNative(obj Object) interface{} {
 
 func asString(arg Object, name string) (string, Object) {
 	if arg.Type() != STRING_OBJ {
-		return "", &String{Value: fmt.Sprintf("argument `%s` must be STRING, got %s", name, arg.Type())}
+		return "", newError("argument `%s` must be STRING, got %s", name, arg.Type())
 	}
 	return arg.(*String).Value, nil
 }
 
 func asInt(arg Object, name string) (int64, Object) {
 	if arg.Type() != INTEGER_OBJ {
-		return 0, &String{Value: fmt.Sprintf("argument `%s` must be INTEGER, got %s", name, arg.Type())}
+		return 0, newError("argument `%s` must be INTEGER, got %s", name, arg.Type())
 	}
 	return arg.(*Integer).Value, nil
 }
@@ -128,11 +128,78 @@ func toStringSlice(arr *Array) ([]string, Object) {
 	out := make([]string, len(arr.Elements))
 	for i, el := range arr.Elements {
 		if el.Type() != STRING_OBJ {
-			return nil, &String{Value: fmt.Sprintf("array element at index %d must be STRING, got %s", i, el.Type())}
+			return nil, newError("array element at index %d must be STRING, got %s", i, el.Type())
 		}
 		out[i] = el.(*String).Value
 	}
 	return out, nil
+}
+
+func toIntObject(arg Object) Object {
+	switch v := arg.(type) {
+	case *Integer:
+		return v
+	case *Float:
+		return &Integer{Value: int64(v.Value)}
+	case *String:
+		val, err := strconv.ParseInt(v.Value, 10, 64)
+		if err != nil {
+			return newError("could not convert %q to int", v.Value)
+		}
+		return &Integer{Value: val}
+	case *Boolean:
+		if v.Value {
+			return &Integer{Value: 1}
+		}
+		return &Integer{Value: 0}
+	default:
+		return newError("cannot convert %s to int", arg.Type())
+	}
+}
+
+func toFloatObject(arg Object) Object {
+	switch v := arg.(type) {
+	case *Float:
+		return v
+	case *Integer:
+		return &Float{Value: float64(v.Value)}
+	case *String:
+		val, err := strconv.ParseFloat(v.Value, 64)
+		if err != nil {
+			return newError("could not convert %q to float", v.Value)
+		}
+		return &Float{Value: val}
+	case *Boolean:
+		if v.Value {
+			return &Float{Value: 1}
+		}
+		return &Float{Value: 0}
+	default:
+		return newError("cannot convert %s to float", arg.Type())
+	}
+}
+
+func toBoolObject(arg Object) Object {
+	switch v := arg.(type) {
+	case *Boolean:
+		return v
+	case *Integer:
+		return nativeBoolToBooleanObject(v.Value != 0)
+	case *Float:
+		return nativeBoolToBooleanObject(v.Value != 0)
+	case *String:
+		s := strings.TrimSpace(strings.ToLower(v.Value))
+		switch s {
+		case "true", "1", "yes", "y", "on":
+			return TRUE
+		case "false", "0", "no", "n", "off", "":
+			return FALSE
+		default:
+			return newError("could not parse %q as bool", v.Value)
+		}
+	default:
+		return newError("cannot convert %s to bool", arg.Type())
+	}
 }
 
 func parseJSONToObject(input string) (Object, error) {
@@ -580,23 +647,15 @@ var builtins = map[string]*Builtin{
 			if len(args) != 1 {
 				return &String{Value: fmt.Sprintf("wrong number of arguments. got=%d, want=1", len(args))}
 			}
-			switch arg := args[0].(type) {
-			case *Integer:
-				return arg
-			case *String:
-				val, err := strconv.ParseInt(arg.Value, 10, 64)
-				if err != nil {
-					return &String{Value: fmt.Sprintf("ERROR: could not convert %q to int", arg.Value)}
-				}
-				return &Integer{Value: val}
-			case *Boolean:
-				if arg.Value {
-					return &Integer{Value: 1}
-				}
-				return &Integer{Value: 0}
-			default:
-				return &String{Value: fmt.Sprintf("ERROR: cannot convert %s to int", arg.Type())}
+			return toIntObject(args[0])
+		},
+	},
+	"to_float": {
+		Fn: func(args ...Object) Object {
+			if len(args) != 1 {
+				return &String{Value: fmt.Sprintf("wrong number of arguments. got=%d, want=1", len(args))}
 			}
+			return toFloatObject(args[0])
 		},
 	},
 	"to_string": {
@@ -605,6 +664,22 @@ var builtins = map[string]*Builtin{
 				return &String{Value: fmt.Sprintf("wrong number of arguments. got=%d, want=1", len(args))}
 			}
 			return &String{Value: args[0].Inspect()}
+		},
+	},
+	"parse_string": {
+		Fn: func(args ...Object) Object {
+			if len(args) != 1 {
+				return &String{Value: fmt.Sprintf("wrong number of arguments. got=%d, want=1", len(args))}
+			}
+			return &String{Value: args[0].Inspect()}
+		},
+	},
+	"parse_bool": {
+		Fn: func(args ...Object) Object {
+			if len(args) != 1 {
+				return &String{Value: fmt.Sprintf("wrong number of arguments. got=%d, want=1", len(args))}
+			}
+			return toBoolObject(args[0])
 		},
 	},
 	"input": {
@@ -626,7 +701,23 @@ var builtins = map[string]*Builtin{
 				}
 				max = args[0].(*Integer).Value
 			}
+			if max <= 0 {
+				return newError("random max must be > 0")
+			}
 			return &Integer{Value: mrand.Int63n(max)}
+		},
+	},
+	"seed_random": {
+		Fn: func(args ...Object) Object {
+			if len(args) != 1 {
+				return &String{Value: fmt.Sprintf("wrong number of arguments. got=%d, want=1", len(args))}
+			}
+			seed, errObj := asInt(args[0], "seed")
+			if errObj != nil {
+				return errObj
+			}
+			mrand.Seed(seed)
+			return NULL
 		},
 	},
 	"abs": {
@@ -1155,6 +1246,71 @@ var builtins = map[string]*Builtin{
 				return &String{Value: fmt.Sprintf("ERROR: %s", err)}
 			}
 			return &Float{Value: v}
+		},
+	},
+	"parse_type": {
+		Fn: func(args ...Object) Object {
+			if len(args) < 2 || len(args) > 4 {
+				return &String{Value: fmt.Sprintf("wrong number of arguments. got=%d, want=2..4", len(args))}
+			}
+			target, errObj := asString(args[1], "target_type")
+			if errObj != nil {
+				return errObj
+			}
+			switch strings.ToLower(target) {
+			case "int", "integer":
+				return toIntObject(args[0])
+			case "float", "number":
+				return toFloatObject(args[0])
+			case "string":
+				return &String{Value: args[0].Inspect()}
+			case "bool", "boolean":
+				return toBoolObject(args[0])
+			case "time", "timestamp":
+				if len(args) == 2 {
+					if args[0].Type() == STRING_OBJ {
+						tm, err := time.Parse(time.RFC3339, args[0].(*String).Value)
+						if err != nil {
+							return newError("%s", err)
+						}
+						return &Integer{Value: tm.Unix()}
+					}
+					return newError("parse_type(time) with 2 args expects STRING input")
+				}
+				if args[0].Type() != STRING_OBJ {
+					return newError("parse_type(time) expects STRING input")
+				}
+				if len(args) == 3 {
+					format, e := asString(args[2], "format")
+					if e != nil {
+						return e
+					}
+					tm, err := time.Parse(normalizeTimeFormat(format), args[0].(*String).Value)
+					if err != nil {
+						return newError("%s", err)
+					}
+					return &Integer{Value: tm.Unix()}
+				}
+				format, e := asString(args[2], "format")
+				if e != nil {
+					return e
+				}
+				tz, e := asString(args[3], "timezone")
+				if e != nil {
+					return e
+				}
+				loc, errObj := loadLocationOrError(tz)
+				if errObj != nil {
+					return errObj
+				}
+				tm, err := time.ParseInLocation(normalizeTimeFormat(format), args[0].(*String).Value, loc)
+				if err != nil {
+					return newError("%s", err)
+				}
+				return &Integer{Value: tm.Unix()}
+			default:
+				return newError("unsupported target_type %q", target)
+			}
 		},
 	},
 	"range": {

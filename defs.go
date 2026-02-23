@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 	"reflect"
-	"strings"
 )
 
 // Exec executes the given SPL script content with the provided data.
@@ -23,13 +22,9 @@ func Exec(script string, data map[string]interface{}) (Object, error) {
 
 	result := Eval(program, env)
 
-	// Check for runtime errors returned as objects
-	if result != nil {
-		if result.Type() == STRING_OBJ {
-			if strings.HasPrefix(result.(*String).Value, "ERROR:") {
-				// Optional: return as error?
-			}
-		}
+	// Surface runtime errors to Go callers.
+	if isError(result) {
+		return nil, fmt.Errorf("%s", objectErrorString(result))
 	}
 
 	return result, nil

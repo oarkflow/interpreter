@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"flag"
 	"fmt"
+	"math"
 	"math/rand"
 	"os"
 	"os/signal"
@@ -387,6 +388,7 @@ type FloatLiteral struct {
 
 func (fl *FloatLiteral) expressionNode() {}
 func (fl *FloatLiteral) String() string  { return fmt.Sprintf("%g", fl.Value) }
+
 type StringLiteral struct {
 	Value string
 }
@@ -551,9 +553,9 @@ func (ae *AssignExpression) String() string {
 }
 
 type LetStatement struct {
-	Name   *Identifier   // Deprecated: use Names[0]
-	Names  []*Identifier // Support for multi-assignment
-	Value  Expression
+	Name  *Identifier   // Deprecated: use Names[0]
+	Names []*Identifier // Support for multi-assignment
+	Value Expression
 }
 
 func (ls *LetStatement) statementNode() {}
@@ -1354,6 +1356,7 @@ const (
 	BOOLEAN_OBJ
 	STRING_OBJ
 	NULL_OBJ
+	ERROR_OBJ
 	RETURN_VALUE_OBJ
 	BREAK_OBJ
 	CONTINUE_OBJ
@@ -1375,6 +1378,8 @@ func (ot ObjectType) String() string {
 		return "STRING"
 	case NULL_OBJ:
 		return "NULL"
+	case ERROR_OBJ:
+		return "ERROR"
 	case RETURN_VALUE_OBJ:
 		return "RETURN_VALUE"
 	case BREAK_OBJ:
@@ -1426,6 +1431,30 @@ type Null struct{}
 
 func (n *Null) Type() ObjectType { return NULL_OBJ }
 func (n *Null) Inspect() string  { return "null" }
+
+type Error struct {
+	Message string
+}
+
+func (e *Error) Type() ObjectType { return ERROR_OBJ }
+func (e *Error) Inspect() string  { return "ERROR: " + e.Message }
+
+func newError(format string, args ...interface{}) Object {
+	return &Error{Message: fmt.Sprintf(format, args...)}
+}
+
+func objectErrorString(obj Object) string {
+	if obj == nil {
+		return ""
+	}
+	if errObj, ok := obj.(*Error); ok {
+		return errObj.Message
+	}
+	if strObj, ok := obj.(*String); ok && strings.HasPrefix(strObj.Value, "ERROR:") {
+		return strings.TrimPrefix(strObj.Value, "ERROR: ")
+	}
+	return obj.Inspect()
+}
 
 type ReturnValue struct {
 	Value Object
@@ -1663,7 +1692,7 @@ func Eval(node Node, env *Environment) Object {
 		if _, ok := env.Assign(node.Name.Name, val); ok {
 			return val
 		}
-		return &String{Value: fmt.Sprintf("ERROR: variable %s not declared", node.Name.Name)}
+		return newError("variable %s not declared", node.Name.Name)
 
 	case *InfixExpression:
 		left := Eval(node.Left, env)
@@ -1717,13 +1746,13 @@ func Eval(node Node, env *Environment) Object {
 			if !ok {
 				// Allow single value to be assigned to first var, others null?
 				// Or stricter: Error. Go is strict.
-				return &String{Value: fmt.Sprintf("ERROR: assignment mismatch: %d variables but 1 value", len(node.Names))}
+				return newError("assignment mismatch: %d variables but 1 value", len(node.Names))
 			}
 
 			if len(node.Names) != len(arr.Elements) {
 				// Go is strict about count mismatch
 				// We can be strict or loose. Let's be semi-strict to match expectations.
-				return &String{Value: fmt.Sprintf("ERROR: assignment mismatch: %d variables but %d values", len(node.Names), len(arr.Elements))}
+				return newError("assignment mismatch: %d variables but %d values", len(node.Names), len(arr.Elements))
 			}
 
 			for i, name := range node.Names {
@@ -1782,6 +1811,8 @@ func evalProgram(program *Program, env *Environment) Object {
 		switch result := result.(type) {
 		case *ReturnValue:
 			return result.Value
+		case *Error:
+			return result
 		case *String:
 			if strings.HasPrefix(result.Value, "ERROR:") {
 				return result
@@ -1803,10 +1834,8 @@ func evalBlockStatement(block *BlockStatement, env *Environment) Object {
 			if rt == RETURN_VALUE_OBJ || rt == BREAK_OBJ || rt == CONTINUE_OBJ {
 				return result
 			}
-			if rt == STRING_OBJ {
-				if strings.HasPrefix(result.(*String).Value, "ERROR:") {
-					return result
-				}
+			if isError(result) {
+				return result
 			}
 		}
 	}
@@ -1828,7 +1857,7 @@ func evalPrefixExpression(operator string, right Object) Object {
 	case "-":
 		return evalMinusPrefixOperatorExpression(right)
 	default:
-		return &String{Value: fmt.Sprintf("ERROR: unknown operator: %s%s", operator, right.Type())}
+		return newError("unknown operator: %s%s", operator, right.Type())
 	}
 }
 
@@ -1854,7 +1883,7 @@ func evalMinusPrefixOperatorExpression(right Object) Object {
 		value := right.(*Float).Value
 		return &Float{Value: -value}
 	default:
-		return &String{Value: fmt.Sprintf("ERROR: unknown operator: -%s", right.Type())}
+		return newError("unknown operator: -%s", right.Type())
 	}
 }
 
@@ -1881,9 +1910,9 @@ func evalInfixExpression(operator string, left, right Object) Object {
 	case operator == "+" && (left.Type() == STRING_OBJ || right.Type() == STRING_OBJ):
 		return evalMixedStringConcatenation(left, right)
 	case left.Type() != right.Type():
-		return &String{Value: fmt.Sprintf("ERROR: type mismatch: %s %s %s", left.Type(), operator, right.Type())}
+		return newError("type mismatch: %s %s %s", left.Type(), operator, right.Type())
 	default:
-		return &String{Value: fmt.Sprintf("ERROR: unknown operator: %s %s %s", left.Type(), operator, right.Type())}
+		return newError("unknown operator: %s %s %s", left.Type(), operator, right.Type())
 	}
 }
 
@@ -1900,7 +1929,7 @@ func evalFloatInfixExpression(operator string, left, right Object) Object {
 		return &Float{Value: leftVal * rightVal}
 	case "/":
 		if rightVal == 0 {
-			return &String{Value: "ERROR: division by zero"}
+			return newError("division by zero")
 		}
 		return &Float{Value: leftVal / rightVal}
 	case "<":
@@ -1916,7 +1945,7 @@ func evalFloatInfixExpression(operator string, left, right Object) Object {
 	case "!=":
 		return nativeBoolToBooleanObject(leftVal != rightVal)
 	default:
-		return &String{Value: fmt.Sprintf("ERROR: unknown operator: %s %s %s", left.Type(), operator, right.Type())}
+		return newError("unknown operator: %s %s %s", left.Type(), operator, right.Type())
 	}
 }
 
@@ -1933,7 +1962,7 @@ func evalIntegerInfixExpression(operator string, left, right Object) Object {
 		return &Integer{Value: leftVal * rightVal}
 	case "/":
 		if rightVal == 0 {
-			return &String{Value: "ERROR: division by zero"}
+			return newError("division by zero")
 		}
 		return &Integer{Value: leftVal / rightVal}
 	case "%":
@@ -1951,7 +1980,7 @@ func evalIntegerInfixExpression(operator string, left, right Object) Object {
 	case "!=":
 		return nativeBoolToBooleanObject(leftVal != rightVal)
 	default:
-		return &String{Value: fmt.Sprintf("ERROR: unknown operator: %s %s %s", left.Type(), operator, right.Type())}
+		return newError("unknown operator: %s %s %s", left.Type(), operator, right.Type())
 	}
 }
 
@@ -1967,7 +1996,7 @@ func evalStringInfixExpression(operator string, left, right Object) Object {
 	case "!=":
 		return nativeBoolToBooleanObject(leftVal != rightVal)
 	default:
-		return &String{Value: fmt.Sprintf("ERROR: unknown operator: %s %s %s", left.Type(), operator, right.Type())}
+		return newError("unknown operator: %s %s %s", left.Type(), operator, right.Type())
 	}
 }
 
@@ -1999,7 +2028,7 @@ func evalWhileStatement(ws *WhileStatement, env *Environment) Object {
 	for {
 		select {
 		case <-CancelCh:
-			return &String{Value: "ERROR: execution cancelled"}
+			return newError("execution cancelled")
 		default:
 		}
 
@@ -2050,7 +2079,7 @@ func evalForStatement(fs *ForStatement, env *Environment) Object {
 	for {
 		select {
 		case <-CancelCh:
-			return &String{Value: "ERROR: execution cancelled"}
+			return newError("execution cancelled")
 		default:
 		}
 
@@ -2105,7 +2134,7 @@ func evalIndexExpression(left, index Object) Object {
 	case left.Type() == HASH_OBJ:
 		return evalHashIndexExpression(left, index)
 	default:
-		return &String{Value: fmt.Sprintf("ERROR: index operator not supported: %s", left.Type())}
+		return newError("index operator not supported: %s", left.Type())
 	}
 }
 
@@ -2132,7 +2161,7 @@ func evalHashLiteral(node *HashLiteral, env *Environment) Object {
 
 		hashKey, ok := key.(Hashable)
 		if !ok {
-			return &String{Value: fmt.Sprintf("ERROR: unusable as hash key: %s", key.Type())}
+			return newError("unusable as hash key: %s", key.Type())
 		}
 
 		value := Eval(valueNode, env)
@@ -2152,7 +2181,7 @@ func evalHashIndexExpression(hash, index Object) Object {
 
 	key, ok := index.(Hashable)
 	if !ok {
-		return &String{Value: fmt.Sprintf("ERROR: unusable as hash key: %s", index.Type())}
+		return newError("unusable as hash key: %s", index.Type())
 	}
 
 	pair, ok := hashObject.Pairs[key.HashKey()]
@@ -2178,6 +2207,9 @@ func isTruthy(obj Object) bool {
 
 func isError(obj Object) bool {
 	if obj != nil {
+		if obj.Type() == ERROR_OBJ {
+			return true
+		}
 		if obj.Type() == STRING_OBJ {
 			return strings.HasPrefix(obj.(*String).Value, "ERROR:")
 		}
@@ -2194,7 +2226,7 @@ func evalIdentifier(node *Identifier, env *Environment) Object {
 		return builtin
 	}
 
-	return &String{Value: fmt.Sprintf("ERROR: identifier not found: %s", node.Name)}
+	return newError("identifier not found: %s", node.Name)
 }
 
 func evalExpressions(exps []Expression, env *Environment) []Object {
@@ -2213,13 +2245,13 @@ func evalExpressions(exps []Expression, env *Environment) []Object {
 
 func applyFunction(fn Object, args []Object) Object {
 	if fn == nil {
-		return &String{Value: "ERROR: attempting to call nil function"}
+		return newError("attempting to call nil function")
 	}
 
 	switch fn := fn.(type) {
 	case *Function:
 		if len(args) != len(fn.Parameters) {
-			return &String{Value: fmt.Sprintf("ERROR: wrong number of arguments. got=%d, want=%d", len(args), len(fn.Parameters))}
+			return newError("wrong number of arguments. got=%d, want=%d", len(args), len(fn.Parameters))
 		}
 		extendedEnv := extendFunctionEnv(fn, args)
 		evaluated := Eval(fn.Body, extendedEnv)
@@ -2229,7 +2261,7 @@ func applyFunction(fn Object, args []Object) Object {
 		return fn.Fn(args...)
 
 	default:
-		return &String{Value: fmt.Sprintf("ERROR: not a function: %s", fn.Type())}
+		return newError("not a function: %s", fn.Type())
 	}
 }
 
@@ -2307,12 +2339,9 @@ func runFile(filename string, args []string) {
 
 	evaluated := Eval(program, env)
 	if evaluated != nil {
-		if evaluated.Type() == STRING_OBJ {
-			strObj := evaluated.(*String)
-			if strings.HasPrefix(strObj.Value, "ERROR:") {
-				fmt.Println(strObj.Value)
-				os.Exit(1)
-			}
+		if isError(evaluated) {
+			fmt.Println("ERROR:", objectErrorString(evaluated))
+			os.Exit(1)
 		} else if evaluated.Type() == RETURN_VALUE_OBJ {
 			// Check if return value is integer to use as exit code
 			val := evaluated.(*ReturnValue).Value
@@ -2377,7 +2406,7 @@ func runRepl() {
 	fmt.Println("Welcome to the Simple Programming Language!")
 	fmt.Println("Type 'exit' to quit")
 	fmt.Println("For multi-line input: ensure braces {} are balanced")
-	fmt.Println("Or run: go run interpreter.go <filename>")
+	fmt.Println("Or run: go run ./cmd/interpreter <filename>")
 	fmt.Println()
 
 	env := NewGlobalEnvironment([]string{})
@@ -2447,12 +2476,9 @@ func runRepl() {
 
 		evaluated := Eval(program, env)
 		if evaluated != nil {
-			if evaluated.Type() == STRING_OBJ {
-				strObj := evaluated.(*String)
-				if strings.HasPrefix(strObj.Value, "ERROR:") {
-					fmt.Println(strObj.Value)
-					continue
-				}
+			if isError(evaluated) {
+				fmt.Println("ERROR:", objectErrorString(evaluated))
+				continue
 			}
 			if evaluated.Type() != NULL_OBJ {
 				fmt.Println(evaluated.Inspect())
@@ -2490,12 +2516,186 @@ func evalDotExpression(left Object, name string) Object {
 	case *Array:
 		return getArrayMethod(left.(*Array), name)
 	case *String:
-		// reuse existing strings package functions via wrappers
-		// For now simple stub or existing builtins logic if needed
-		// But builtins are currently global.
+		return getStringMethod(left.(*String), name)
+	case *Integer:
+		return getIntegerMethod(left.(*Integer), name)
+	case *Float:
+		return getFloatMethod(left.(*Float), name)
 	}
 
-	return &String{Value: fmt.Sprintf("property or method '%s' not found on %s", name, left.Type())}
+	return newError("property or method '%s' not found on %s", name, left.Type())
+}
+
+func bindMethod(receiver Object, methodName, builtinName string) Object {
+	b, ok := builtins[builtinName]
+	if !ok {
+		return newError("method '%s' is unavailable", methodName)
+	}
+	return &Builtin{
+		Fn: func(args ...Object) Object {
+			callArgs := make([]Object, 0, len(args)+1)
+			callArgs = append(callArgs, receiver)
+			callArgs = append(callArgs, args...)
+			return b.Fn(callArgs...)
+		},
+	}
+}
+
+func getStringMethod(str *String, name string) Object {
+	switch name {
+	case "length":
+		return &Integer{Value: int64(len([]rune(str.Value)))}
+	case "upper", "toUpperCase":
+		return bindMethod(str, name, "upper")
+	case "lower", "toLowerCase":
+		return bindMethod(str, name, "lower")
+	case "trim":
+		return bindMethod(str, name, "trim")
+	case "starts_with", "startsWith":
+		return bindMethod(str, name, "starts_with")
+	case "ends_with", "endsWith":
+		return bindMethod(str, name, "ends_with")
+	case "includes":
+		return bindMethod(str, name, "contains")
+	case "replace":
+		return bindMethod(str, name, "replace")
+	case "repeat":
+		return bindMethod(str, name, "repeat")
+	case "substring":
+		return bindMethod(str, name, "substring")
+	case "index_of", "indexOf":
+		return bindMethod(str, name, "index_of")
+	case "split":
+		return bindMethod(str, name, "split")
+	case "title":
+		return bindMethod(str, name, "title")
+	case "slug":
+		return bindMethod(str, name, "slug")
+	case "snake_case":
+		return bindMethod(str, name, "snake_case")
+	case "kebab_case":
+		return bindMethod(str, name, "kebab_case")
+	case "camel_case":
+		return bindMethod(str, name, "camel_case")
+	case "pascal_case":
+		return bindMethod(str, name, "pascal_case")
+	case "swap_case":
+		return bindMethod(str, name, "swap_case")
+	case "count_substr":
+		return bindMethod(str, name, "count_substr")
+	case "truncate":
+		return bindMethod(str, name, "truncate")
+	case "split_lines":
+		return bindMethod(str, name, "split_lines")
+	case "regex_match":
+		return bindMethod(str, name, "regex_match")
+	case "regex_replace":
+		return bindMethod(str, name, "regex_replace")
+	case "trim_prefix":
+		return bindMethod(str, name, "trim_prefix")
+	case "trim_suffix":
+		return bindMethod(str, name, "trim_suffix")
+	case "pad_left":
+		return bindMethod(str, name, "pad_left")
+	case "pad_right":
+		return bindMethod(str, name, "pad_right")
+	default:
+		return newError("method '%s' not found on STRING", name)
+	}
+}
+
+func methodNoArg(receiver Object, name string, fn func() Object) Object {
+	return &Builtin{
+		Fn: func(args ...Object) Object {
+			if len(args) != 0 {
+				return newError("%s expects 0 arguments, got %d", name, len(args))
+			}
+			return fn()
+		},
+	}
+}
+
+func bindIntegerTimeMethod(ts *Integer, methodName, builtinName string) Object {
+	b, ok := builtins[builtinName]
+	if !ok {
+		return newError("method '%s' is unavailable", methodName)
+	}
+	return &Builtin{
+		Fn: func(args ...Object) Object {
+			callArgs := make([]Object, 0, len(args)+1)
+			callArgs = append(callArgs, ts)
+			callArgs = append(callArgs, args...)
+			return b.Fn(callArgs...)
+		},
+	}
+}
+
+func getIntegerMethod(num *Integer, name string) Object {
+	switch name {
+	case "to_string", "toString":
+		return bindMethod(num, name, "to_string")
+	case "to_float", "toFloat":
+		return bindMethod(num, name, "to_float")
+	case "abs":
+		return methodNoArg(num, name, func() Object { return &Integer{Value: int64(math.Abs(float64(num.Value)))} })
+	case "is_even", "isEven":
+		return methodNoArg(num, name, func() Object { return nativeBoolToBooleanObject(num.Value%2 == 0) })
+	case "is_odd", "isOdd":
+		return methodNoArg(num, name, func() Object { return nativeBoolToBooleanObject(num.Value%2 != 0) })
+	case "sqrt":
+		return bindMethod(num, name, "sqrt")
+	case "pow":
+		return bindMethod(num, name, "pow")
+	case "round", "floor", "ceil":
+		return methodNoArg(num, name, func() Object { return &Integer{Value: num.Value} })
+
+	// Timestamp/time helpers on unix-seconds integer values.
+	case "to_iso", "toISO":
+		return bindIntegerTimeMethod(num, name, "unix_to_iso")
+	case "format":
+		return bindIntegerTimeMethod(num, name, "format_time")
+	case "format_tz", "formatTZ":
+		return bindIntegerTimeMethod(num, name, "format_time_tz")
+	case "add":
+		return bindIntegerTimeMethod(num, name, "time_add")
+	case "sub":
+		return bindIntegerTimeMethod(num, name, "time_sub")
+	case "diff":
+		return bindIntegerTimeMethod(num, name, "time_diff")
+	case "start_of_day", "startOfDay":
+		return bindIntegerTimeMethod(num, name, "start_of_day")
+	case "end_of_day", "endOfDay":
+		return bindIntegerTimeMethod(num, name, "end_of_day")
+	case "start_of_week", "startOfWeek":
+		return bindIntegerTimeMethod(num, name, "start_of_week")
+	case "end_of_month", "endOfMonth":
+		return bindIntegerTimeMethod(num, name, "end_of_month")
+	case "add_months", "addMonths":
+		return bindIntegerTimeMethod(num, name, "add_months")
+	case "to_timezone", "toTimezone":
+		return bindIntegerTimeMethod(num, name, "to_timezone")
+	default:
+		return newError("method '%s' not found on INTEGER", name)
+	}
+}
+
+func getFloatMethod(num *Float, name string) Object {
+	switch name {
+	case "to_string", "toString":
+		return bindMethod(num, name, "to_string")
+	case "to_int", "toInt":
+		return bindMethod(num, name, "to_int")
+	case "abs":
+		return methodNoArg(num, name, func() Object { return &Float{Value: math.Abs(num.Value)} })
+	case "round":
+		return bindMethod(num, name, "round")
+	case "floor":
+		return bindMethod(num, name, "floor")
+	case "ceil":
+		return bindMethod(num, name, "ceil")
+	default:
+		return newError("method '%s' not found on FLOAT", name)
+	}
 }
 
 func getArrayMethod(arr *Array, name string) Object {
@@ -2504,14 +2704,14 @@ func getArrayMethod(arr *Array, name string) Object {
 		return &Builtin{
 			Fn: func(args ...Object) Object {
 				if len(args) != 1 {
-					return &String{Value: fmt.Sprintf("map expects 1 argument, got %d", len(args))}
+					return newError("map expects 1 argument, got %d", len(args))
 				}
 				_, ok := args[0].(*Function)
 				if !ok {
 					// Also support Builtin as callback?
 					_, isBuiltin := args[0].(*Builtin)
 					if !isBuiltin {
-						return &String{Value: "map expects a function"}
+						return newError("map expects a function")
 					}
 				}
 
@@ -2536,7 +2736,7 @@ func getArrayMethod(arr *Array, name string) Object {
 		return &Builtin{
 			Fn: func(args ...Object) Object {
 				if len(args) != 1 {
-					return &String{Value: "filter expects 1 argument"}
+					return newError("filter expects 1 argument")
 				}
 
 				newElements := []Object{}
@@ -2556,7 +2756,7 @@ func getArrayMethod(arr *Array, name string) Object {
 		return &Builtin{
 			Fn: func(args ...Object) Object {
 				if len(args) != 1 {
-					return &String{Value: "forEach expects 1 argument"}
+					return newError("forEach expects 1 argument")
 				}
 				for _, el := range arr.Elements {
 					res := executeCallback(args[0], []Object{el})
@@ -2583,7 +2783,7 @@ func getArrayMethod(arr *Array, name string) Object {
 		return &Builtin{
 			Fn: func(args ...Object) Object {
 				if len(args) != 1 {
-					return &String{Value: "find expects 1 argument"}
+					return newError("find expects 1 argument")
 				}
 				for _, el := range arr.Elements {
 					res := executeCallback(args[0], []Object{el})
@@ -2595,7 +2795,7 @@ func getArrayMethod(arr *Array, name string) Object {
 			},
 		}
 	}
-	return &String{Value: fmt.Sprintf("method '%s' not found on ARRAY", name)}
+	return newError("method '%s' not found on ARRAY", name)
 }
 
 func executeCallback(fnObj Object, args []Object) Object {
@@ -2616,6 +2816,6 @@ func executeCallback(fnObj Object, args []Object) Object {
 		return fn.Fn(args...)
 
 	default:
-		return &String{Value: "not a function"}
+		return newError("not a function")
 	}
 }

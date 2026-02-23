@@ -49,6 +49,7 @@ func TestCryptoAndUtilityBuiltins(t *testing.T) {
 
 func TestCollectionBuiltins(t *testing.T) {
 	testIntegerObject(t, testEval(`len(range(5));`), 5)
+	testBooleanObject(t, testEval(`seed_random(12345); random(1000) < 1000;`), true)
 	testIntegerObject(t, testEval(`reduce([1,2,3,4], "sum");`), 10)
 	testIntegerObject(t, testEval(`len(uniq([1,1,2,2,3,3]));`), 3)
 	testIntegerObject(t, testEval(`find([1,2,3], 2);`), 2)

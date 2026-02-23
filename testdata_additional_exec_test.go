@@ -23,6 +23,7 @@ func TestAdditionalTestdataScripts(t *testing.T) {
 		"testdata/test_time_additional.spl",
 		"testdata/test_collections_additional.spl",
 		"testdata/test_crypto_additional.spl",
+		"testdata/test_methods_parse_additional.spl",
 	}
 	for _, file := range files {
 		expectTrueResult(t, file)

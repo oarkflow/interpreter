@@ -55,6 +55,14 @@ func asTimeUnitDivisor(unit string) (int64, error) {
 	}
 }
 
+func loadLocationOrError(name string) (*time.Location, Object) {
+	loc, err := time.LoadLocation(name)
+	if err != nil {
+		return nil, newError("invalid timezone %q", name)
+	}
+	return loc, nil
+}
+
 var timeBuiltins = map[string]*Builtin{
 	"now": {
 		Fn: func(args ...Object) Object {
@@ -123,7 +131,7 @@ var timeBuiltins = map[string]*Builtin{
 			}
 			tm, err := time.Parse(normalizeTimeFormat(format), input)
 			if err != nil {
-				return &String{Value: fmt.Sprintf("ERROR: %s", err)}
+				return newError("%s", err)
 			}
 			return &Integer{Value: tm.Unix()}
 		},
@@ -172,7 +180,7 @@ var timeBuiltins = map[string]*Builtin{
 			}
 			d, err := asTimeUnitDuration(amount, unit)
 			if err != nil {
-				return &String{Value: fmt.Sprintf("ERROR: %s", err)}
+				return newError("%s", err)
 			}
 			return &Integer{Value: time.Unix(ts, 0).Add(d).Unix()}
 		},
@@ -196,7 +204,7 @@ var timeBuiltins = map[string]*Builtin{
 			}
 			d, err := asTimeUnitDuration(amount, unit)
 			if err != nil {
-				return &String{Value: fmt.Sprintf("ERROR: %s", err)}
+				return newError("%s", err)
 			}
 			return &Integer{Value: time.Unix(ts, 0).Add(-d).Unix()}
 		},
@@ -224,7 +232,7 @@ var timeBuiltins = map[string]*Builtin{
 			}
 			divisor, err := asTimeUnitDivisor(unit)
 			if err != nil {
-				return &String{Value: fmt.Sprintf("ERROR: %s", err)}
+				return newError("%s", err)
 			}
 			return &Integer{Value: diff / divisor}
 		},
@@ -291,7 +299,7 @@ var timeBuiltins = map[string]*Builtin{
 			}
 			tm, err := time.Parse(time.RFC3339, s)
 			if err != nil {
-				return &String{Value: fmt.Sprintf("ERROR: %s", err)}
+				return newError("%s", err)
 			}
 			return &Integer{Value: tm.Unix()}
 		},
@@ -307,9 +315,129 @@ var timeBuiltins = map[string]*Builtin{
 			}
 			tm, err := time.Parse(time.RFC3339, s)
 			if err != nil {
-				return &String{Value: fmt.Sprintf("ERROR: %s", err)}
+				return newError("%s", err)
 			}
 			return &Integer{Value: tm.UnixMilli()}
+		},
+	},
+	"parse_time_tz": {
+		Fn: func(args ...Object) Object {
+			if len(args) != 3 {
+				return &String{Value: fmt.Sprintf("wrong number of arguments. got=%d, want=3", len(args))}
+			}
+			input, errObj := asString(args[0], "input")
+			if errObj != nil {
+				return errObj
+			}
+			format, errObj := asString(args[1], "format")
+			if errObj != nil {
+				return errObj
+			}
+			tz, errObj := asString(args[2], "timezone")
+			if errObj != nil {
+				return errObj
+			}
+			loc, locErr := loadLocationOrError(tz)
+			if locErr != nil {
+				return locErr
+			}
+			tm, err := time.ParseInLocation(normalizeTimeFormat(format), input, loc)
+			if err != nil {
+				return newError("%s", err)
+			}
+			return &Integer{Value: tm.Unix()}
+		},
+	},
+	"format_time_tz": {
+		Fn: func(args ...Object) Object {
+			if len(args) != 3 {
+				return &String{Value: fmt.Sprintf("wrong number of arguments. got=%d, want=3", len(args))}
+			}
+			ts, errObj := asInt(args[0], "unix_seconds")
+			if errObj != nil {
+				return errObj
+			}
+			format, errObj := asString(args[1], "format")
+			if errObj != nil {
+				return errObj
+			}
+			tz, errObj := asString(args[2], "timezone")
+			if errObj != nil {
+				return errObj
+			}
+			loc, locErr := loadLocationOrError(tz)
+			if locErr != nil {
+				return locErr
+			}
+			return &String{Value: time.Unix(ts, 0).In(loc).Format(normalizeTimeFormat(format))}
+		},
+	},
+	"to_timezone": {
+		Fn: func(args ...Object) Object {
+			if len(args) != 2 {
+				return &String{Value: fmt.Sprintf("wrong number of arguments. got=%d, want=2", len(args))}
+			}
+			ts, errObj := asInt(args[0], "unix_seconds")
+			if errObj != nil {
+				return errObj
+			}
+			tz, errObj := asString(args[1], "timezone")
+			if errObj != nil {
+				return errObj
+			}
+			loc, locErr := loadLocationOrError(tz)
+			if locErr != nil {
+				return locErr
+			}
+			return &String{Value: time.Unix(ts, 0).In(loc).Format(time.RFC3339)}
+		},
+	},
+	"start_of_week": {
+		Fn: func(args ...Object) Object {
+			if len(args) != 1 {
+				return &String{Value: fmt.Sprintf("wrong number of arguments. got=%d, want=1", len(args))}
+			}
+			ts, errObj := asInt(args[0], "unix_seconds")
+			if errObj != nil {
+				return errObj
+			}
+			tm := time.Unix(ts, 0).UTC()
+			weekday := int(tm.Weekday())
+			if weekday == 0 {
+				weekday = 7 // ISO week: Sunday as 7
+			}
+			start := time.Date(tm.Year(), tm.Month(), tm.Day(), 0, 0, 0, 0, time.UTC).AddDate(0, 0, -(weekday - 1))
+			return &Integer{Value: start.Unix()}
+		},
+	},
+	"end_of_month": {
+		Fn: func(args ...Object) Object {
+			if len(args) != 1 {
+				return &String{Value: fmt.Sprintf("wrong number of arguments. got=%d, want=1", len(args))}
+			}
+			ts, errObj := asInt(args[0], "unix_seconds")
+			if errObj != nil {
+				return errObj
+			}
+			tm := time.Unix(ts, 0).UTC()
+			firstNextMonth := time.Date(tm.Year(), tm.Month()+1, 1, 0, 0, 0, 0, time.UTC)
+			return &Integer{Value: firstNextMonth.Unix() - 1}
+		},
+	},
+	"add_months": {
+		Fn: func(args ...Object) Object {
+			if len(args) != 2 {
+				return &String{Value: fmt.Sprintf("wrong number of arguments. got=%d, want=2", len(args))}
+			}
+			ts, errObj := asInt(args[0], "unix_seconds")
+			if errObj != nil {
+				return errObj
+			}
+			months, errObj := asInt(args[1], "months")
+			if errObj != nil {
+				return errObj
+			}
+			return &Integer{Value: time.Unix(ts, 0).UTC().AddDate(0, int(months), 0).Unix()}
 		},
 	},
 }
