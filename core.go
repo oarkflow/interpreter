@@ -1,7 +1,6 @@
 package interpreter
 
 import (
-	"bufio"
 	"flag"
 	"fmt"
 	"math"
@@ -2321,7 +2320,7 @@ func StartCLI() {
 func runFile(filename string, args []string) {
 	content, err := os.ReadFile(filename)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error reading file: %v\n", err)
+		fmt.Fprintf(os.Stderr, "%s\n", paint(fmt.Sprintf("Error reading file: %v", err), colorBold+colorRed))
 		os.Exit(1)
 	}
 
@@ -2332,7 +2331,7 @@ func runFile(filename string, args []string) {
 
 	if len(p.Errors()) != 0 {
 		for _, msg := range p.Errors() {
-			fmt.Println(msg)
+			fmt.Println(paint(msg, colorRed))
 		}
 		os.Exit(1)
 	}
@@ -2340,7 +2339,7 @@ func runFile(filename string, args []string) {
 	evaluated := Eval(program, env)
 	if evaluated != nil {
 		if isError(evaluated) {
-			fmt.Println("ERROR:", objectErrorString(evaluated))
+			fmt.Println(paint("ERROR: "+objectErrorString(evaluated), colorBold+colorRed))
 			os.Exit(1)
 		} else if evaluated.Type() == RETURN_VALUE_OBJ {
 			// Check if return value is integer to use as exit code
@@ -2403,87 +2402,17 @@ func sanitizePath(userPath string) (string, error) {
 }
 
 func runRepl() {
-	fmt.Println("Welcome to the Simple Programming Language!")
-	fmt.Println("Type 'exit' to quit")
-	fmt.Println("For multi-line input: ensure braces {} are balanced")
-	fmt.Println("Or run: go run ./cmd/interpreter <filename>")
+	fmt.Println(paint("Welcome to the Simple Programming Language!", colorBold+colorMagenta))
+	fmt.Println(paint("Type 'exit' to quit", colorCyan))
+	fmt.Println(paint("Type ':help' for interactive shortcuts", colorCyan))
+	fmt.Println(paint("For multi-line input: ensure braces {} are balanced", colorGray))
+	fmt.Println(paint("Or run: go run ./cmd/interpreter <filename>", colorGray))
 	fmt.Println()
 
 	env := NewGlobalEnvironment([]string{})
-	scanner := bufio.NewScanner(os.Stdin)
-
-	// Handle Ctrl+C (SIGINT) gracefully
-	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
-
-	// We can't easily interrupt a blocking Read on Stdin in Go standard lib without closing it.
-	// However, we can use this to prevent the program from crashing on Ctrl+C during execution.
-	go func() {
-		for range sigChan {
-			// Just print a newline and prompt again if we are idle,
-			// or print 'Interrupted' if running.
-			// Since we can't easily share state here without mutexes, we trust the user to see the output.
-			fmt.Println("\n(Keyboard Interrupt)")
-			fmt.Print(">> ")
-		}
-	}()
-
-	for {
-		fmt.Print(">> ")
-		if !scanner.Scan() {
-			break
-		}
-
-		line := scanner.Text()
-		if line == "exit" {
-			break
-		}
-
-		if line == "" {
-			continue
-		}
-
-		// Collect multi-line input
-		input := line
-		braceCount := countBraces(line)
-
-		// Continue reading if we have unclosed braces
-		for braceCount > 0 {
-			fmt.Print(".. ")
-			if !scanner.Scan() {
-				break
-			}
-			nextLine := scanner.Text()
-			input += "\n" + nextLine
-			braceCount += countBraces(nextLine)
-
-			// Break if user enters empty line
-			if nextLine == "" && braceCount <= 0 {
-				break
-			}
-		}
-
-		l := NewLexer(input)
-		p := NewParser(l)
-		program := p.ParseProgram()
-
-		if len(p.Errors()) != 0 {
-			for _, msg := range p.Errors() {
-				fmt.Println(msg)
-			}
-			continue
-		}
-
-		evaluated := Eval(program, env)
-		if evaluated != nil {
-			if isError(evaluated) {
-				fmt.Println("ERROR:", objectErrorString(evaluated))
-				continue
-			}
-			if evaluated.Type() != NULL_OBJ {
-				fmt.Println(evaluated.Inspect())
-			}
-		}
+	if err := runReplInteractive(env); err != nil {
+		fmt.Printf("%s\n", paint(fmt.Sprintf("Interactive mode unavailable (%v). Falling back to basic mode.", err), colorYellow))
+		runReplBasic(env)
 	}
 }
 
