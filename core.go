@@ -12,6 +12,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/oarkflow/squealx"
 )
 
 // Token types
@@ -1363,6 +1365,7 @@ const (
 	BUILTIN_OBJ
 	ARRAY_OBJ
 	HASH_OBJ
+	DB_OBJ
 )
 
 func (ot ObjectType) String() string {
@@ -1393,6 +1396,8 @@ func (ot ObjectType) String() string {
 		return "ARRAY"
 	case HASH_OBJ:
 		return "HASH"
+	case DB_OBJ:
+		return "DB"
 	default:
 		return "UNKNOWN"
 	}
@@ -1564,6 +1569,14 @@ func (h *Hash) Inspect() string {
 	out.WriteString("}")
 	return out.String()
 }
+
+// DB represents a database connection
+type DB struct {
+	*squealx.DB
+}
+
+func (db *DB) Type() ObjectType { return DB_OBJ }
+func (db *DB) Inspect() string  { return "<db connection>" }
 
 // Environment
 type Environment struct {
