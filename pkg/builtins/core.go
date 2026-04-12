@@ -189,6 +189,18 @@ func objectToDisplayString(obj object.Object) string {
 	return obj.Inspect()
 }
 
+// numericToFloat converts an Integer or Float object to float64.
+func numericToFloat(obj object.Object) float64 {
+	switch v := obj.(type) {
+	case *object.Integer:
+		return float64(v.Value)
+	case *object.Float:
+		return v.Value
+	default:
+		return 0
+	}
+}
+
 func objectToFmtValue(obj object.Object) interface{} {
 	if obj == nil {
 		return nil
@@ -289,6 +301,30 @@ func splSprintf(format string, args []object.Object) (string, object.Object) {
 			default:
 				out.WriteString(fmt.Sprintf(spec, objectToFmtValue(arg)))
 			}
+		case 't':
+			// Boolean verb.
+			switch v := arg.(type) {
+			case *object.Boolean:
+				out.WriteString(fmt.Sprintf(spec, v.Value))
+			default:
+				out.WriteString(fmt.Sprintf(spec, objectToFmtValue(arg)))
+			}
+		case 'c':
+			// Character verb: Integer → rune, String → first rune.
+			switch v := arg.(type) {
+			case *object.Integer:
+				out.WriteRune(rune(v.Value))
+			case *object.String:
+				for _, r := range v.Value {
+					out.WriteRune(r)
+					break
+				}
+			default:
+				out.WriteString(fmt.Sprintf(spec, objectToFmtValue(arg)))
+			}
+		case 'q':
+			// Quoted-string verb.
+			out.WriteString(fmt.Sprintf(spec, objectToDisplayString(arg)))
 		default:
 			out.WriteString(fmt.Sprintf(spec, objectToFmtValue(arg)))
 		}
@@ -796,6 +832,118 @@ func init() {
 				return toBoolObject(args[0])
 			},
 		},
+		"is_int": {
+			Fn: func(args ...object.Object) object.Object {
+				if len(args) != 1 {
+					return &object.String{Value: fmt.Sprintf("wrong number of arguments. got=%d, want=1", len(args))}
+				}
+				if _, ok := args[0].(*object.Integer); ok {
+					return object.TRUE
+				}
+				return object.FALSE
+			},
+		},
+		"is_float": {
+			Fn: func(args ...object.Object) object.Object {
+				if len(args) != 1 {
+					return &object.String{Value: fmt.Sprintf("wrong number of arguments. got=%d, want=1", len(args))}
+				}
+				if _, ok := args[0].(*object.Float); ok {
+					return object.TRUE
+				}
+				return object.FALSE
+			},
+		},
+		"is_number": {
+			Fn: func(args ...object.Object) object.Object {
+				if len(args) != 1 {
+					return &object.String{Value: fmt.Sprintf("wrong number of arguments. got=%d, want=1", len(args))}
+				}
+				t := args[0].Type()
+				if t == object.INTEGER_OBJ || t == object.FLOAT_OBJ {
+					return object.TRUE
+				}
+				return object.FALSE
+			},
+		},
+		"is_string": {
+			Fn: func(args ...object.Object) object.Object {
+				if len(args) != 1 {
+					return &object.String{Value: fmt.Sprintf("wrong number of arguments. got=%d, want=1", len(args))}
+				}
+				if _, ok := args[0].(*object.String); ok {
+					return object.TRUE
+				}
+				return object.FALSE
+			},
+		},
+		"is_bool": {
+			Fn: func(args ...object.Object) object.Object {
+				if len(args) != 1 {
+					return &object.String{Value: fmt.Sprintf("wrong number of arguments. got=%d, want=1", len(args))}
+				}
+				if _, ok := args[0].(*object.Boolean); ok {
+					return object.TRUE
+				}
+				return object.FALSE
+			},
+		},
+		"is_array": {
+			Fn: func(args ...object.Object) object.Object {
+				if len(args) != 1 {
+					return &object.String{Value: fmt.Sprintf("wrong number of arguments. got=%d, want=1", len(args))}
+				}
+				if _, ok := args[0].(*object.Array); ok {
+					return object.TRUE
+				}
+				return object.FALSE
+			},
+		},
+		"is_hash": {
+			Fn: func(args ...object.Object) object.Object {
+				if len(args) != 1 {
+					return &object.String{Value: fmt.Sprintf("wrong number of arguments. got=%d, want=1", len(args))}
+				}
+				if _, ok := args[0].(*object.Hash); ok {
+					return object.TRUE
+				}
+				return object.FALSE
+			},
+		},
+		"is_null": {
+			Fn: func(args ...object.Object) object.Object {
+				if len(args) != 1 {
+					return &object.String{Value: fmt.Sprintf("wrong number of arguments. got=%d, want=1", len(args))}
+				}
+				if _, ok := args[0].(*object.Null); ok {
+					return object.TRUE
+				}
+				return object.FALSE
+			},
+		},
+		"is_function": {
+			Fn: func(args ...object.Object) object.Object {
+				if len(args) != 1 {
+					return &object.String{Value: fmt.Sprintf("wrong number of arguments. got=%d, want=1", len(args))}
+				}
+				t := args[0].Type()
+				if t == object.FUNCTION_OBJ || t == object.BUILTIN_OBJ {
+					return object.TRUE
+				}
+				return object.FALSE
+			},
+		},
+		"typeof": {
+			Fn: func(args ...object.Object) object.Object {
+				if len(args) != 1 {
+					return &object.String{Value: fmt.Sprintf("wrong number of arguments. got=%d, want=1", len(args))}
+				}
+				if args[0] == nil {
+					return &object.String{Value: "NULL"}
+				}
+				return &object.String{Value: args[0].Type().String()}
+			},
+		},
 		"input": {
 			Fn: func(args ...object.Object) object.Object {
 				if len(args) > 0 {
@@ -839,14 +987,17 @@ func init() {
 				if len(args) != 1 {
 					return &object.String{Value: fmt.Sprintf("wrong number of arguments. got=%d, want=1", len(args))}
 				}
-				if args[0].Type() != object.INTEGER_OBJ {
-					return &object.String{Value: fmt.Sprintf("argument to `abs` must be INTEGER, got %s", args[0].Type())}
+				switch v := args[0].(type) {
+				case *object.Integer:
+					if v.Value < 0 {
+						return &object.Integer{Value: -v.Value}
+					}
+					return &object.Integer{Value: v.Value}
+				case *object.Float:
+					return &object.Float{Value: math.Abs(v.Value)}
+				default:
+					return &object.String{Value: fmt.Sprintf("argument to `abs` must be INTEGER or FLOAT, got %s", args[0].Type())}
 				}
-				val := args[0].(*object.Integer).Value
-				if val < 0 {
-					return &object.Integer{Value: -val}
-				}
-				return &object.Integer{Value: val}
 			},
 		},
 		"pow": {
@@ -879,11 +1030,27 @@ func init() {
 				if len(args) < 1 {
 					return &object.String{Value: fmt.Sprintf("wrong number of arguments. got=%d, want=at least 1", len(args))}
 				}
-				minVal := args[0].(*object.Integer).Value
+				// Check if any argument is a float — if so, compare as float64.
+				hasFloat := false
 				for _, arg := range args {
-					if arg.Type() != object.INTEGER_OBJ {
-						return &object.String{Value: fmt.Sprintf("arguments to `min` must be INTEGER, got %s", arg.Type())}
+					if arg.Type() == object.FLOAT_OBJ {
+						hasFloat = true
+					} else if arg.Type() != object.INTEGER_OBJ {
+						return &object.String{Value: fmt.Sprintf("arguments to `min` must be INTEGER or FLOAT, got %s", arg.Type())}
 					}
+				}
+				if hasFloat {
+					minVal := numericToFloat(args[0])
+					for _, arg := range args[1:] {
+						v := numericToFloat(arg)
+						if v < minVal {
+							minVal = v
+						}
+					}
+					return &object.Float{Value: minVal}
+				}
+				minVal := args[0].(*object.Integer).Value
+				for _, arg := range args[1:] {
 					val := arg.(*object.Integer).Value
 					if val < minVal {
 						minVal = val
@@ -897,11 +1064,26 @@ func init() {
 				if len(args) < 1 {
 					return &object.String{Value: fmt.Sprintf("wrong number of arguments. got=%d, want=at least 1", len(args))}
 				}
-				maxVal := args[0].(*object.Integer).Value
+				hasFloat := false
 				for _, arg := range args {
-					if arg.Type() != object.INTEGER_OBJ {
-						return &object.String{Value: fmt.Sprintf("arguments to `max` must be INTEGER, got %s", arg.Type())}
+					if arg.Type() == object.FLOAT_OBJ {
+						hasFloat = true
+					} else if arg.Type() != object.INTEGER_OBJ {
+						return &object.String{Value: fmt.Sprintf("arguments to `max` must be INTEGER or FLOAT, got %s", arg.Type())}
 					}
+				}
+				if hasFloat {
+					maxVal := numericToFloat(args[0])
+					for _, arg := range args[1:] {
+						v := numericToFloat(arg)
+						if v > maxVal {
+							maxVal = v
+						}
+					}
+					return &object.Float{Value: maxVal}
+				}
+				maxVal := args[0].(*object.Integer).Value
+				for _, arg := range args[1:] {
 					val := arg.(*object.Integer).Value
 					if val > maxVal {
 						maxVal = val

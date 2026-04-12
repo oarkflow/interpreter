@@ -1,0 +1,131 @@
+// Comprehensive type casting / conversion / predicate tests.
+// Returns true if all assertions pass.
+
+// === to_int ===
+assert_eq(to_int("42"), 42);
+assert_eq(to_int(3.14), 3);
+assert_eq(to_int(true), 1);
+assert_eq(to_int(false), 0);
+assert_eq(to_int(0), 0);
+assert_eq(to_int(-7), -7);
+
+// === to_float ===
+assert_eq(to_float("3.14"), 3.14);
+assert_eq(to_float(42), 42.0);
+assert_eq(to_float(0), 0.0);
+
+// === to_string ===
+assert_eq(to_string(42), "42");
+assert_eq(to_string(3.14), "3.14");
+assert_eq(to_string(true), "true");
+assert_eq(to_string(false), "false");
+assert_eq(to_string(null), "null");
+
+// === parse_float ===
+assert_eq(parse_float("3.14"), 3.14);
+assert_eq(parse_float("0"), 0.0);
+
+// === parse_bool ===
+assert_eq(parse_bool("true"), true);
+assert_eq(parse_bool("false"), false);
+assert_eq(parse_bool(1), true);
+assert_eq(parse_bool(0), false);
+
+// === typeof ===
+assert_eq(typeof(42), "INTEGER");
+assert_eq(typeof(3.14), "FLOAT");
+assert_eq(typeof("hello"), "STRING");
+assert_eq(typeof(true), "BOOLEAN");
+assert_eq(typeof(false), "BOOLEAN");
+assert_eq(typeof([1,2,3]), "ARRAY");
+assert_eq(typeof({"a": 1}), "HASH");
+assert_eq(typeof(null), "NULL");
+assert_eq(typeof(len), "BUILTIN");
+
+// === is_int ===
+assert_true(is_int(42));
+assert_true(is_int(0));
+assert_true(is_int(-1));
+assert_true(!is_int(3.14));
+assert_true(!is_int("42"));
+assert_true(!is_int(true));
+assert_true(!is_int(null));
+
+// === is_float ===
+assert_true(is_float(3.14));
+assert_true(is_float(0.0));
+assert_true(!is_float(42));
+assert_true(!is_float("3.14"));
+
+// === is_number ===
+assert_true(is_number(42));
+assert_true(is_number(3.14));
+assert_true(!is_number("42"));
+assert_true(!is_number(true));
+assert_true(!is_number(null));
+
+// === is_string ===
+assert_true(is_string("hello"));
+assert_true(is_string(""));
+assert_true(!is_string(42));
+assert_true(!is_string(null));
+
+// === is_bool ===
+assert_true(is_bool(true));
+assert_true(is_bool(false));
+assert_true(!is_bool(1));
+assert_true(!is_bool("true"));
+
+// === is_array ===
+assert_true(is_array([1, 2, 3]));
+assert_true(is_array([]));
+assert_true(!is_array("hello"));
+assert_true(!is_array(42));
+
+// === is_hash ===
+assert_true(is_hash({"a": 1}));
+assert_true(is_hash({}));
+assert_true(!is_hash([1, 2]));
+assert_true(!is_hash("hello"));
+
+// === is_null ===
+assert_true(is_null(null));
+assert_true(!is_null(0));
+assert_true(!is_null(false));
+assert_true(!is_null(""));
+
+// === is_function ===
+assert_true(is_function(len));
+let myFn = function(x) { return x; };
+assert_true(is_function(myFn));
+assert_true(!is_function(42));
+assert_true(!is_function("hello"));
+
+// === abs with floats ===
+assert_eq(abs(-42), 42);
+assert_eq(abs(42), 42);
+assert_eq(abs(-3.14), 3.14);
+assert_eq(abs(3.14), 3.14);
+
+// === min/max with floats ===
+assert_eq(min(3, 5), 3);
+assert_eq(max(3, 5), 5);
+assert_eq(min(3.14, 2.71), 2.71);
+assert_eq(max(3.14, 2.71), 3.14);
+assert_eq(min(1, 2.5), 1.0);
+assert_eq(max(1, 2.5), 2.5);
+
+// === sprintf verbs ===
+assert_eq(sprintf("%t", true), "true");
+assert_eq(sprintf("%t", false), "false");
+assert_eq(sprintf("%c", 65), "A");
+assert_eq(sprintf("%c", 72), "H");
+assert_eq(sprintf("%d", 3.14), "3");
+assert_eq(sprintf("%f", 42), "42.000000");
+
+// === Cross-type sprintf ===
+assert_eq(sprintf("%d", to_int("42")), "42");
+assert_eq(sprintf("%f", to_float("3.14")), "3.140000");
+
+// All passed
+true;

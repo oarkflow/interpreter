@@ -36,6 +36,7 @@ func TestAdditionalTestdataScripts(t *testing.T) {
 		"testdata/test_collections_additional.spl",
 		"testdata/test_crypto_additional.spl",
 		"testdata/test_methods_parse_additional.spl",
+		"testdata/test_type_casting.spl",
 	}
 	for _, file := range files {
 		expectTrueResult(t, file)

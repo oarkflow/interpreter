@@ -267,6 +267,50 @@ assert_contains("hello world", "world");
 // View test summary
 let summary = test_summary();
 print sprintf("total=%v passed=%v failed=%v", summary.total, summary.passed, summary.failed);`,
+				"type-casting": `// === Type Conversion ===
+print sprintf("to_int(\"42\")     = %v", to_int("42"));
+print sprintf("to_int(3.14)     = %v", to_int(3.14));
+print sprintf("to_int(true)     = %v", to_int(true));
+print sprintf("to_float(\"3.14\") = %v", to_float("3.14"));
+print sprintf("to_float(42)     = %v", to_float(42));
+print sprintf("to_string(42)    = %v", to_string(42));
+print sprintf("to_string(true)  = %v", to_string(true));
+
+// === Parsing ===
+print sprintf("parse_float(\"3.14\") = %v", parse_float("3.14"));
+print sprintf("parse_bool(\"true\")  = %v", parse_bool("true"));
+
+// === Type Checking ===
+print sprintf("typeof(42)    = %s", typeof(42));
+print sprintf("typeof(3.14)  = %s", typeof(3.14));
+print sprintf("typeof(\"hi\")  = %s", typeof("hi"));
+print sprintf("typeof(true)  = %s", typeof(true));
+print sprintf("typeof([1,2]) = %s", typeof([1,2]));
+print sprintf("typeof(null)  = %s", typeof(null));
+
+// === Type Predicates ===
+print sprintf("is_int(42)      = %t", is_int(42));
+print sprintf("is_float(3.14)  = %t", is_float(3.14));
+print sprintf("is_number(42)   = %t", is_number(42));
+print sprintf("is_number(3.14) = %t", is_number(3.14));
+print sprintf("is_string(\"hi\") = %t", is_string("hi"));
+print sprintf("is_bool(true)   = %t", is_bool(true));
+print sprintf("is_array([1])   = %t", is_array([1]));
+print sprintf("is_hash({})     = %t", is_hash({}));
+print sprintf("is_null(null)   = %t", is_null(null));
+print sprintf("is_function(len)= %t", is_function(len));
+
+// === Numeric with mixed types ===
+print sprintf("abs(-3.14)       = %v", abs(-3.14));
+print sprintf("min(3.14, 2.71)  = %v", min(3.14, 2.71));
+print sprintf("max(42, 3.14)    = %v", max(42, 3.14));
+
+// === sprintf verbs ===
+print sprintf("%%t: %t", true);
+print sprintf("%%c: %c", 65);
+print sprintf("%%q: %q", "hello world");
+print sprintf("%%d from float: %d", 3.14);
+print sprintf("%%f from int:   %f", 42);`,
 		"complete-tour": `// Complete SPL playground tour: modules, closures, loops, collections,
 // formatting, JSON, crypto/time helpers, and structured error handling.
 import "testdata/modules/math.spl" as math;
