@@ -10,7 +10,6 @@ import (
 	"strings"
 
 	"github.com/oarkflow/interpreter"
-	"github.com/oarkflow/interpreter/tooling"
 )
 
 func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
@@ -164,18 +163,18 @@ func runCheck(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	return code
 }
 
-func processTargets(targets []string, stdin io.Reader, write bool, format bool) ([]tooling.Report, int) {
-	reports := make([]tooling.Report, 0, len(targets))
+func processTargets(targets []string, stdin io.Reader, write bool, format bool) ([]Report, int) {
+	reports := make([]Report, 0, len(targets))
 	exitCode := 0
 	for _, target := range targets {
 		path, src, err := readTarget(target, stdin)
 		if err != nil {
 			exitCode = 1
-			reports = append(reports, tooling.Report{
+			reports = append(reports, Report{
 				Path: target,
 				OK:   false,
-				Diagnostics: []tooling.Diagnostic{{
-					Severity: tooling.SeverityError,
+				Diagnostics: []Diagnostic{{
+					Severity: SeverityError,
 					Path:     target,
 					Message:  err.Error(),
 				}},
@@ -183,7 +182,7 @@ func processTargets(targets []string, stdin io.Reader, write bool, format bool) 
 			continue
 		}
 		if format {
-			report := tooling.FormatSource(path, src)
+			report := FormatSource(path, src)
 			reports = append(reports, report)
 			if len(report.Diagnostics) > 0 {
 				exitCode = 1
@@ -193,8 +192,8 @@ func processTargets(targets []string, stdin io.Reader, write bool, format bool) 
 				if err := os.WriteFile(path, []byte(report.Formatted), 0o644); err != nil {
 					exitCode = 1
 					reports[len(reports)-1].OK = false
-					reports[len(reports)-1].Diagnostics = append(reports[len(reports)-1].Diagnostics, tooling.Diagnostic{
-						Severity: tooling.SeverityError,
+					reports[len(reports)-1].Diagnostics = append(reports[len(reports)-1].Diagnostics, Diagnostic{
+						Severity: SeverityError,
 						Path:     path,
 						Message:  err.Error(),
 					})
@@ -202,7 +201,7 @@ func processTargets(targets []string, stdin io.Reader, write bool, format bool) 
 			}
 			continue
 		}
-		report := tooling.CheckSource(path, src)
+		report := CheckSource(path, src)
 		reports = append(reports, report)
 		if !report.OK {
 			exitCode = 1
@@ -217,7 +216,7 @@ func readTarget(target string, stdin io.Reader) (string, string, error) {
 		if err != nil {
 			return "", "", err
 		}
-		return tooling.DefaultStdinPath(), string(data), nil
+		return DefaultStdinPath(), string(data), nil
 	}
 	data, err := os.ReadFile(target)
 	if err != nil {
@@ -226,7 +225,7 @@ func readTarget(target string, stdin io.Reader) (string, string, error) {
 	return filepath.Clean(target), string(data), nil
 }
 
-func formatDiagnostic(d tooling.Diagnostic) string {
+func formatDiagnostic(d Diagnostic) string {
 	var b strings.Builder
 	b.WriteString(string(d.Severity))
 	b.WriteString(": ")
