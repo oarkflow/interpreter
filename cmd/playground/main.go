@@ -869,7 +869,6 @@ func loggingMiddleware(logger *slog.Logger, trustProxy bool, next http.Handler) 
 		start := time.Now()
 		sw := &statusWriter{ResponseWriter: w, status: http.StatusOK}
 		next.ServeHTTP(sw, r)
-		return
 		logger.Info("request",
 			slog.String("method", r.Method),
 			slog.String("path", r.URL.Path),
