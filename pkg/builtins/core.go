@@ -201,6 +201,77 @@ func numericToFloat(obj object.Object) float64 {
 	}
 }
 
+// objectToInt64ForFmt coerces any SPL value to int64 for %d/%o/%x/%X/%b verbs.
+func objectToInt64ForFmt(obj object.Object) int64 {
+	switch v := obj.(type) {
+	case *object.Integer:
+		return v.Value
+	case *object.Float:
+		return int64(v.Value)
+	case *object.Boolean:
+		if v.Value {
+			return 1
+		}
+		return 0
+	case *object.String:
+		if n, err := strconv.ParseInt(v.Value, 0, 64); err == nil {
+			return n
+		}
+		if f, err := strconv.ParseFloat(v.Value, 64); err == nil {
+			return int64(f)
+		}
+		return 0
+	case *object.Null:
+		return 0
+	default:
+		return 0
+	}
+}
+
+// objectToFloat64ForFmt coerces any SPL value to float64 for %f/%e/%E/%g/%G verbs.
+func objectToFloat64ForFmt(obj object.Object) float64 {
+	switch v := obj.(type) {
+	case *object.Float:
+		return v.Value
+	case *object.Integer:
+		return float64(v.Value)
+	case *object.Boolean:
+		if v.Value {
+			return 1.0
+		}
+		return 0.0
+	case *object.String:
+		if f, err := strconv.ParseFloat(v.Value, 64); err == nil {
+			return f
+		}
+		return 0.0
+	case *object.Null:
+		return 0.0
+	default:
+		return 0.0
+	}
+}
+
+// objectToBoolForFmt coerces any SPL value to bool for %t verb.
+func objectToBoolForFmt(obj object.Object) bool {
+	switch v := obj.(type) {
+	case *object.Boolean:
+		return v.Value
+	case *object.Integer:
+		return v.Value != 0
+	case *object.Float:
+		return v.Value != 0.0
+	case *object.String:
+		return v.Value != ""
+	case *object.Null:
+		return false
+	case *object.Array:
+		return len(v.Elements) > 0
+	default:
+		return true
+	}
+}
+
 func objectToFmtValue(obj object.Object) interface{} {
 	if obj == nil {
 		return nil
@@ -276,39 +347,14 @@ func splSprintf(format string, args []object.Object) (string, object.Object) {
 		case 's':
 			out.WriteString(fmt.Sprintf(spec, objectToDisplayString(arg)))
 		case 'd', 'o', 'x', 'X', 'b':
-			// Integer verbs: coerce floats to int64 so %d doesn't fail on JSON-decoded numbers.
-			switch v := arg.(type) {
-			case *object.Integer:
-				out.WriteString(fmt.Sprintf(spec, v.Value))
-			case *object.Float:
-				out.WriteString(fmt.Sprintf(spec, int64(v.Value)))
-			case *object.Boolean:
-				val := int64(0)
-				if v.Value {
-					val = 1
-				}
-				out.WriteString(fmt.Sprintf(spec, val))
-			default:
-				out.WriteString(fmt.Sprintf(spec, objectToFmtValue(arg)))
-			}
+			// Integer verbs: coerce all numeric-like values to int64.
+			out.WriteString(fmt.Sprintf(spec, objectToInt64ForFmt(arg)))
 		case 'f', 'e', 'E', 'g', 'G':
-			// Float verbs: coerce integers to float64 so %f works on integer values.
-			switch v := arg.(type) {
-			case *object.Float:
-				out.WriteString(fmt.Sprintf(spec, v.Value))
-			case *object.Integer:
-				out.WriteString(fmt.Sprintf(spec, float64(v.Value)))
-			default:
-				out.WriteString(fmt.Sprintf(spec, objectToFmtValue(arg)))
-			}
+			// Float verbs: coerce all numeric-like values to float64.
+			out.WriteString(fmt.Sprintf(spec, objectToFloat64ForFmt(arg)))
 		case 't':
-			// Boolean verb.
-			switch v := arg.(type) {
-			case *object.Boolean:
-				out.WriteString(fmt.Sprintf(spec, v.Value))
-			default:
-				out.WriteString(fmt.Sprintf(spec, objectToFmtValue(arg)))
-			}
+			// Boolean verb: coerce to bool.
+			out.WriteString(fmt.Sprintf(spec, objectToBoolForFmt(arg)))
 		case 'c':
 			// Character verb: Integer → rune, String → first rune.
 			switch v := arg.(type) {
