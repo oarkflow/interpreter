@@ -1,0 +1,232 @@
+// =============================================================================
+// Feature 3: DB Pattern Match + Lazy Query Builder
+// Run: go run ./cmd/interpreter testdata/examples_db_query_builder.spl
+// =============================================================================
+
+print "=== SPL Query Builder & Lazy Queries ===";
+
+// NOTE: These examples require a database connection.
+// Uncomment the db_connect line and configure for your database.
+// let [db, err] = db_connect("sqlite3", "./test.db");
+// if (err != null) { print "DB Error: " + err; return null; }
+
+// -----------------------------------------------------------------------------
+// 1) Basic Query Builder — query(db, table)
+// -----------------------------------------------------------------------------
+
+// Create a query builder (demonstrated with mock structure)
+// let q = query(db, "users");
+// print q;                    // <query: SELECT * FROM users>
+// print q.sql();              // "SELECT * FROM users"
+
+// Chain select columns
+// let q2 = query(db, "users").select("id", "name", "email");
+// print q2.sql();             // "SELECT id, name, email FROM users"
+
+// -----------------------------------------------------------------------------
+// 2) WHERE Clauses
+// -----------------------------------------------------------------------------
+
+// Simple equality
+// let q3 = query(db, "users").where("active", true);
+// print q3.sql();             // "SELECT * FROM users WHERE active = ?"
+
+// With operator
+// let q4 = query(db, "users")
+//     .where("age", ">", 18)
+//     .where("role", "admin");
+// print q4.sql();             // "SELECT * FROM users WHERE age > ? AND role = ?"
+
+// Raw where clause
+// let q5 = query(db, "users")
+//     .where_raw("created_at > NOW() - INTERVAL 7 DAY");
+// print q5.sql();
+
+// Multiple conditions
+// let q6 = query(db, "orders")
+//     .select("id", "total", "status")
+//     .where("status", "pending")
+//     .where("total", ">", 100)
+//     .where("customer_id", 42);
+// print q6.sql();
+
+// -----------------------------------------------------------------------------
+// 3) ORDER BY, LIMIT, OFFSET
+// -----------------------------------------------------------------------------
+
+// Pagination pattern
+// let page1 = query(db, "products")
+//     .select("id", "name", "price")
+//     .where("category", "electronics")
+//     .order_by("price DESC")
+//     .limit(10)
+//     .offset(0);
+// print page1.sql();
+
+// let page2 = query(db, "products")
+//     .select("id", "name", "price")
+//     .where("category", "electronics")
+//     .order_by("price DESC")
+//     .limit(10)
+//     .offset(10);
+// print page2.sql();
+
+// Multiple order columns
+// let sorted = query(db, "employees")
+//     .order_by("department ASC", "salary DESC")
+//     .limit(50);
+// print sorted.sql();
+
+// -----------------------------------------------------------------------------
+// 4) JOINs
+// -----------------------------------------------------------------------------
+
+// Inner join
+// let joined = query(db, "orders")
+//     .select("orders.id", "users.name", "orders.total")
+//     .join("users ON orders.user_id = users.id")
+//     .where("orders.status", "shipped")
+//     .order_by("orders.created_at DESC");
+// print joined.sql();
+
+// Left join
+// let leftJoined = query(db, "users")
+//     .select("users.name", "orders.total")
+//     .join("orders ON users.id = orders.user_id", "LEFT JOIN")
+//     .where("users.active", true);
+// print leftJoined.sql();
+
+// Multiple joins
+// let multiJoin = query(db, "orders")
+//     .select("orders.id", "users.name", "products.name")
+//     .join("users ON orders.user_id = users.id")
+//     .join("order_items ON orders.id = order_items.order_id")
+//     .join("products ON order_items.product_id = products.id");
+// print multiJoin.sql();
+
+// -----------------------------------------------------------------------------
+// 5) GROUP BY and Aggregates
+// -----------------------------------------------------------------------------
+
+// let stats = query(db, "orders")
+//     .select("status", "COUNT(*) as count", "SUM(total) as revenue")
+//     .group_by("status")
+//     .order_by("revenue DESC");
+// print stats.sql();
+
+// let monthly = query(db, "sales")
+//     .select("strftime('%Y-%m', date) as month", "SUM(amount) as total")
+//     .group_by("month")
+//     .order_by("month DESC")
+//     .limit(12);
+// print monthly.sql();
+
+// -----------------------------------------------------------------------------
+// 6) Executing Queries — .exec()
+// -----------------------------------------------------------------------------
+
+// Execute returns the standard [result, error] tuple
+// let [rows, err] = query(db, "users")
+//     .select("id", "name", "email")
+//     .where("active", true)
+//     .order_by("name ASC")
+//     .limit(20)
+//     .exec();
+//
+// if (err != null) {
+//     print "Query error: " + err;
+// } else {
+//     print "Found " + rows.length + " users:";
+//     for (let i = 0; i < rows.length; i = i + 1) {
+//         print "  " + rows[i].name + " <" + rows[i].email + ">";
+//     }
+// }
+
+// -----------------------------------------------------------------------------
+// 7) Lazy Queries — .lazy() and lazy_query()
+// -----------------------------------------------------------------------------
+
+// Lazy queries defer execution until the result is accessed
+// let lazyUsers = query(db, "users")
+//     .where("active", true)
+//     .lazy();
+// print lazyUsers;            // <lazy query: unevaluated>
+
+// Force evaluation
+// let result = lazyUsers;     // auto-forced on access in match/if
+// print result;               // actual query results
+
+// Shorthand: lazy_query(db, table)
+// let lazyAll = lazy_query(db, "products");
+// print lazyAll;              // <lazy query: unevaluated>
+
+// Lazy queries are useful for conditional execution:
+// let expensiveQuery = query(db, "analytics")
+//     .select("event_type", "COUNT(*) as cnt")
+//     .group_by("event_type")
+//     .order_by("cnt DESC")
+//     .limit(100)
+//     .lazy();
+//
+// // Query only executes if we actually need the data
+// if (needsAnalytics) {
+//     let [data, err] = expensiveQuery;   // Forces evaluation here
+//     print data;
+// }
+
+// -----------------------------------------------------------------------------
+// 8) Query Builder Chaining Patterns
+// -----------------------------------------------------------------------------
+
+// Build query conditionally
+// let base = query(db, "products").select("id", "name", "price");
+// if (categoryFilter != null) {
+//     base = base.where("category", categoryFilter);
+// }
+// if (minPrice > 0) {
+//     base = base.where("price", ">=", minPrice);
+// }
+// if (sortBy != null) {
+//     base = base.order_by(sortBy);
+// }
+// let [results, err] = base.limit(25).exec();
+
+// Reusable base queries
+// let activeUsers = query(db, "users").where("active", true).where("verified", true);
+// let admins = activeUsers.where("role", "admin").exec();
+// let recent = activeUsers.order_by("last_login DESC").limit(10).exec();
+
+// Get SQL for debugging
+// let debugQuery = query(db, "users")
+//     .select("id", "name")
+//     .where("active", true)
+//     .order_by("name");
+// print "Debug SQL: " + debugQuery.sql();
+
+// -----------------------------------------------------------------------------
+// 9) Integration with Web Framework
+// -----------------------------------------------------------------------------
+
+// Example: REST endpoint with query builder
+// route(app, "GET", "/api/users", function(req, res) {
+//     let page = req.query.page || 1;
+//     let limit = 20;
+//     let offset = (page - 1) * limit;
+//
+//     let [users, err] = query(db, "users")
+//         .select("id", "name", "email", "created_at")
+//         .where("active", true)
+//         .order_by("created_at DESC")
+//         .limit(limit)
+//         .offset(offset)
+//         .exec();
+//
+//     if (err != null) {
+//         res.status(500).json({"error": err});
+//         return null;
+//     }
+//     res.json({"users": users, "page": page});
+// });
+
+print "=== Query Builder Examples Complete ===";
+print "Uncomment db_connect and queries to run with a real database.";

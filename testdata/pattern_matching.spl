@@ -1,0 +1,318 @@
+// Pattern Matching - Comprehensive Test Suite
+// Tests all 11 pattern types
+
+// ===== 1. Literal Patterns =====
+print("--- Literal Patterns ---")
+
+let x = 42
+let r1 = match (x) {
+    case 1 => "one"
+    case 42 => "forty-two"
+    case 100 => "hundred"
+}
+print(r1) // forty-two
+
+let r2 = match ("hello") {
+    case "world" => "world"
+    case "hello" => "greeting"
+}
+print(r2) // greeting
+
+let r3 = match (true) {
+    case false => "no"
+    case true => "yes"
+}
+print(r3) // yes
+
+let r4 = match (null) {
+    case null => "nothing"
+    case _ => "something"
+}
+print(r4) // nothing
+
+// ===== 2. Wildcard Pattern =====
+print("--- Wildcard ---")
+
+let r5 = match (999) {
+    case 1 => "one"
+    case _ => "other"
+}
+print(r5) // other
+
+// ===== 3. Variable Binding =====
+print("--- Variable Binding ---")
+
+let r6 = match (42) {
+    case n => "got " + n
+}
+print(r6) // got 42
+
+// ===== 4. Type Patterns =====
+print("--- Type Patterns ---")
+
+let testType = function(val) {
+    return match (val) {
+        case n: integer => "integer: " + n
+        case s: string => "string: " + s
+        case b: boolean => "boolean: " + b
+        case a: array => "array of length " + len(a)
+        case h: hash => "it's a hash"
+        case _: float => "a float"
+        case _ => "unknown"
+    }
+}
+
+print(testType(42))        // integer: 42
+print(testType("hi"))      // string: hi
+print(testType(true))      // boolean: true
+print(testType([1,2,3]))   // array of length 3
+print(testType({"a": 1}))  // it's a hash
+print(testType(3.14))      // a float
+
+// ===== 5. Destructuring Patterns =====
+print("--- Array Destructuring ---")
+
+let r7 = match ([1, 2, 3]) {
+    case [a, b, c] => a + b + c
+}
+print(r7) // 6
+
+let r8 = match ([10, 20, 30, 40, 50]) {
+    case [head, ...tail] => "head=" + head + " tail_len=" + len(tail)
+}
+print(r8) // head=10 tail_len=4
+
+let r9 = match ([1, 2, 3]) {
+    case [_, second, _] => "second=" + second
+}
+print(r9) // second=2
+
+print("--- Object Destructuring ---")
+
+let person = {"name": "Alice", "age": 30, "city": "NYC"}
+
+let r10 = match (person) {
+    case {name, age} => name + " is " + age
+}
+print(r10) // Alice is 30
+
+let r11 = match (person) {
+    case {name: n, age: a} => n + " age " + a
+}
+print(r11) // Alice age 30
+
+let r12 = match (person) {
+    case {name, ...rest} => "name=" + name + " rest has city=" + rest.city
+}
+print(r12) // name=Alice rest has city=NYC
+
+// ===== 6. Guard Clauses =====
+print("--- Guards ---")
+
+let classify = function(n) {
+    return match (n) {
+        case x if x > 0 => "positive"
+        case x if x < 0 => "negative"
+        case _ => "zero"
+    }
+}
+print(classify(5))   // positive
+print(classify(-3))  // negative
+print(classify(0))   // zero
+
+// ===== 7. OR Patterns =====
+print("--- OR Patterns ---")
+
+let r13 = match (2) {
+    case 1 | 2 | 3 => "small"
+    case 4 | 5 | 6 => "medium"
+    case _ => "large"
+}
+print(r13) // small
+
+let r14 = match ("y") {
+    case "yes" | "y" => "affirmative"
+    case "no" | "n" => "negative"
+    case _ => "unknown"
+}
+print(r14) // affirmative
+
+// ===== 8. Nested Patterns =====
+print("--- Nested Patterns ---")
+
+let data = {"users": [{"name": "Bob"}, {"name": "Eve"}]}
+let r15 = match (data) {
+    case {users: [first, ...rest]} => first.name
+}
+print(r15) // Bob
+
+let r16 = match ([1, [2, 3]]) {
+    case [a, [b, c]] => a + b + c
+}
+print(r16) // 6
+
+// ===== 9. Range Patterns =====
+print("--- Range Patterns ---")
+
+let grade = function(score) {
+    return match (score) {
+        case 90..100 => "A"
+        case 80..89 => "B"
+        case 70..79 => "C"
+        case 60..69 => "D"
+        case _ => "F"
+    }
+}
+print(grade(95))  // A
+print(grade(85))  // B
+print(grade(42))  // F
+
+let r17 = match ("m") {
+    case "a".."z" => "lowercase"
+    case "A".."Z" => "uppercase"
+    case _ => "other"
+}
+print(r17) // lowercase
+
+// ===== 10. Extractor Patterns =====
+print("--- Extractors ---")
+
+// Some/None
+let maybeName = "Alice"
+let r18 = match (maybeName) {
+    case Some(s: string) => "Hello, " + s
+    case None => "no name"
+}
+print(r18) // Hello, Alice
+
+let r19 = match (null) {
+    case Some(x) => "got " + x
+    case None => "nothing"
+}
+print(r19) // nothing
+
+// Nil alias
+let r20 = match (null) {
+    case Nil => "nil value"
+    case _ => "not nil"
+}
+print(r20) // nil value
+
+// Tuple
+let r21 = match ([1, 2]) {
+    case Tuple(a, b) => a + b
+}
+print(r21) // 3
+
+// Regex
+let r22 = match ("12345") {
+    case Regex("^[0-9]+$") => "numeric"
+    case Regex("^[a-z]+$") => "alpha"
+    case _ => "mixed"
+}
+print(r22) // numeric
+
+let r23 = match ("hello") {
+    case Regex("^[0-9]+$") => "numeric"
+    case Regex("^[a-z]+$") => "alpha"
+    case _ => "mixed"
+}
+print(r23) // alpha
+
+// ===== 11. Comparison Patterns =====
+print("--- Comparison Patterns ---")
+
+let r24 = match (15) {
+    case > 100 => "huge"
+    case > 10 => "big"
+    case > 0 => "small"
+    case _ => "non-positive"
+}
+print(r24) // big
+
+let r25 = match (-5) {
+    case >= 0 => "non-negative"
+    case < 0 => "negative"
+}
+print(r25) // negative
+
+// ===== Match as Expression =====
+print("--- Match as Expression ---")
+
+let status = "active"
+let badge = match (status) {
+    case "active" => "green"
+    case "pending" => "yellow"
+    case "inactive" => "red"
+    case _ => "gray"
+}
+print(badge) // green
+
+// ===== Complex Real-World Example =====
+print("--- Complex Example ---")
+
+let processEvent = function(event) {
+    return match (event) {
+        case {type: "click", target: t} => "clicked on " + t
+        case {type: "keypress", key: k} if k == "Enter" => "submitted"
+        case {type: "keypress", key: k} => "pressed " + k
+        case {type: t} => "event: " + t
+        case _ => "unknown event"
+    }
+}
+
+print(processEvent({"type": "click", "target": "button"}))   // clicked on button
+print(processEvent({"type": "keypress", "key": "Enter"}))     // submitted
+print(processEvent({"type": "keypress", "key": "a"}))         // pressed a
+print(processEvent({"type": "scroll"}))                        // event: scroll
+
+// ===== ADT + Exhaustive Match =====
+print("--- ADT + Exhaustive Matching ---")
+
+type Result = Ok(value) | Err(error)
+let res = Ok(42)
+let adtOut = match (res) {
+    case Ok(v) => "ok=" + v
+    case Err(e) => "err=" + e
+}
+print(adtOut)
+
+// ===== Tagged / Typed Errors =====
+print("--- Tagged Errors ---")
+
+let errOut = try {
+    throw Error("invalid input", {"code": "E_INPUT"})
+} catch (e: Error) {
+    e.code + ":" + e.message
+}
+print(errOut)
+
+// ===== Lazy Evaluation =====
+print("--- Lazy Evaluation ---")
+
+let deferred = lazy (40 + 2)
+print(deferred)
+
+// ===== Ownership / Memory Safety (minimal runtime model) =====
+print("--- Ownership Safety ---")
+
+let ownershipMsg = try {
+    let owner = [1, 2, 3]
+    let take = function(x) {
+        let moved = x
+        return moved
+    }
+    let movedRef = take(owner)
+    let leaked = movedRef // same scope owner stays valid
+    let inner = function() {
+        let shadow = leaked
+        return shadow
+    }
+    inner()
+    "ownership_ok"
+} catch (e: Error) {
+    e.code + ":" + e.message
+}
+print(ownershipMsg)
+
+print("--- All tests passed! ---")

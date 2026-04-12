@@ -1,0 +1,57 @@
+// =============================================================================
+// Feature 4: Built-in Scheduler / Cron / Background Tasks
+// Run: go run ./cmd/interpreter testdata/examples_scheduler_new.spl
+// =============================================================================
+
+print "=== SPL Scheduler & Cron System ===";
+
+schedule_timezone("UTC");
+print "Scheduler timezone set to UTC";
+
+let cronJob = schedule("*/5 * * * *", "health-check", function() {
+    print "[cron] health check at " + now_iso();
+});
+print "Cron job: " + cronJob;
+
+let onceJob = schedule_once("0 12 * * *", "midday-once", function() {
+    print "[once] noon task fired";
+});
+print "One-time job: " + onceJob;
+
+let intervalJob = schedule_interval("10s", "heartbeat", function() {
+    print "[interval] heartbeat";
+});
+print "Interval job: " + intervalJob;
+
+schedule_now(function() {
+    print "[now] immediate job executed";
+});
+
+let persisted = schedule_persist("./testdata/scheduled_jobs.json");
+print "Persisted jobs: " + persisted;
+
+schedule_cancel(intervalJob);
+print "Cancelled interval job: " + intervalJob;
+
+let restored = schedule_restore("./testdata/scheduled_jobs.json");
+print "Restored persisted jobs: " + restored;
+
+let jobs = schedule_list();
+print "Current job count: " + len(jobs);
+print jobs;
+
+print "\n--- Blocking worker loop ---";
+print "schedule_run(1) executes currently due jobs synchronously";
+print "schedule_worker(\"3s\") blocks and polls for due jobs for 3 seconds";
+
+print "\n--- Background tasks ---";
+let future = background(function(n) {
+    let result = 1;
+    for (let i = 2; i <= n; i = i + 1) {
+        result = result * i;
+    }
+    return result;
+}, 6);
+print "factorial(6)=" + await future;
+
+print "=== Scheduler Examples Complete ===";

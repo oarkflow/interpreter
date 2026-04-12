@@ -1,0 +1,248 @@
+// =============================================================================
+// Feature 5: Native Web Framework Layer
+// Run: go run ./cmd/interpreter testdata/examples_web_framework.spl
+// =============================================================================
+
+print "=== SPL Native Web Framework ===";
+
+// -----------------------------------------------------------------------------
+// 1) Basic Server Creation
+// -----------------------------------------------------------------------------
+let app = server();
+print "Server created:";
+print app;
+
+// -----------------------------------------------------------------------------
+// 2) Simple Routes — GET, POST, PUT, DELETE
+// -----------------------------------------------------------------------------
+
+// GET route with path parameter
+route(app, "GET", "/", function(req, res) {
+    res.json({"message": "Welcome to SPL Web Framework!", "version": "1.0"});
+});
+
+route(app, "GET", "/hello/:name", function(req, res) {
+    let name = req.param("name");
+    res.json({"hello": name, "method": req.method, "path": req.path});
+});
+
+// POST route with JSON body parsing
+route(app, "POST", "/users", function(req, res) {
+    let body = req.json();
+    if (body == null) {
+        res.status(400).json({"error": "Invalid JSON body"});
+        return null;
+    }
+    res.status(201).json({"created": true, "user": body});
+});
+
+// PUT route
+route(app, "PUT", "/users/:id", function(req, res) {
+    let id = req.param("id");
+    let body = req.json();
+    res.json({"updated": true, "id": id, "data": body});
+});
+
+// DELETE route
+route(app, "DELETE", "/users/:id", function(req, res) {
+    let id = req.param("id");
+    res.json({"deleted": true, "id": id});
+});
+
+// ANY method route (matches GET, POST, etc.)
+route(app, "/health", function(req, res) {
+    res.json({"status": "ok", "uptime": "running"});
+});
+
+// Route returning plain text
+route(app, "GET", "/text", function(req, res) {
+    res.text("Hello, plain text world!");
+});
+
+// Route returning HTML
+route(app, "GET", "/page", function(req, res) {
+    res.html("<html><body><h1>SPL Web Page</h1><p>Rendered by SPL server</p></body></html>");
+});
+
+// -----------------------------------------------------------------------------
+// 3) Request Object — headers, query params, body
+// -----------------------------------------------------------------------------
+
+route(app, "GET", "/echo", function(req, res) {
+    let ua = req.get_header("User-Agent");
+    res.json({
+        "method": req.method,
+        "path": req.path,
+        "query": req.query,
+        "headers": req.headers,
+        "user_agent": ua
+    });
+});
+
+// Path parameters extraction
+route(app, "GET", "/posts/:postId/comments/:commentId", function(req, res) {
+    res.json({
+        "post_id": req.param("postId"),
+        "comment_id": req.param("commentId"),
+        "all_params": req.params
+    });
+});
+
+// -----------------------------------------------------------------------------
+// 4) Response Methods — status, header, redirect, file, json, text, html
+// -----------------------------------------------------------------------------
+
+route(app, "GET", "/custom-response", function(req, res) {
+    res.status(200)
+       .header("X-Custom", "SPL-Framework")
+       .header("X-Request-ID", "12345")
+       .json({"custom": true});
+});
+
+route(app, "GET", "/redirect-example", function(req, res) {
+    res.redirect("/hello/redirected");
+});
+
+route(app, "GET", "/redirect-permanent", function(req, res) {
+    res.redirect("/hello/permanent", 301);
+});
+
+// -----------------------------------------------------------------------------
+// 5) Middleware — global and path-scoped
+// -----------------------------------------------------------------------------
+
+// Global logging middleware
+middleware(app, function(req, res, next) {
+    print ">> " + req.method + " " + req.path;
+    next();
+    print "<< Response sent";
+});
+
+// Auth middleware for /api/* routes
+middleware(app, "/api", function(req, res, next) {
+    let token = req.get_header("Authorization");
+    if (token == null) {
+        res.status(401).json({"error": "Unauthorized", "message": "Token required"});
+        return null;
+    }
+    next();
+});
+
+// Protected API route
+route(app, "GET", "/api/profile", function(req, res) {
+    res.json({"user": "admin", "role": "superuser"});
+});
+
+route(app, "GET", "/api/settings", function(req, res) {
+    res.json({"theme": "dark", "lang": "en"});
+});
+
+// Rate limiting middleware example
+let requestCounts = {};
+middleware(app, "/api", function(req, res, next) {
+    // Simple in-memory rate limit demo
+    next();
+});
+
+// -----------------------------------------------------------------------------
+// 6) SSE (Server-Sent Events)
+// -----------------------------------------------------------------------------
+
+route(app, "GET", "/events", function(req, res) {
+    let sse = res.sse();
+    // Send a few events
+    sse.send("connected", "Welcome to SPL SSE!");
+    sse.send("update", "Event 1: Server started");
+    sse.send("update", "Event 2: Processing complete");
+    sse.send("done", "Stream finished");
+    sse.close();
+});
+
+// SSE with data-only events (no event name)
+route(app, "GET", "/stream", function(req, res) {
+    let sse = res.sse();
+    sse.send("Hello from SSE stream");
+    sse.send("Another message");
+    sse.close();
+});
+
+// -----------------------------------------------------------------------------
+// 7) Static Files
+// -----------------------------------------------------------------------------
+
+// Serve static files from a directory
+static(app, "/static/", "./public");
+static(app, "/assets/", "./assets");
+
+// -----------------------------------------------------------------------------
+// 8) Template Directory
+// -----------------------------------------------------------------------------
+
+template_dir(app, "./templates");
+
+// -----------------------------------------------------------------------------
+// 9) Server Properties
+// -----------------------------------------------------------------------------
+
+print "Server routes:";
+print app.routes;
+print "Server running:";
+print app.running;
+
+// -----------------------------------------------------------------------------
+// 10) RESTful API Example — full CRUD
+// -----------------------------------------------------------------------------
+
+let todos = [];
+let nextId = 1;
+
+// List all todos
+route(app, "GET", "/api/todos", function(req, res) {
+    res.json({"todos": todos, "count": todos});
+});
+
+// Get single todo
+route(app, "GET", "/api/todos/:id", function(req, res) {
+    let id = req.param("id");
+    let found = null;
+    for (let i = 0; i < todos.length; i = i + 1) {
+        if (todos[i].id == id) {
+            found = todos[i];
+        }
+    }
+    if (found == null) {
+        res.status(404).json({"error": "Todo not found"});
+        return null;
+    }
+    res.json(found);
+});
+
+// Create todo
+route(app, "POST", "/api/todos", function(req, res) {
+    let body = req.json();
+    let todo = {
+        "id": nextId,
+        "title": body.title,
+        "done": false
+    };
+    nextId = nextId + 1;
+    res.status(201).json(todo);
+});
+
+// -----------------------------------------------------------------------------
+// 11) Listen (async mode for testing, or blocking for production)
+// -----------------------------------------------------------------------------
+
+// Async start — returns immediately, server runs in background
+// let running = listen_async(app, 3000);
+// print "Server started on port 3000";
+// print running;
+
+// Blocking start — uncomment to actually run the server:
+listen(app, 3000);
+
+// Shutdown (for async mode):
+// shutdown(app);
+
+print "=== Web Framework Examples Complete ===";
+print "Uncomment listen(app, 3000) at the bottom to start the server.";

@@ -1,0 +1,24 @@
+// Additional time builtin examples.
+let ok = true;
+
+ok = ok && iso_to_unix("1970-01-01T00:00:00Z") == 0;
+ok = ok && iso_to_unix_ms("1970-01-01T00:00:00Z") == 0;
+ok = ok && format_time(0, "YYYY-MM-DD HH:mm:ss") == "1970-01-01 00:00:00";
+ok = ok && parse_time("1970-01-01 00:00:00", "YYYY-MM-DD HH:mm:ss") == 0;
+ok = ok && now() > 0;
+ok = ok && now_iso() != "";
+ok = ok && now_format("YYYY") != "";
+
+ok = ok && time_add(0, 1, "day") == 86400;
+ok = ok && time_sub(86400, 1, "day") == 0;
+ok = ok && time_diff(86400, 0, "day") == 1;
+ok = ok && start_of_day(86399) == 0;
+ok = ok && end_of_day(1) == 86399;
+ok = ok && start_of_week(0) == -259200;
+ok = ok && end_of_month(0) == 2678399;
+ok = ok && add_months(0, 1) == 2678400;
+ok = ok && date_with_format(2026, 2, 23, "YYYY-MM-DD") == "2026-02-23";
+ok = ok && format_time_tz(0, "YYYY-MM-DD HH:mm", "America/New_York") == "1969-12-31 19:00";
+ok = ok && parse_time_tz("1969-12-31 19:00", "YYYY-MM-DD HH:mm", "America/New_York") == 0;
+
+ok;

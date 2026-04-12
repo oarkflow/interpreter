@@ -1,0 +1,5 @@
+assert_true(1 < 2, "basic comparison");
+assert_eq(2 + 2, 4, "arithmetic");
+assert_eq("ab" + "c", "abc");
+
+test_summary();

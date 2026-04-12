@@ -1,0 +1,48 @@
+// =============================================================================
+// Feature 1: Reactive System + Template SSR/Hydration
+// Run: go run ./cmd/interpreter testdata/examples_reactive_new.spl
+// =============================================================================
+
+print "=== SPL Reactive System ===";
+
+print "--- Runtime signals ---";
+let count = signal("count", 1);
+let name = signal("name", "Ada");
+
+let label = computed(function() {
+    return name.value + " clicked " + count.value + " times";
+});
+
+let tracker = effect(function() {
+    print "[effect] " + label.value;
+});
+
+count.set(2);
+name.set("Grace");
+batch(function() {
+    count.set(3);
+    name.set("Linus");
+});
+tracker.dispose();
+
+print "signal count=" + count.value;
+print "computed label=" + label.value;
+
+print "\n--- Template directives now supported ---";
+print "Use these in template files rendered through the web layer:";
+print "  @signal(count = 3)";
+print "  <div>@bind(count)</div>";
+print "  @effect(count) {<span>${count}</span>}";
+print "  @lazy(showExtra) {<aside>Visible</aside>} @fallback {<aside>Hidden</aside>}";
+
+print "\n--- Example SSR template snippet ---";
+print "@signal(counter = 5)";
+print "<h1>Counter: @bind(counter)</h1>";
+print "@effect(counter) {<strong>${counter}</strong>}";
+
+print "\nHydration behavior:";
+print "  - signals are serialized into the page";
+print "  - @bind wires DOM updates and input[value] two-way sync";
+print "  - @effect emits hydrated DOM islands that re-render on signal updates";
+
+print "\n=== Reactive Examples Complete ===";

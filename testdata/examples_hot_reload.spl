@@ -1,0 +1,165 @@
+// =============================================================================
+// Feature 6: Hot Reloading (Runtime Code Reload)
+// Run: go run ./cmd/interpreter testdata/examples_hot_reload.spl
+// =============================================================================
+
+print "=== SPL Hot Reloading & File Watching ===";
+
+// -----------------------------------------------------------------------------
+// 1) Basic File Watching — watch(path, handler)
+// -----------------------------------------------------------------------------
+
+// Watch a single file for changes
+let w1 = watch("./testdata/hello.spl", function(changed_files) {
+    print "[WATCH] Files changed:";
+    for (let i = 0; i < changed_files.length; i = i + 1) {
+        print "  - " + changed_files[i];
+    }
+});
+print "Watching file: " + w1;
+
+// Watch a directory for any file changes
+let w2 = watch("./testdata", function(changed_files) {
+    print "[WATCH] Directory changes detected: " + changed_files.length + " files";
+});
+print "Watching directory: " + w2;
+
+// -----------------------------------------------------------------------------
+// 2) Glob Pattern Watching — watch(path, pattern, handler)
+// -----------------------------------------------------------------------------
+
+// Watch only .spl files in a directory
+let w3 = watch("./testdata", "*.spl", function(changed_files) {
+    print "[WATCH] SPL file changed:";
+    for (let i = 0; i < changed_files.length; i = i + 1) {
+        print "  Modified: " + changed_files[i];
+    }
+});
+print "Watching *.spl files: " + w3;
+
+// Watch only JSON files
+let w4 = watch("./testdata", "*.json", function(changed_files) {
+    print "[WATCH] JSON config changed - reloading configuration";
+});
+print "Watching *.json files: " + w4;
+
+// -----------------------------------------------------------------------------
+// 3) Options-based Watching — watch(path, options_hash)
+// -----------------------------------------------------------------------------
+
+// Watch with custom debounce and pattern
+let w5 = watch("./testdata", {
+    "pattern": "*.spl",
+    "debounce": 500,
+    "handler": function(changed_files) {
+        print "[WATCH] Debounced change detected after 500ms";
+        for (let i = 0; i < changed_files.length; i = i + 1) {
+            print "  File: " + changed_files[i];
+        }
+    }
+});
+print "Watching with options: " + w5;
+
+// Watch with fast debounce for development
+let w6 = watch("./testdata", {
+    "pattern": "*.spl",
+    "debounce": 100,
+    "handler": function(changed_files) {
+        print "[DEV] Quick reload triggered";
+    }
+});
+print "Dev watch (100ms debounce): " + w6;
+
+// -----------------------------------------------------------------------------
+// 4) Unwatching — unwatch(watch_id)
+// -----------------------------------------------------------------------------
+
+// Remove specific watch
+let removed = unwatch(w4);
+print "Removed JSON watch (" + w4 + "): " + removed;
+
+// Try removing again (returns false)
+let removed2 = unwatch(w4);
+print "Double remove (" + w4 + "): " + removed2;
+
+// Remove directory watch
+unwatch(w2);
+print "Removed directory watch";
+
+// -----------------------------------------------------------------------------
+// 5) Hot Reload — hot_reload(path)
+// -----------------------------------------------------------------------------
+
+// Hot reload a file — watches it and re-evaluates on change
+// When the file changes, SPL will:
+//   1. Invalidate the module cache for that file
+//   2. Re-read and parse the file
+//   3. Re-evaluate it in the current environment
+//
+// This is ideal for development workflows:
+
+// let hr1 = hot_reload("./testdata/hello.spl");
+// print "Hot reload active: " + hr1;
+
+// Hot reload a module file
+// let hr2 = hot_reload("./testdata/modules/math.spl");
+// print "Hot reload module: " + hr2;
+
+// -----------------------------------------------------------------------------
+// 6) Practical Patterns
+// -----------------------------------------------------------------------------
+
+print "\n--- Practical Watch Patterns ---";
+
+// Config file watcher — reload app settings on change
+let configWatcher = watch(".", "config.json", function(changed) {
+    print "[CONFIG] Configuration file updated, reloading settings...";
+    // In real code: re-read and parse the config
+    // let config = json_parse(file_read("config.json"));
+});
+print "Config watcher: " + configWatcher;
+
+// Template watcher — invalidate template cache on change
+let templateWatcher = watch("./templates", "*.html", function(changed) {
+    print "[TEMPLATE] Template changed, clearing cache:";
+    for (let i = 0; i < changed.length; i = i + 1) {
+        print "  Cleared: " + changed[i];
+    }
+});
+print "Template watcher: " + templateWatcher;
+
+// Source watcher — trigger recompilation on .spl file change
+let srcWatcher = watch("./src", "*.spl", function(changed) {
+    print "[BUILD] Source changed, rebuilding...";
+    for (let i = 0; i < changed.length; i = i + 1) {
+        print "  Rebuilding: " + changed[i];
+    }
+    print "[BUILD] Build complete!";
+});
+print "Source watcher: " + srcWatcher;
+
+// Test runner — auto-run tests when source changes
+let testWatcher = watch("./testdata", "*.spl", function(changed) {
+    print "[TEST] Source changed, running tests...";
+    // In real code: exec("go test ./...")
+    print "[TEST] All tests passed!";
+});
+print "Test watcher: " + testWatcher;
+
+// -----------------------------------------------------------------------------
+// 7) Cleanup
+// -----------------------------------------------------------------------------
+
+print "\n--- Cleanup ---";
+unwatch(w1);
+unwatch(w3);
+unwatch(w5);
+unwatch(w6);
+unwatch(configWatcher);
+unwatch(templateWatcher);
+unwatch(srcWatcher);
+unwatch(testWatcher);
+print "All watchers removed.";
+
+print "\n=== Hot Reload Examples Complete ===";
+print "Uncomment hot_reload() lines and modify watched files to see live reloading.";

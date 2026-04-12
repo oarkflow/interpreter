@@ -1,0 +1,198 @@
+// =============================================================================
+// Feature 4: Built-in Scheduler / Cron / Background Tasks
+// Run: go run ./cmd/interpreter testdata/examples_scheduler.spl
+// =============================================================================
+
+print "=== SPL Scheduler & Cron System ===";
+
+// -----------------------------------------------------------------------------
+// 1) Cron Expression — schedule(cron_expr, handler)
+// -----------------------------------------------------------------------------
+
+// Schedule a task to run every minute
+let job1 = schedule("* * * * *", "every-minute-task", function() {
+    print "[CRON] Running every minute: " + time_format(time_now(), "15:04:05");
+});
+print "Scheduled cron job: " + job1;
+
+// Schedule a task at a specific time (e.g., 9:30 AM every day)
+let job2 = schedule("30 9 * * *", "morning-report", function() {
+    print "[CRON] Morning report generated";
+});
+print "Scheduled morning job: " + job2;
+
+// Schedule for weekdays only (Mon-Fri at 8 AM)
+let job3 = schedule("0 8 * * 1-5", "weekday-alert", function() {
+    print "[CRON] Weekday alert triggered";
+});
+print "Scheduled weekday job: " + job3;
+
+// Every 5 minutes
+let job4 = schedule("*/5 * * * *", "health-check", function() {
+    print "[CRON] Health check OK";
+});
+print "Scheduled 5-min health check: " + job4;
+
+// Every hour on the hour
+let job5 = schedule("0 * * * *", "hourly-sync", function() {
+    print "[CRON] Hourly sync running";
+});
+print "Scheduled hourly sync: " + job5;
+
+// -----------------------------------------------------------------------------
+// 2) One-time Scheduled Task — schedule_once(cron_expr, handler)
+// -----------------------------------------------------------------------------
+
+// Fire once at next matching minute, then auto-remove
+let once1 = schedule_once("* * * * *", "one-time-init", function() {
+    print "[ONCE] One-time initialization complete!";
+});
+print "One-time job: " + once1;
+
+// Fire once at 12:00 noon today
+let once2 = schedule_once("0 12 * * *", function() {
+    print "[ONCE] Noon notification sent";
+});
+print "One-time noon job: " + once2;
+
+// -----------------------------------------------------------------------------
+// 3) Interval-based Scheduling — schedule_interval(duration, handler)
+// -----------------------------------------------------------------------------
+
+// Run every 5 seconds (5000ms)
+let interval1 = schedule_interval(5000, "5s-tick", function() {
+    print "[INTERVAL] 5-second tick at " + time_format(time_now(), "15:04:05");
+});
+print "Interval job (5s): " + interval1;
+
+// Run every 30 seconds using duration string
+let interval2 = schedule_interval("30s", "30s-poll", function() {
+    print "[INTERVAL] 30-second poll";
+});
+print "Interval job (30s): " + interval2;
+
+// Run every minute using duration string
+let interval3 = schedule_interval("1m", function() {
+    print "[INTERVAL] 1-minute heartbeat";
+});
+print "Interval job (1m): " + interval3;
+
+// Run every 2 hours
+let interval4 = schedule_interval("2h", "cache-refresh", function() {
+    print "[INTERVAL] Cache refreshed";
+});
+print "Interval job (2h): " + interval4;
+
+// -----------------------------------------------------------------------------
+// 4) Listing All Scheduled Jobs — schedule_list()
+// -----------------------------------------------------------------------------
+
+print "\n--- All Scheduled Jobs ---";
+let jobs = schedule_list();
+for (let i = 0; i < jobs.length; i = i + 1) {
+    let job = jobs[i];
+    print "  Job: " + job.id + " | Name: " + job.name + " | Active: " + job.active;
+}
+print "Total jobs: " + jobs.length;
+
+// -----------------------------------------------------------------------------
+// 5) Cancelling Jobs — schedule_cancel(job_id)
+// -----------------------------------------------------------------------------
+
+print "\n--- Cancel Demo ---";
+let cancelled = schedule_cancel(job4);
+print "Cancelled health-check (" + job4 + "): " + cancelled;
+
+// Try cancelling again (should return false)
+let cancelled2 = schedule_cancel(job4);
+print "Double cancel (" + job4 + "): " + cancelled2;
+
+// Cancel interval job
+schedule_cancel(interval1);
+print "Cancelled 5s interval";
+
+// List remaining jobs
+let remaining = schedule_list();
+print "Remaining jobs: " + remaining.length;
+
+// -----------------------------------------------------------------------------
+// 6) Job Persistence — schedule_persist(path)
+// -----------------------------------------------------------------------------
+
+// Persist all active jobs to a JSON file
+// let persisted = schedule_persist("./scheduled_jobs.json");
+// print "Jobs persisted: " + persisted;
+
+// -----------------------------------------------------------------------------
+// 7) Background Tasks — background(handler)
+// -----------------------------------------------------------------------------
+
+print "\n--- Background Tasks ---";
+
+// Run a function in the background, returns a Future
+let future1 = background(function() {
+    // Simulate long computation
+    let sum = 0;
+    for (let i = 0; i < 1000; i = i + 1) {
+        sum = sum + i;
+    }
+    return sum;
+});
+print "Background task started: " + future1;
+
+// Background with arguments
+let future2 = background(function(n) {
+    let result = 1;
+    for (let i = 2; i <= n; i = i + 1) {
+        result = result * i;
+    }
+    return result;
+}, 10);
+print "Background factorial started: " + future2;
+
+// Await futures
+let result1 = await(future1);
+print "Background sum result: " + result1;
+
+let result2 = await(future2);
+print "Background factorial(10) result: " + result2;
+
+// Multiple background tasks for parallel execution
+let tasks = [];
+for (let i = 0; i < 5; i = i + 1) {
+    let taskNum = i;
+    let f = background(function() {
+        return "Task " + taskNum + " complete";
+    });
+    // push(tasks, f);
+}
+print "Launched 5 parallel background tasks";
+
+// -----------------------------------------------------------------------------
+// 8) Practical Examples
+// -----------------------------------------------------------------------------
+
+print "\n--- Practical Scheduler Patterns ---";
+
+// Retry pattern with exponential backoff
+let retryCount = 0;
+let maxRetries = 3;
+
+let retryJob = schedule_interval(1000, "retry-task", function() {
+    retryCount = retryCount + 1;
+    print "[RETRY] Attempt " + retryCount + " of " + maxRetries;
+    if (retryCount >= maxRetries) {
+        print "[RETRY] Max retries reached, cancelling";
+        schedule_cancel(retryJob);
+    }
+});
+
+// Cleanup: cancel all remaining jobs
+print "\n--- Cleanup ---";
+let allJobs = schedule_list();
+for (let i = 0; i < allJobs.length; i = i + 1) {
+    schedule_cancel(allJobs[i].id);
+}
+print "All jobs cancelled. Remaining: " + schedule_list().length;
+
+print "\n=== Scheduler Examples Complete ===";

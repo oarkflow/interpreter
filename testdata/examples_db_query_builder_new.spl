@@ -1,0 +1,53 @@
+// =============================================================================
+// Feature 3: DB Pattern Matching + Lazy Query Builder
+// Run: go run ./cmd/interpreter testdata/examples_db_query_builder_new.spl
+// =============================================================================
+
+print "=== SPL Query Builder + Pattern Matching ===";
+
+let db, err = db_connect("sqlite", ":memory:");
+if (err != null) { throw err; }
+
+let _, createErr = db_exec(db, "CREATE TABLE items (name TEXT, qty INTEGER, kind TEXT)");
+if (createErr != null) { throw createErr; }
+
+let _, _ = db_exec(db, "INSERT INTO items(name, qty, kind) VALUES(?, ?, ?)", ["apples", 3, "fruit"]);
+let _, _ = db_exec(db, "INSERT INTO items(name, qty, kind) VALUES(?, ?, ?)", ["desk", 8, "furniture"]);
+let _, _ = db_exec(db, "INSERT INTO items(name, qty, kind) VALUES(?, ?, ?)", ["bananas", 6, "fruit"]);
+
+print "--- Standard builder ---";
+let q = query(db, "items")
+    .select("name", "qty", "kind")
+    .where("qty", ">", 2)
+    .order_by("qty DESC");
+print q.sql();
+
+let rows, qerr = q.exec();
+if (qerr != null) { throw qerr; }
+print rows;
+
+print "\n--- Pattern-driven filtering ---";
+let fruitQuery = query(db, "items")
+    .where_match("{kind: \"fruit\", qty: > 2}")
+    .order_by("qty DESC");
+print fruitQuery.sql();
+
+let fruits, ferr = fruitQuery.exec();
+if (ferr != null) { throw ferr; }
+print fruits;
+
+print "\n--- Pattern-driven decode ---";
+let decoded = query(db, "items")
+    .select("name", "qty")
+    .decode_match("{name: item_name, qty: total}");
+print decoded;
+
+print "\n--- Lazy execution ---";
+let lazyFruits = query(db, "items")
+    .where_match("{kind: \"fruit\"}")
+    .lazy();
+print lazyFruits;
+print lazyFruits[0].name;
+
+db_close(db);
+print "=== Query Builder Examples Complete ===";

@@ -1,0 +1,47 @@
+// =============================================================================
+// Feature 2: Streaming / Incremental Rendering
+// Run: go run ./cmd/interpreter testdata/examples_streaming_new.spl
+// =============================================================================
+
+print "=== SPL Streaming & Incremental Rendering ===";
+
+print "--- Template syntax now available ---";
+print "@stream {<section>Immediate chunk</section>}";
+print "@defer {<section>Deferred chunk</section>} @fallback {<section>Loading...</section>}";
+print "@lazy(isReady) {<footer>Ready</footer>} @fallback {<footer>Not ready</footer>}";
+
+print "\n--- Web integration ---";
+let app = web_app("./testdata/web");
+
+route(app, "GET", "/streaming-demo", function(req, res) {
+    res.stream("stream.html", {"title": "Streaming Demo", "ready": false});
+});
+
+route(app, "GET", "/ssr-demo", function(req, res) {
+    res.render_ssr("index.html", {
+        "title": "Hydrated Page",
+        "counter": 4,
+        "items": [
+            {"name": "Reactive templates", "ready": true},
+            {"name": "Deferred chunks", "ready": false}
+        ]
+    });
+});
+
+print "Registered /streaming-demo using res.stream(template, data)";
+print "Registered /ssr-demo using res.render_ssr(template, data)";
+print "Template files live under testdata/web/";
+print "  - testdata/web/stream.html";
+print "  - testdata/web/index.html";
+
+print "\n--- SSE is still available for event streams ---";
+route(app, "GET", "/events", function(req, res) {
+    let sse = res.sse();
+    sse.send("chunk", "hero ready");
+    sse.send("chunk", "analytics ready");
+    sse.send("done", "complete");
+    sse.close();
+});
+listen(app, 3001);
+print "Run with listen(app, 3001); to see streamed responses.";
+print "=== Streaming Examples Complete ===";

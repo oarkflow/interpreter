@@ -1,0 +1,203 @@
+// =============================================================================
+// Feature 2: Streaming / Incremental Rendering
+// Run: go run ./cmd/interpreter testdata/examples_streaming.spl
+// =============================================================================
+
+print "=== SPL Streaming & Incremental Rendering ===";
+
+// NOTE: The streaming directives (@stream, @defer, @lazy) are template
+// engine features used in .html template files. Below we show how they
+// integrate with the SPL web framework and template engine.
+
+// -----------------------------------------------------------------------------
+// 1) @stream Directive — flushes content to client as it's rendered
+// -----------------------------------------------------------------------------
+
+// In a template file (e.g., templates/stream_demo.html):
+//
+// <html>
+// <body>
+//   <h1>Streaming Page</h1>
+//
+//   @stream
+//     <section class="hero">
+//       <h2>Welcome ${user.name}</h2>
+//       <p>This section is streamed immediately</p>
+//     </section>
+//
+//   @stream
+//     <section class="content">
+//       <!-- This section flushes to client as soon as it's rendered -->
+//       <ul>
+//       @for item in items
+//         <li>${item.name} - $${item.price}</li>
+//       @end
+//       </ul>
+//     </section>
+//
+//   <footer>Page rendered at ${timestamp}</footer>
+// </body>
+// </html>
+
+// -----------------------------------------------------------------------------
+// 2) @defer Directive — render placeholder, fill in later
+// -----------------------------------------------------------------------------
+
+// In a template file (e.g., templates/defer_demo.html):
+//
+// <html>
+// <body>
+//   <h1>Dashboard</h1>
+//
+//   <!-- Main content renders immediately -->
+//   <div class="quick-stats">
+//     <span>Users: ${user_count}</span>
+//     <span>Active: ${active_count}</span>
+//   </div>
+//
+//   <!-- Heavy analytics widget loads asynchronously -->
+//   @defer id="analytics"
+//     <div class="analytics-widget">
+//       <h3>Analytics Report</h3>
+//       <table>
+//         @for row in analytics_data
+//           <tr><td>${row.metric}</td><td>${row.value}</td></tr>
+//         @end
+//       </table>
+//     </div>
+//   @end
+//
+//   <!-- Deferred with custom fallback/loading state -->
+//   @defer id="recommendations"
+//     @fallback
+//       <div class="skeleton-loader">Loading recommendations...</div>
+//     @end
+//     <div class="recommendations">
+//       @for item in recommended_items
+//         <div class="rec-card">
+//           <img src="${item.image}" />
+//           <h4>${item.title}</h4>
+//         </div>
+//       @end
+//     </div>
+//   @end
+// </body>
+// </html>
+//
+// The client receives:
+// 1. Full page with placeholder <div id="analytics"><span class="spl-loading">Loading...</span></div>
+// 2. After analytics query completes, a <script> tag replaces the placeholder content
+// 3. Same for recommendations — skeleton UI shows first, then real content streams in
+
+// -----------------------------------------------------------------------------
+// 3) @lazy Directive — defer until data is needed
+// -----------------------------------------------------------------------------
+
+// In a template file:
+//
+// <html>
+// <body>
+//   @lazy
+//     @fallback
+//       <p>Checking permissions...</p>
+//     @end
+//     @if user.is_admin
+//       <div class="admin-panel">
+//         <h3>Admin Controls</h3>
+//         <button>Manage Users</button>
+//         <button>System Settings</button>
+//       </div>
+//     @end
+//   @end
+// </body>
+// </html>
+
+// -----------------------------------------------------------------------------
+// 4) Streaming with Web Framework Integration
+// -----------------------------------------------------------------------------
+
+print "--- Streaming Web Framework Integration ---";
+
+let app = server();
+
+// Streaming endpoint — uses StreamRenderer internally
+route(app, "GET", "/dashboard", function(req, res) {
+    // Prepare data — some fields are fast, some are slow
+    let data = {
+        "user": {"name": "Alice", "role": "admin"},
+        "user_count": 1542,
+        "active_count": 328
+    };
+
+    // Render template with streaming
+    // In production, this would use the template engine's RenderStream()
+    res.html("<html><body><h1>Dashboard for " + data.user.name + "</h1>"
+        + "<p>Users: " + data.user_count + "</p>"
+        + "<p>Active: " + data.active_count + "</p>"
+        + "<div id='spl-defer-1'><span class='spl-loading'>Loading analytics...</span></div>"
+        + "</body></html>");
+});
+
+// SSE-based streaming for real-time updates
+route(app, "GET", "/dashboard/stream", function(req, res) {
+    let sse = res.sse();
+
+    // Stream initial data immediately
+    sse.send("init", "{\"user_count\": 1542, \"active\": 328}");
+
+    // Stream analytics data as it becomes available
+    sse.send("analytics", "{\"pageviews\": 25000, \"bounce_rate\": 0.35}");
+
+    // Stream recommendations
+    sse.send("recommendations", "[{\"title\": \"Product A\"}, {\"title\": \"Product B\"}]");
+
+    sse.send("done", "complete");
+    sse.close();
+});
+
+print "Dashboard route registered at /dashboard";
+print "Stream route registered at /dashboard/stream";
+
+// -----------------------------------------------------------------------------
+// 5) Programmatic StreamRenderer Usage (Go-side API)
+// -----------------------------------------------------------------------------
+
+// The StreamRenderer can be used from Go code:
+//
+//   engine := template.New()
+//   sr := template.NewStreamRenderer(engine, data)
+//   err := sr.RenderStream(responseWriter, templateString)
+//
+// Or for testing:
+//   result, err := sr.RenderStreamToString(templateString)
+
+// -----------------------------------------------------------------------------
+// 6) Chunked Transfer Pattern
+// -----------------------------------------------------------------------------
+
+// Using SSE for progressive page loading
+route(app, "GET", "/progressive", function(req, res) {
+    let sse = res.sse();
+
+    // Chunk 1: Header and navigation
+    sse.send("chunk", "<header><nav>SPL App</nav></header>");
+
+    // Chunk 2: Main content
+    sse.send("chunk", "<main><h1>Welcome</h1><p>Content loaded progressively</p></main>");
+
+    // Chunk 3: Sidebar (loaded after main content)
+    sse.send("chunk", "<aside><h3>Recent Activity</h3><ul><li>Login</li><li>Edit</li></ul></aside>");
+
+    // Chunk 4: Footer
+    sse.send("chunk", "<footer>Loaded in 4 chunks</footer>");
+    sse.send("done", "");
+    sse.close();
+});
+
+print "Progressive route registered at /progressive";
+
+// Uncomment to run:
+listen(app, 3001);
+
+print "\n=== Streaming Examples Complete ===";
+print "Uncomment listen(app, 3001) to start the streaming demo server.";

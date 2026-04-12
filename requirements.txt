@@ -1,0 +1,279 @@
+Below are **10 advanced features every modern REPL should support**.
+
+---
+
+# 1. Intelligent Auto-Completion
+
+Press **Tab** to complete:
+
+* variables
+* functions
+* modules
+* keywords
+* object fields
+
+Example:
+
+```
+user.na<TAB>
+user.name
+```
+
+Great REPLs also show **method signatures and documentation**.
+
+---
+
+# 2. Syntax Highlighting
+
+Colorized input improves readability.
+
+Example:
+
+```
+let user = {name: "Sujit", age: 30}
+```
+
+Colors differentiate:
+
+* keywords
+* strings
+* numbers
+* variables
+* functions
+
+This is standard in REPLs like IPython.
+
+---
+
+# 3. Persistent Command History
+
+Users can navigate previous commands with **↑ ↓ keys**.
+
+Example:
+
+```
+↑
+print(users)
+```
+
+Advanced features:
+
+* search history (`Ctrl+R`)
+* save history across sessions
+* history file
+
+---
+
+# 4. Multi-Line Input
+
+Essential for writing real code.
+
+Example:
+
+```
+if user.age > 18 {
+    print("adult")
+}
+```
+
+The REPL should detect incomplete syntax and **continue prompting**.
+
+Example prompt style:
+
+```
+spl> if x > 5 {
+...     print(x)
+... }
+```
+
+---
+
+# 5. Object Introspection
+
+Inspect variables or objects dynamically.
+
+Example:
+
+```
+:type user
+```
+
+Output:
+
+```
+User {
+    name: String
+    age: Int
+}
+```
+
+Popular commands:
+
+```
+:type
+:doc
+:methods
+:fields
+```
+
+---
+
+# 6. Built-in Debug Mode
+
+Allow step-by-step execution inside the REPL.
+
+Example:
+
+```
+:debug factorial(5)
+```
+
+Features:
+
+* step
+* next
+* inspect variables
+* breakpoints
+
+This is extremely useful for interpreter development.
+
+---
+
+# 7. Pretty Printing
+
+Complex structures should be formatted.
+
+Instead of:
+
+```
+{a:1,b:2,c:{x:5,y:6}}
+```
+
+Print:
+
+```
+{
+  a: 1,
+  b: 2,
+  c: {
+    x: 5,
+    y: 6
+  }
+}
+```
+
+REPLs like IPython do this very well.
+
+---
+
+# 8. Special REPL Commands
+
+Commands that control the REPL environment.
+
+Common examples:
+
+```
+:help
+:exit
+:load file.spl
+:reload
+:vars
+:clear
+```
+
+Example:
+
+```
+:load math.spl
+```
+
+---
+
+# 9. Live Code Reloading
+
+Reload modules without restarting the REPL.
+
+Example:
+
+```
+:reload math
+```
+
+This allows **interactive development loops**, common in Clojure REPL.
+
+---
+
+# 10. Error Visualization
+
+Instead of plain errors, show:
+
+* code location
+* pointer to error
+* stack trace
+
+Example:
+
+```
+spl> add(5,)
+
+Error: unexpected token ')'
+    add(5,)
+         ^
+```
+
+Good error UX dramatically improves language usability.
+
+---
+
+# Bonus Features (Elite REPLs)
+
+The most advanced REPLs also include:
+
+* **AST viewer**
+
+```
+:ast 1 + 2 * 3
+```
+
+* **time profiling**
+
+```
+:time fibonacci(35)
+```
+
+* **memory usage**
+
+```
+:mem
+```
+
+* **package imports**
+
+```
+:install http
+```
+
+* **shell commands**
+
+```
+!ls
+```
+
+---
+
+# Ideal REPL Feature Set for SPL
+
+If SPL wants to feel **modern and professional**, the REPL should include:
+
+1. auto-completion
+2. syntax highlighting
+3. command history
+4. multi-line parser
+5. object introspection
+6. pretty printing
+7. REPL commands
+8. module reloading
+9. error visualization
+10. AST inspection
+
+This would put SPL’s REPL close to **IPython-level developer experience**.

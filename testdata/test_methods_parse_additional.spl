@@ -1,0 +1,31 @@
+// Additional method and parse builtin examples.
+let ok = true;
+
+ok = ok && "apple".upper() == "APPLE";
+ok = ok && "apple".toUpperCase() == "APPLE";
+ok = ok && "apple".includes("pp") == true;
+
+ok = ok && (-5).abs() == 5;
+ok = ok && (10).pow(2) == 100;
+ok = ok && (10).sqrt() == 3;
+ok = ok && (10).is_even() == true;
+ok = ok && (11).is_odd() == true;
+
+ok = ok && (0).to_iso() == "1970-01-01T00:00:00Z";
+ok = ok && (0).format("YYYY-MM-DD HH:mm:ss") == "1970-01-01 00:00:00";
+ok = ok && (0).add(1, "day") == 86400;
+ok = ok && (86400).sub(1, "day") == 0;
+ok = ok && (86400).diff(0, "day") == 1;
+
+ok = ok && type(parse_float("3.14")) == "FLOAT";
+ok = ok && to_int(parse_float("3.9")) == 3;
+ok = ok && parse_bool("true") == true;
+ok = ok && parse_bool("0") == false;
+ok = ok && parse_string(123) == "123";
+ok = ok && parse_type("12", "int") == 12;
+ok = ok && type(parse_type("12.5", "float")) == "FLOAT";
+ok = ok && parse_type("yes", "bool") == true;
+ok = ok && parse_type("1970-01-01T00:00:00Z", "time") == 0;
+ok = ok && parse_type("1970-01-01 00:00:00", "time", "YYYY-MM-DD HH:mm:ss") == 0;
+
+ok;

@@ -1,0 +1,99 @@
+// =============================================================================
+// TODO CRUD API Server
+// Run: go run ./cmd/interpreter testdata/examples_todo_crud_api_server.spl
+// =============================================================================
+
+print "=== SPL TODO CRUD API Server ===";
+
+let app = server();
+let todos = [];
+let nextId = 1;
+
+route(app, "GET", "/api/todos", function(req, res) {
+    res.json({"todos": todos, "count": len(todos)});
+});
+
+route(app, "GET", "/api/todos/:id", function(req, res) {
+    let id = int(req.param("id"));
+    let found = null;
+    for (let i = 0; i < len(todos); i = i + 1) {
+        if (todos[i].id == id) {
+            found = todos[i];
+        }
+    }
+    if (found == null) {
+        res.status(404).json({"error": "Todo not found", "id": id});
+        return null;
+    }
+    res.json(found);
+});
+
+route(app, "POST", "/api/todos", function(req, res) {
+    let body = req.json();
+    if (body == null) {
+        res.status(400).json({"error": "Invalid JSON body"});
+        return null;
+    }
+    let todo = {
+        "id": nextId,
+        "title": body.title,
+        "completed": false,
+        "priority": body.priority,
+        "notes": body.notes
+    };
+    nextId = nextId + 1;
+    push(todos, todo);
+    res.status(201).json(todo);
+});
+
+route(app, "PUT", "/api/todos/:id", function(req, res) {
+    let id = int(req.param("id"));
+    let body = req.json();
+    if (body == null) {
+        res.status(400).json({"error": "Invalid JSON body"});
+        return null;
+    }
+    for (let i = 0; i < len(todos); i = i + 1) {
+        if (todos[i].id == id) {
+            todos[i] = {
+                "id": id,
+                "title": body.title,
+                "completed": body.completed,
+                "priority": body.priority,
+                "notes": body.notes
+            };
+            res.json(todos[i]);
+            return null;
+        }
+    }
+    res.status(404).json({"error": "Todo not found", "id": id});
+});
+
+route(app, "DELETE", "/api/todos/:id", function(req, res) {
+    let id = int(req.param("id"));
+    let remaining = [];
+    let deleted = null;
+    for (let i = 0; i < len(todos); i = i + 1) {
+        if (todos[i].id == id) {
+            deleted = todos[i];
+        } else {
+            push(remaining, todos[i]);
+        }
+    }
+    if (deleted == null) {
+        res.status(404).json({"error": "Todo not found", "id": id});
+        return null;
+    }
+    todos = remaining;
+    res.json({"deleted": true, "todo": deleted});
+});
+
+print "Server routes:";
+print "  GET    /api/todos";
+print "  GET    /api/todos/:id";
+print "  POST   /api/todos";
+print "  PUT    /api/todos/:id";
+print "  DELETE /api/todos/:id";
+print "Listening on http://localhost:3020";
+
+listen(app, 3020);

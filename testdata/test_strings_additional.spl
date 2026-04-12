@@ -1,0 +1,25 @@
+// Additional string builtin examples.
+let ok = true;
+
+ok = ok && trim("  hi  ") == "hi";
+ok = ok && replace("a-b-c", "-", "_") == "a_b_c";
+ok = ok && starts_with("interpreter", "inter") == true;
+ok = ok && ends_with("interpreter", "ter") == true;
+ok = ok && repeat("ab", 3) == "ababab";
+ok = ok && substring("developer", 0, 4) == "deve";
+ok = ok && index_of("banana", "na") == 2;
+ok = ok && count_substr("banana", "an") == 2;
+ok = ok && title("hello_worldFrom-spl") == "Hello World From Spl";
+ok = ok && slug("Hello, World from SPL!") == "hello-world-from-spl";
+ok = ok && snake_case("helloWorld SPL") == "hello_world_spl";
+ok = ok && kebab_case("helloWorld SPL") == "hello-world-spl";
+ok = ok && camel_case("hello world_spl") == "helloWorldSpl";
+ok = ok && pascal_case("hello world_spl") == "HelloWorldSpl";
+ok = ok && regex_match("abc123", "^[a-z]+[0-9]+$") == true;
+ok = ok && regex_replace("abc-123", "[^a-z]+", "_") == "abc_";
+ok = ok && trim_prefix("prefix-value", "prefix-") == "value";
+ok = ok && trim_suffix("value.spl", ".spl") == "value";
+ok = ok && pad_left("7", 3, "0") == "007";
+ok = ok && pad_right("7", 3, "0") == "700";
+
+ok;

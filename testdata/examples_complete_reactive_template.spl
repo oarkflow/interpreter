@@ -1,0 +1,40 @@
+// =============================================================================
+// Complete Example: layout + blocks + components + slots + reactivity + streaming
+// Run: go run ./cmd/interpreter testdata/examples_complete_reactive_template.spl
+// =============================================================================
+
+print "=== SPL Complete Reactive Template Example ===";
+
+let app = web_app("./testdata/templates");
+
+route(app, "GET", "/complete", function(req, res) {
+    res.render_ssr("complete_reactive_showcase.html", {
+        "siteTitle": "SPL UI",
+        "pageTitle": "Complete Reactive Showcase",
+        "description": "all major template features working together in one page",
+        "footerText": "Rendered with SPL SSR + hydration",
+        "counter": 2,
+        "panelOpen": false,
+        "apiBase": "http://127.0.0.1:3020",
+        "userName": "sujit",
+        "searchQuery": "spl reactive templates",
+        "summary": "This page demonstrates layout inheritance, define/block, reusable components, named slots, reactive signals, effects, streaming sections, and filters in one complete example.",
+        "featureCount": 3,
+        "navLinks": [
+            {"href": "/complete", "label": "Showcase"},
+            {"href": "/api/status", "label": "Status"}
+        ],
+        "features": [
+            {"name": "signals", "status": "working"},
+            {"name": "components", "status": "working"},
+            {"name": "streaming", "status": "working"}
+        ]
+    });
+});
+
+route(app, "GET", "/api/status", function(req, res) {
+    res.json({"ok": true, "page": "/complete"});
+});
+
+print "Open /complete to see the all-in-one reactive template demo.";
+listen(app, 3010);

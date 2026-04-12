@@ -1,0 +1,40 @@
+// Additional crypto and encoding builtin examples.
+let ok = true;
+
+ok = ok && hash("sha256", "abc") == "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad";
+
+let digest = hmac("sha256", "key", "data");
+ok = ok && len(digest) == 64;
+
+let b64 = base64_encode("hello");
+ok = ok && base64_decode(b64) == "hello";
+
+let hx = hex_encode("hello");
+ok = ok && hex_decode(hx) == "hello";
+
+ok = ok && url_decode(url_encode("hello world")) == "hello world";
+ok = ok && constant_time_eq("abc", "abc") == true;
+ok = ok && constant_time_eq("abc", "abd") == false;
+
+let pwd = password_generate(20);
+ok = ok && len(pwd) == 20;
+
+let token = api_key("sk", 16);
+ok = ok && starts_with(token, "sk_") == true;
+
+let ph = password_hash("s3cr3t");
+ok = ok && password_verify("s3cr3t", ph) == true;
+ok = ok && password_verify("wrong", ph) == false;
+
+let key = "0123456789abcdef";
+let cipher = encrypt("aes_gcm", key, "hello");
+ok = ok && decrypt("aes_gcm", key, cipher) == "hello";
+
+let u = uuid(4);
+ok = ok && len(u) == 36;
+
+let u7 = uuid();
+ok = ok && len(u7) == 36;
+ok = ok && substring(u7, 14, 15) == "7";
+
+ok;

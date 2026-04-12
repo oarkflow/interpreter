@@ -1,0 +1,40 @@
+// =============================================================================
+// Feature 6: Hot Reloading (Runtime Code Reload)
+// Run: go run ./cmd/interpreter testdata/examples_hot_reload_new.spl
+// =============================================================================
+
+print "=== SPL Hot Reloading & File Watching ===";
+
+let splWatcher = watch("./testdata", "*.spl", function(files) {
+    print "[watch] SPL files changed:";
+    print files;
+});
+print "Watching SPL files: " + splWatcher;
+
+let templateWatcher = watch("./testdata/web", "*.html", function(files) {
+    print "[watch] template files changed:";
+    print files;
+    print "Template caches are invalidated by runtime hot reload hooks.";
+});
+print "Watching templates: " + templateWatcher;
+
+let debouncedWatcher = watch("./testdata", {
+    "pattern": "*.spl",
+    "debounce": 150,
+    "handler": function(files) {
+        print "[watch] debounced reload:";
+        print files;
+    }
+});
+print "Debounced watcher: " + debouncedWatcher;
+
+print "\n--- Runtime hot reload ---";
+print "Uncomment the next line to hot-reload an SPL file on change:";
+print "// let live = hot_reload(\"./testdata/hello.spl\");";
+print "Hot reload invalidates module cache and dispatches template cache hooks.";
+
+unwatch(splWatcher);
+unwatch(templateWatcher);
+unwatch(debouncedWatcher);
+
+print "=== Hot Reload Examples Complete ===";

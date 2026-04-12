@@ -1,0 +1,26 @@
+// Additional collection builtin examples.
+let ok = true;
+
+let arr = [1, 2, 3, 4, 5];
+ok = ok && first(arr) == 1;
+ok = ok && last(arr) == 5;
+ok = ok && len(rest(arr)) == 4;
+ok = ok && len(reverse([1, 2, 3])) == 3;
+ok = ok && len(slice(arr, 1, 3)) == 2;
+ok = ok && sum([1, 2, 3, 4]) == 10;
+ok = ok && avg([2, 4, 6]) == 4;
+ok = ok && len(compact([1, null, 2, null, 3])) == 3;
+ok = ok && len(flatten([[1, 2], [3], 4])) == 4;
+
+let h = {"a": 1, "b": 2};
+ok = ok && has_key(h, "a") == true;
+ok = ok && len(values(h)) == 2;
+ok = ok && get(h, "missing", 99) == 99;
+
+ok = ok && clamp(20, 0, 10) == 10;
+ok = ok && is_even(10) == true;
+ok = ok && is_odd(11) == true;
+ok = ok && any([null, false, 1]) == true;
+ok = ok && all([1, true, "x"]) == true;
+
+ok;

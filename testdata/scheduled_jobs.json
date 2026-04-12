@@ -1,0 +1,21 @@
+[
+  {
+    "id": "job_2",
+    "name": "midday-once",
+    "cron": "0 12 * * *",
+    "once": true,
+    "active": true
+  },
+  {
+    "id": "job_3",
+    "name": "heartbeat",
+    "interval": "10s",
+    "active": true
+  },
+  {
+    "id": "job_1",
+    "name": "health-check",
+    "cron": "*/5 * * * *",
+    "active": true
+  }
+]

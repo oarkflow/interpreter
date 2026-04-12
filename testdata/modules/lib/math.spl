@@ -1,0 +1,3 @@
+import "common.spl";
+
+export let answer = 40 + offset;

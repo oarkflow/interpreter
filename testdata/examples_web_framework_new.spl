@@ -1,0 +1,68 @@
+// =============================================================================
+// Feature 5: Native Web Framework Layer
+// Run: go run ./cmd/interpreter testdata/examples_web_framework_new.spl
+// =============================================================================
+
+print "=== SPL Native Web Framework ===";
+
+let app = web_app("./testdata/web");
+print "Web app created:";
+print app;
+
+middleware(app, function(req, res, next) {
+    print "[http] " + req.method + " " + req.path;
+    next();
+});
+
+route(app, "GET", "/", function(req, res) {
+    res.json({"message": "Welcome to SPL Web Framework", "ok": true});
+});
+
+route_group(app, "/api", "GET", "/health", function(req, res) {
+    res.json({"status": "ok", "time": now_iso()});
+});
+
+route_group(app, "/api", "GET", "/users/:id", function(req, res) {
+    res.json({"id": req.param("id"), "query": req.query});
+});
+
+route(app, "GET", "/html", function(req, res) {
+    res.html("<h1>Raw HTML response</h1>");
+});
+
+route(app, "GET", "/page", function(req, res) {
+    res.render("index.html", {
+        "title": "Server Rendered",
+        "counter": 2,
+        "apiBase": "http://127.0.0.1:3020",
+        "items": [
+            {"name": "Signals", "ready": true},
+            {"name": "Streaming", "ready": false}
+        ]
+    });
+});
+
+route(app, "GET", "/page-ssr", function(req, res) {
+    res.render_ssr("index.html", {
+        "title": "SSR + React-like Hydration",
+        "counter": 7,
+        "apiBase": "http://127.0.0.1:3020",
+        "items": [
+            {"name": "Hydration", "ready": true},
+            {"name": "Lazy blocks", "ready": false}
+        ]
+    });
+});
+
+route(app, "GET", "/page-stream", function(req, res) {
+    res.stream("stream.html", {"title": "Streaming Route", "ready": true});
+});
+
+static(app, "/assets/", "./testdata/web");
+
+listen(app, 3000);
+print "Routes registered:";
+print app.routes;
+print "Open /page-ssr to see button-driven reactive HTML updates after hydration.";
+print "Use listen(app, 3000); to run the server.";
+print "=== Web Framework Examples Complete ===";

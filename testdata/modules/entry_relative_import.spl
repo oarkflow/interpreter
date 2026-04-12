@@ -1,0 +1,3 @@
+import "lib/math.spl" as math;
+
+math.answer;

@@ -1,0 +1,12 @@
+.git
+.github
+.kilo
+cmd/*/static/node_modules
+**/*.test
+**/*_test.go
+coverage.out
+bin
+dist
+tmp
+*.log
+module-*-test-*

@@ -1,0 +1,1179 @@
+// Complete SPL feature showcase.
+// Run: go run ./cmd/interpreter testdata/complete_feature_showcase.spl
+
+print "=== SPL Complete Feature Showcase ===";
+
+// -----------------------------------------------------------------------------
+// 1) Module system (default import, alias import, selective import, wildcard,
+//    package-style bare imports resolved via testdata/spl.mod)
+// -----------------------------------------------------------------------------
+import "testdata/modules/lib/math.spl" as libmath;
+import "testdata/modules/math.spl";
+import {base, increment, label} from "testdata/modules/math.spl";
+import * as mathns from "testdata/modules/math.spl";
+import "showpkg/math.spl" as pkgmath;
+
+print "Module alias answer (libmath.answer):";
+print libmath.answer;
+print "Selective imports:";
+print base;
+print increment;
+print label;
+print "Wildcard namespace mathns.base + mathns.increment:";
+print mathns.base + mathns.increment;
+print "Package import answer (pkgmath.answer):";
+print pkgmath.answer;
+print "Package import label:";
+print pkgmath.label;
+
+// -----------------------------------------------------------------------------
+// 2) Variables, const, functions, closures, recursion
+// -----------------------------------------------------------------------------
+const MY_PI = 3.14159;
+let radius = 3;
+let area = MY_PI * radius * radius;
+print "Circle area:";
+print area;
+
+let makeAdder = function(x) {
+    return function(y) { x + y; };
+};
+let add10 = makeAdder(10);
+print "Closure add10(5):";
+print add10(5);
+
+let fib = function(n) {
+    if (n <= 1) { return n; }
+    return fib(n - 1) + fib(n - 2);
+};
+print "fib(10):";
+print fib(10);
+
+// -----------------------------------------------------------------------------
+// 3) Control flow (if/else, while, for, break, continue)
+// -----------------------------------------------------------------------------
+let sum = 0;
+for (let i = 0; i < 10; i = i + 1) {
+    if (i % 2 == 0) { continue; }
+    sum = sum + i;
+    if (sum > 20) { break; }
+}
+print "Control flow sum:";
+print sum;
+
+let counter = 0;
+while (counter < 3) {
+    print "while counter:";
+    print counter;
+    counter = counter + 1;
+}
+
+// -----------------------------------------------------------------------------
+// 4) Arrays, hashes, methods
+// -----------------------------------------------------------------------------
+let nums = [1, 2, 3, 4, 5, 6];
+let doubled = nums.map(function(x) { x * 2; });
+let evens = nums.filter(function(x) { x % 2 == 0; });
+let firstGt4 = nums.find(function(x) { x > 4; });
+print "doubled:";
+print doubled;
+print "evens:";
+print evens;
+print "first > 4:";
+print firstGt4;
+
+let user = {
+    "name": "SPL",
+    "role": "demo",
+    "meta": {"version": 1}
+};
+print "Dot access user.name:";
+print user.name;
+print "Hash keys length:";
+print len(keys(user));
+
+// -----------------------------------------------------------------------------
+// 5) String, parse, json, encode/decode
+// -----------------------------------------------------------------------------
+let raw = "  hello,World  ";
+let clean = trim(raw).replace(",", " ").title();
+print "Clean title:";
+print clean;
+
+print "sprintf/printf/interpolate:";
+let line = sprintf("name=%s count=%d ok=%t type=%T val=%v", "spl", 7, true, clean, {"k": 1});
+print line;
+printf("formatted user: %s (%d)\n", "alice", 30);
+print interpolate("Hello {name}, items={count}", {"name": "SPL", "count": 3});
+print interpolate("positional {0} + {1} = {2}", null, 20, 22, 42);
+
+let piText = to_string(MY_PI);
+let piFloat = parse_float(piText);
+print "Parsed PI type:";
+print type(piFloat);
+
+let payload = {"name": "spl", "ok": true, "count": 3};
+let jsonText = json_encode(payload);
+let decoded = json_decode(jsonText);
+print "JSON roundtrip name:";
+print decoded.name;
+
+let b64 = base64_encode("hello");
+print "base64 roundtrip:";
+print base64_decode(b64);
+
+// -----------------------------------------------------------------------------
+// 6) Crypto and time
+// -----------------------------------------------------------------------------
+print "sha256(abc):";
+print hash("sha256", "abc");
+print "hmac(sha256):";
+print hmac("sha256", "demo-key", "payload");
+
+let token = api_key("sk", 16);
+print "api key prefix check:";
+print starts_with(token, "sk_");
+
+let ph = password_hash("s3cr3t");
+print "password_verify:";
+print password_verify("s3cr3t", ph);
+
+let uid = uuid(4);
+print "uuid length:";
+print len(uid);
+print "uuid v7 sample (default):";
+print uuid();
+
+let secret = "0123456789abcdef";
+let cipher = encrypt("aes_gcm", secret, "top-secret");
+let plain = decrypt("aes_gcm", secret, cipher);
+print "decrypt(encrypt(...)):";
+print plain;
+
+let epoch = iso_to_unix("2020-01-01T00:00:00Z");
+print "epoch:";
+print epoch;
+print "format_time(epoch):";
+print format_time(epoch, "YYYY-MM-DD HH:mm:ss");
+print "timezone conversion:";
+print format_time_tz(epoch, "YYYY-MM-DD HH:mm", "America/New_York");
+print "month arithmetic:";
+print add_months(epoch, 1);
+
+// -----------------------------------------------------------------------------
+// 6.1) Hash and collection utility builtins
+// -----------------------------------------------------------------------------
+let profile = {"name": "Ada", "city": null};
+print "has_key(profile, name):";
+print has_key(profile, "name");
+print "get(profile, city, fallback):";
+print get(profile, "city", "Kathmandu");
+print "merge hashes:";
+print merge(profile, {"role": "engineer"});
+print "delete_key hash:";
+print delete_key(profile, "city");
+
+print "collection numeric helpers:";
+print clamp(19, 0, 10);
+print round(3.6);
+print floor(3.6);
+print ceil(3.1);
+print random_range(10, 20);
+print coalesce(null, null, "fallback");
+print coalesce(null, "default value");
+
+// -----------------------------------------------------------------------------
+// 7) File operations (safe path inside project)
+// -----------------------------------------------------------------------------
+let tmp = "testdata/demo_temp_showcase.txt";
+write_file(tmp, "temporary content");
+if (file_exists(tmp)) {
+    print "file content:";
+    print read_file(tmp);
+    remove_file(tmp);
+}
+
+// -----------------------------------------------------------------------------
+// 7.1) Database (SQLite in-memory, positional params, named params, tx)
+// -----------------------------------------------------------------------------
+let db, dberr = db_connect("sqlite", ":memory:");
+if (dberr == null) {
+    let createResult, cErr = db_exec(db, "CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT, age INTEGER)");
+    if (cErr == null) {
+        let insertResult1, iErr1 = db_exec(db, "INSERT INTO users (name, age) VALUES (?, ?)", ["Alice", 30]);
+        let insertResult2, iErr2 = db_exec(db, "INSERT INTO users (name, age) VALUES (:name, :age)", {"name": "Bob", "age": 22});
+        if (iErr1 == null && iErr2 == null) {
+            let tx, txErr = db_begin(db);
+            if (txErr == null) {
+                let rollbackInsert, rollbackInsertErr = db_exec(tx, "INSERT INTO users (name, age) VALUES (:name, :age)", {"name": "Rollback User", "age": 99});
+                if (rollbackInsertErr == null) {
+                    let rolledBack, rollbackErr = db_rollback(tx);
+                    if (rollbackErr == null) {
+                        print "db_rollback:";
+                        print rolledBack;
+                    }
+                }
+            }
+
+            let countAfterRollback, countAfterRollbackErr = db_query(db, "SELECT COUNT(*) AS total FROM users", null, "array");
+            if (countAfterRollbackErr == null) {
+                print "db count after rollback:";
+                print countAfterRollback;
+            }
+
+            let tx2, txErr2 = db_begin(db);
+            if (txErr2 == null) {
+                let commitInsert, commitInsertErr = db_exec(tx2, "INSERT INTO users (name, age) VALUES (:name, :age)", {"name": "Committed User", "age": 41});
+                if (commitInsertErr == null) {
+                    let committed, commitErr = db_commit(tx2);
+                    if (commitErr == null) {
+                        print "db_commit:";
+                        print committed;
+                    }
+                }
+            }
+
+            let rows, qErr = db_query(db, "SELECT name, age FROM users ORDER BY age DESC", null, "array");
+            if (qErr == null) {
+                print "db_query rows after commit:";
+                print rows;
+            }
+            let tables, tErr = db_tables(db);
+            if (tErr == null) {
+                print "db_tables:";
+                print tables;
+            }
+        }
+    }
+    let closeOk, closeErr = db_close(db);
+    if (closeErr != null) {
+        print closeErr;
+    }
+} else {
+    print dberr;
+}
+
+// -----------------------------------------------------------------------------
+// 7.2) Command execution (whitelisted)
+// -----------------------------------------------------------------------------
+print "exec(date):";
+print exec("date", 1000);
+
+// -----------------------------------------------------------------------------
+// 8) Error handling: try/catch/throw
+// -----------------------------------------------------------------------------
+let caught1 = try {
+    throw "manual error";
+} catch (e) {
+    "expected caught: " + e;
+};
+print caught1;
+
+let caught2 = try {
+    unknown_identifier;
+} catch (e) {
+    "expected runtime: " + e;
+};
+print caught2;
+
+// -----------------------------------------------------------------------------
+// 9) Builtin introspection + SPL-native assertions/test summary
+// -----------------------------------------------------------------------------
+print "help(assert_eq):";
+print help("assert_eq");
+
+assert_true(libmath.answer == 42, "module value check");
+assert_eq(mathns.base + mathns.increment, 42, "namespace check");
+assert_true(contains(help(), "run_tests"), "help list includes run_tests");
+
+print "test_summary:";
+print test_summary();
+
+print "run_tests on pass_assertions.spl:";
+print run_tests("testdata/tests/pass_assertions.spl");
+
+// -----------------------------------------------------------------------------
+// 10) Integrations showcase (examples only)
+// -----------------------------------------------------------------------------
+// This block is intentionally disabled so the main showcase stays runnable
+// without external services. Set to true when you want to test integrations.
+if (false) {
+    // HTTP
+    let hres, herr = http_get("https://httpbin.org/get", {"Accept": "application/json"}, 5000);
+    if (herr == null) {
+        print hres.status_code;
+    } else {
+        print herr;
+    }
+
+    // Optional webhook example (disabled by default)
+    if (false) {
+        let wres, werr = webhook(
+            "https://example.com/webhook",
+            {"event": "build_complete", "ok": true, "time": now_iso()},
+            {"X-Token": "demo-token"},
+            3000
+        );
+        if (werr != null) { print werr; }
+    }
+
+    // SMTP
+    let mailOk, mailErr = smtp_send({
+        "host": "localhost",
+        "port": 1025,
+        "from": "noreply@localhost",
+        "to": ["alice@localhost", "bob@localhost"],
+        "subject": "SPL Integration Demo",
+        "body": "Hello from SPL"
+    });
+    if (mailErr != null) { print mailErr; }
+
+    // FTP/SFTP examples (disabled by default unless endpoints are available)
+    if (false) {
+        let ftpCfg = {
+            "host": "ftp.example.com",
+            "port": 21,
+            "username": "ftp-user",
+            "password": "ftp-pass",
+            "timeout_ms": 5000
+        };
+        let files, listErr = ftp_list(ftpCfg, "/incoming");
+        if (listErr == null) {
+            print files;
+            let fgetOk, fgetErr = ftp_get(ftpCfg, "/incoming/report.csv", "testdata/report.csv");
+            if (fgetErr != null) { print fgetErr; }
+            let fputOk, fputErr = ftp_put(ftpCfg, "testdata/report.csv", "/outgoing/report.csv");
+            if (fputErr != null) { print fputErr; }
+        } else {
+            print listErr;
+        }
+
+        let sftpCfg = {
+            "host": "sftp.example.com",
+            "port": 22,
+            "username": "sftp-user",
+            "password": "sftp-pass",
+            "timeout_ms": 5000
+        };
+        let sfiles, slistErr = sftp_list(sftpCfg, "/data");
+        if (slistErr == null) {
+            print sfiles;
+            let sgetOk, sgetErr = sftp_get(sftpCfg, "/data/input.json", "testdata/input.json");
+            if (sgetErr != null) { print sgetErr; }
+            let sputOk, sputErr = sftp_put(sftpCfg, "testdata/input.json", "/data/output.json");
+            if (sputErr != null) { print sputErr; }
+        } else {
+            print slistErr;
+        }
+    }
+}
+
+// -----------------------------------------------------------------------------
+// 11) For-in loops (arrays, hashes, strings)
+// -----------------------------------------------------------------------------
+print "=== For-in loops ===";
+let colors = ["red", "green", "blue"];
+for (c in colors) { print c; }
+for (i, c in colors) { print sprintf("%d: %s", i, c); }
+
+let config = {"host": "localhost", "port": 8080};
+for (k, v in config) { print sprintf("%s = %v", k, v); }
+
+for (ch in "SPL") { print ch; }
+
+// -----------------------------------------------------------------------------
+// 12) Postfix increment / decrement
+// -----------------------------------------------------------------------------
+print "=== Postfix ++/-- ===";
+let n = 10;
+let prev = n++;
+print sprintf("prev=%d, now=%d", prev, n);
+n--;
+print sprintf("after--: %d", n);
+
+// -----------------------------------------------------------------------------
+// 13) Ternary operator
+// -----------------------------------------------------------------------------
+print "=== Ternary operator ===";
+let logged_in = true;
+let greeting = logged_in ? "Welcome back!" : "Please log in";
+print greeting;
+print (radius > 5 ? "big" : "small");
+
+// -----------------------------------------------------------------------------
+// 14) Switch / case / default
+// -----------------------------------------------------------------------------
+print "=== Switch statement ===";
+let lang = "spl";
+switch (lang) {
+  case "go":
+    print "Go lang";
+  case "spl":
+    print "SPL lang";
+  case "js", "ts":
+    print "JavaScript family";
+  default:
+    print "unknown lang";
+}
+
+// -----------------------------------------------------------------------------
+// 15) Optional chaining (?.)
+// -----------------------------------------------------------------------------
+print "=== Optional chaining ===";
+let person = {"name": "Alice", "address": {"city": "NYC"}};
+print person?.name;
+print person?.address?.city;
+let nobody = null;
+print nobody?.name;
+print person?.phone?.number;
+
+// -----------------------------------------------------------------------------
+// 16) Do-while loops
+// -----------------------------------------------------------------------------
+print "=== Do-while ===";
+let countdown = 3;
+do {
+  print sprintf("countdown: %d", countdown);
+  countdown--;
+} while (countdown > 0);
+
+// -----------------------------------------------------------------------------
+// 17) Default parameters
+// -----------------------------------------------------------------------------
+print "=== Default parameters ===";
+let greetUser = function(name, greeting = "Hello", punct = "!") {
+  return sprintf("%s, %s%s", greeting, name, punct);
+};
+print greetUser("World");
+print greetUser("World", "Hi");
+print greetUser("World", "Hey", ".");
+
+// -----------------------------------------------------------------------------
+// 18) Rest parameters and spread operator
+// -----------------------------------------------------------------------------
+print "=== Rest/Spread ===";
+let sumAll = function(...nums) {
+  let total = 0;
+  for (n in nums) { total = total + n; }
+  return total;
+};
+print sumAll(1, 2, 3, 4, 5);
+
+let first3 = [1, 2, 3];
+let expanded = [0, ...first3, 4, 5];
+print expanded;
+
+// -----------------------------------------------------------------------------
+// 19) Bitwise operators
+// -----------------------------------------------------------------------------
+print "=== Bitwise operators ===";
+print sprintf("0xFF & 0x0F = %d", 0xFF & 0x0F);
+print sprintf("0xF0 | 0x0F = %d", 0xF0 | 0x0F);
+print sprintf("5 ^ 3 = %d", 5 ^ 3);
+print sprintf("~0 = %d", ~0);
+print sprintf("1 << 8 = %d", 1 << 8);
+print sprintf("256 >> 4 = %d", 256 >> 4);
+
+// -----------------------------------------------------------------------------
+// 20) String interpolation (backtick templates)
+// -----------------------------------------------------------------------------
+print "=== String interpolation ===";
+let lang2 = "SPL";
+let version = 2;
+print `Hello from ${lang2} v${version}!`;
+print `Math: 2 + 3 = ${2 + 3}`;
+print `Nested: ${person?.name} lives in ${person?.address?.city}`;
+
+// -----------------------------------------------------------------------------
+// 21) Exponentiation operator (**)
+// -----------------------------------------------------------------------------
+print "=== Exponentiation ===";
+print sprintf("2 ** 10 = %d", 2 ** 10);
+print sprintf("3.0 ** 2.0 = %.1f", 3.0 ** 2.0);
+
+// -----------------------------------------------------------------------------
+// 22) Extended array methods
+// -----------------------------------------------------------------------------
+print "=== Extended array methods ===";
+let data = [3, 1, 4, 1, 5, 9, 2, 6];
+print sprintf("length: %d", data.length);
+print sprintf("includes(4): %t", data.includes(4));
+print sprintf("indexOf(5): %d", data.indexOf(5));
+print data.sort();
+print data.reverse();
+print data.slice(1, 4);
+
+print [1, [2, 3], [4, [5, 6]]].flat();
+print [1, 2, 3].every(function(x) { return x > 0; });
+print [1, 2, 3].some(function(x) { return x > 2; });
+print [1, 2, 3, 4, 5].reduce(function(acc, x) { return acc + x; }, 0);
+print ["SPL", "is", "fun"].join(" ");
+
+// -----------------------------------------------------------------------------
+// 23) Math builtins
+// -----------------------------------------------------------------------------
+print "=== Math builtins ===";
+let pi_val = PI();
+let e_val = E();
+print sprintf("PI() = %.5f", pi_val);
+print sprintf("E() = %.5f", e_val);
+print sprintf("sin(0) = %.1f", sin(0));
+print sprintf("cos(0) = %.1f", cos(0));
+print sprintf("log(E()) = %.1f", log(e_val));
+print sprintf("sqrt(144) via 144**0.5 = %.1f", 144 ** 0.5);
+print sprintf("is_nan(NAN()) = %t", is_nan(NAN()));
+
+// -----------------------------------------------------------------------------
+// 24) Extended assertion builtins
+// -----------------------------------------------------------------------------
+print "=== Extended assertions ===";
+assert_true(1 == 1, "basic equality");
+assert_eq(2 + 2, 4, "addition works");
+assert_neq("hello", "world", "strings differ");
+assert_contains("hello world", "world", "string contains substring");
+assert_contains([10, 20, 30], 20, "array contains element");
+assert_throws(function() { throw "boom"; }, "throw is caught");
+
+print test_summary();
+
+// -----------------------------------------------------------------------------
+// 25) Null coalescing (?? and ??=)
+// -----------------------------------------------------------------------------
+print "=== Null coalescing ===";
+let maybeNull = null;
+print maybeNull ?? "fallback";
+let definite = "exists";
+print definite ?? "ignored";
+let nc = null;
+nc ??= "assigned";
+print nc;
+let nc2 = "keep";
+nc2 ??= "ignored";
+print nc2;
+
+// -----------------------------------------------------------------------------
+// 26) Object spread and hash methods
+// -----------------------------------------------------------------------------
+print "=== Object spread + hash methods ===";
+let base_obj = {"x": 1, "y": 2};
+let extended = {...base_obj, "z": 3, "x": 10};
+print extended;
+print extended.keys();
+print extended.values();
+print extended.entries();
+print sprintf("hash length: %d", extended.length);
+
+// -----------------------------------------------------------------------------
+// 27) Arrow functions
+// -----------------------------------------------------------------------------
+print "=== Arrow functions ===";
+let double = (x) => x * 2;
+print double(5);
+let add_arrow = (a, b) => a + b;
+print add_arrow(3, 4);
+let hello_arrow = () => "hello from arrow";
+print hello_arrow();
+let square = x => x * x;
+print square(9);
+let block_arrow = (x) => { let r = x * 10; return r + 1; };
+print block_arrow(3);
+print [1, 2, 3].map((x) => x * 100);
+print [1, 2, 3, 4, 5].filter(x => x > 3);
+
+// -----------------------------------------------------------------------------
+// 28) Destructuring (object and array)
+// -----------------------------------------------------------------------------
+print "=== Destructuring ===";
+let {name: dName, role: dRole} = {"name": "SPL", "role": "demo", "extra": "ignored"};
+print sprintf("name=%s role=%s", dName, dRole);
+
+let {host: dHost, port: dPort = 8080} = {"host": "localhost"};
+print sprintf("host=%s port=%d", dHost, dPort);
+
+let {a: dA, ...dRest} = {"a": 1, "b": 2, "c": 3};
+print sprintf("a=%d rest=%v", dA, dRest);
+
+let [dFirst, dSecond, dThird] = [10, 20, 30];
+print sprintf("first=%d second=%d third=%d", dFirst, dSecond, dThird);
+
+let [dHead, ...dTail] = [1, 2, 3, 4, 5];
+print sprintf("head=%d tail=%v", dHead, dTail);
+
+let [dP = 99, dQ = 88] = [42];
+print sprintf("p=%d q=%d", dP, dQ);
+
+// -----------------------------------------------------------------------------
+// 29) Property shorthand in object literals
+// -----------------------------------------------------------------------------
+print "=== Property shorthand ===";
+let pName = "Alice";
+let pAge = 30;
+let person2 = {pName, pAge, "role": "admin"};
+print person2;
+
+// -----------------------------------------------------------------------------
+// 30) Computed property keys
+// -----------------------------------------------------------------------------
+print "=== Computed property keys ===";
+let dynKey = "status";
+let dynObj = {[dynKey]: "active", ["count"]: 42};
+print dynObj;
+print dynObj.status;
+
+// -----------------------------------------------------------------------------
+// 31) Compound bitwise/power assignments
+// -----------------------------------------------------------------------------
+print "=== Compound bitwise/power assignments ===";
+let bv = 0xFF;
+bv &= 0x0F;
+print sprintf("&= : %d", bv);
+bv |= 0xF0;
+print sprintf("|= : %d", bv);
+bv ^= 0x0F;
+print sprintf("^= : %d", bv);
+let sv = 1;
+sv <<= 8;
+print sprintf("<<= : %d", sv);
+sv >>= 4;
+print sprintf(">>= : %d", sv);
+let pv = 2;
+pv **= 10;
+print sprintf("**= : %d", pv);
+
+// -----------------------------------------------------------------------------
+// 32) Logical assignment operators
+// -----------------------------------------------------------------------------
+print "=== Logical assignment ===";
+let la = null;
+la &&= "ignored";
+print sprintf("null &&= : %v", la);
+let lb = "hello";
+lb &&= "world";
+print sprintf("truthy &&= : %s", lb);
+let lc = null;
+lc ||= "fallback";
+print sprintf("null ||= : %s", lc);
+let ld = "keep";
+ld ||= "ignored";
+print sprintf("truthy ||= : %s", ld);
+
+// -----------------------------------------------------------------------------
+// 33) Named function declarations
+// -----------------------------------------------------------------------------
+print "=== Named function declarations ===";
+function greetPerson(name) {
+  return sprintf("Hello, %s!", name);
+}
+print greetPerson("World");
+
+function factorial(n) {
+  if (n <= 1) { return 1; }
+  return n * factorial(n - 1);
+}
+print sprintf("factorial(6) = %d", factorial(6));
+
+// -----------------------------------------------------------------------------
+// 34) typeof operator
+// -----------------------------------------------------------------------------
+print "=== typeof operator ===";
+print typeof 42;
+print typeof 3.14;
+print typeof "hello";
+print typeof true;
+print typeof null;
+print typeof [1, 2, 3];
+print typeof {"a": 1};
+print typeof function() {};
+
+// -----------------------------------------------------------------------------
+// 35) Numeric literal enhancements (binary, octal, underscores)
+// -----------------------------------------------------------------------------
+print "=== Numeric literals ===";
+print sprintf("0b1010 = %d", 0b1010);
+print sprintf("0o755 = %d", 0o755);
+print sprintf("0xFF = %d", 0xFF);
+print sprintf("1_000_000 = %d", 1_000_000);
+print sprintf("3.14_15 = %.4f", 3.14_15);
+
+// -----------------------------------------------------------------------------
+// 36) Multi-line comments
+// -----------------------------------------------------------------------------
+print "=== Multi-line comments ===";
+/* This is a multi-line comment
+   spanning multiple lines */
+let mlc = "multi-line comments work";
+print mlc;
+/* Single line block comment */ print "inline block comment works";
+
+// -----------------------------------------------------------------------------
+// 37) Finally block in try/catch
+// -----------------------------------------------------------------------------
+print "=== Finally block ===";
+let finallyRan = false;
+let tryResult = try {
+    42;
+} catch (e) {
+    "caught";
+} finally {
+    finallyRan = true;
+};
+print sprintf("result=%v, finallyRan=%t", tryResult, finallyRan);
+
+let finallyRan2 = false;
+let catchResult = try {
+    throw "oops";
+} catch (e) {
+    "caught: " + e;
+} finally {
+    finallyRan2 = true;
+};
+print sprintf("catch=%s, finallyRan=%t", catchResult, finallyRan2);
+
+// -----------------------------------------------------------------------------
+// 38) Property/index assignment (obj.x = 5, arr[0] = 5, obj.x += 1, obj.count++)
+// -----------------------------------------------------------------------------
+print "=== Property/index assignment ===";
+let obj2 = {"x": 1, "y": 2};
+obj2.x = 10;
+obj2.y += 5;
+print sprintf("obj2.x=%d, obj2.y=%d", obj2.x, obj2.y);
+
+obj2.count = 0;
+obj2.count++;
+obj2.count++;
+obj2.count++;
+print sprintf("obj2.count after 3x ++: %d", obj2.count);
+
+let arr2 = [10, 20, 30];
+arr2[0] = 100;
+arr2[2] = arr2[2] + 70;
+print sprintf("arr2: %v", arr2);
+
+let nested = {"data": {"value": 0}};
+nested.data.value = 42;
+print sprintf("nested.data.value = %d", nested.data.value);
+
+// -----------------------------------------------------------------------------
+// 39) String .charAt() method
+// -----------------------------------------------------------------------------
+print "=== String charAt ===";
+let hello = "Hello";
+print hello.charAt(0);
+print hello.charAt(4);
+print hello.charAt(99);
+
+// -----------------------------------------------------------------------------
+// 40) Array/String .at() for negative indexing
+// -----------------------------------------------------------------------------
+print "=== .at() method ===";
+let items = [10, 20, 30, 40, 50];
+print items.at(0);
+print items.at(-1);
+print items.at(-2);
+
+let word = "Hello";
+print word.at(0);
+print word.at(-1);
+
+// -----------------------------------------------------------------------------
+// 41) String .padStart() / .padEnd() aliases
+// -----------------------------------------------------------------------------
+print "=== padStart/padEnd ===";
+print "42".padStart(5, "0");
+print "hi".padEnd(10, ".");
+
+// -----------------------------------------------------------------------------
+// 42) Range expressions (integer, string, descending)
+// -----------------------------------------------------------------------------
+print "=== Range expressions ===";
+let intRange = 1..5;
+print intRange; // [1, 2, 3, 4, 5]
+
+let charRange = "a".."e";
+print charRange; // [a, b, c, d, e]
+
+let descRange = 5..1;
+print descRange; // [5, 4, 3, 2, 1]
+
+// For-in with range — iterates naturally
+print "for-in with range:";
+for (i in 1..5) {
+    print sprintf("  i=%d", i);
+}
+
+// Range with expressions
+let start = 3;
+let rangeExpr = start..(start+4);
+print rangeExpr; // [3, 4, 5, 6, 7]
+
+// -----------------------------------------------------------------------------
+// 43) Pattern matching (match expression — all 11 pattern types)
+// -----------------------------------------------------------------------------
+print "=== Pattern matching ===";
+
+// 43a) Literal patterns
+let r1 = match (42) {
+    case 1 => "one"
+    case 42 => "forty-two"
+    case 100 => "hundred"
+};
+print sprintf("literal: %s", r1);
+
+// 43b) Wildcard pattern
+let r2 = match (999) {
+    case 1 => "one"
+    case _ => "other"
+};
+print sprintf("wildcard: %s", r2);
+
+// 43c) Variable binding
+let r3 = match (42) {
+    case n => "got " + n
+};
+print sprintf("binding: %s", r3);
+
+// 43d) Type patterns
+let testType = function(val) {
+    return match (val) {
+        case n: integer => "integer: " + n
+        case s: string  => "string: " + s
+        case b: boolean => "boolean: " + b
+        case a: array   => "array of length " + len(a)
+        case h: hash    => "it's a hash"
+        case _: float   => "a float"
+        case _          => "unknown"
+    };
+};
+print testType(42);
+print testType("hi");
+print testType(true);
+print testType([1,2,3]);
+print testType({"a": 1});
+print testType(3.14);
+
+// 43e) Array destructuring
+let r4 = match ([1, 2, 3]) {
+    case [a, b, c] => a + b + c
+};
+print sprintf("array destructure: %d", r4);
+
+let r5 = match ([10, 20, 30, 40, 50]) {
+    case [head, ...tail] => "head=" + head + " tail_len=" + len(tail)
+};
+print sprintf("rest pattern: %s", r5);
+
+// 43f) Object destructuring
+let personMatch = {"name": "Alice", "age": 30, "city": "NYC"};
+let r6 = match (personMatch) {
+    case {name, age} => name + " is " + age
+};
+print sprintf("object destructure: %s", r6);
+
+let r7 = match (personMatch) {
+    case {name: n, age: a} => n + " age " + a
+};
+print sprintf("object rename: %s", r7);
+
+// 43g) Guard clauses
+let classify = function(n) {
+    return match (n) {
+        case x if x > 0 => "positive"
+        case x if x < 0 => "negative"
+        case _ => "zero"
+    };
+};
+print sprintf("guard(5): %s", classify(5));
+print sprintf("guard(-3): %s", classify(-3));
+print sprintf("guard(0): %s", classify(0));
+
+// 43h) OR patterns
+let r8 = match (2) {
+    case 1 | 2 | 3 => "small"
+    case 4 | 5 | 6 => "medium"
+    case _ => "large"
+};
+print sprintf("or pattern: %s", r8);
+
+// 43i) Range patterns (inside match)
+let grade = function(score) {
+    return match (score) {
+        case 90..100 => "A"
+        case 80..89  => "B"
+        case 70..79  => "C"
+        case 60..69  => "D"
+        case _       => "F"
+    };
+};
+print sprintf("grade(95): %s", grade(95));
+print sprintf("grade(42): %s", grade(42));
+
+// 43j) Comparison patterns
+let r9 = match (15) {
+    case > 100 => "huge"
+    case > 10  => "big"
+    case > 0   => "small"
+    case _     => "non-positive"
+};
+print sprintf("comparison: %s", r9);
+
+// 43k) Extractor patterns (Some/None, Regex)
+let r10 = match ("Alice") {
+    case Some(s: string) => "Hello, " + s
+    case None => "no name"
+};
+print sprintf("extractor: %s", r10);
+
+let r11 = match (null) {
+    case Some(x) => "got " + x
+    case None => "nothing"
+};
+print sprintf("none: %s", r11);
+
+let r12 = match ("12345") {
+    case Regex("^[0-9]+$") => "numeric"
+    case Regex("^[a-z]+$") => "alpha"
+    case _ => "mixed"
+};
+print sprintf("regex: %s", r12);
+
+// 43l) Nested patterns
+let nestedData = {"users": [{"name": "Bob"}, {"name": "Eve"}]};
+let r13 = match (nestedData) {
+    case {users: [first, ...rest]} => first.name
+};
+print sprintf("nested: %s", r13);
+
+// 43m) Match as expression (assigned to variable)
+let status2 = "active";
+let badge = match (status2) {
+    case "active"   => "green"
+    case "pending"  => "yellow"
+    case "inactive" => "red"
+    case _          => "gray"
+};
+print sprintf("match expr: %s", badge);
+
+// 43n) Complex real-world pattern matching
+let processEvent = function(event) {
+    return match (event) {
+        case {type: "click", target: t}              => "clicked on " + t
+        case {type: "keypress", key: k} if k == "Enter" => "submitted"
+        case {type: "keypress", key: k}              => "pressed " + k
+        case {type: t}                               => "event: " + t
+        case _                                       => "unknown event"
+    };
+};
+print processEvent({"type": "click", "target": "button"});
+print processEvent({"type": "keypress", "key": "Enter"});
+print processEvent({"type": "keypress", "key": "a"});
+print processEvent({"type": "scroll"});
+
+// Match with statements in case bodies
+match (42) {
+    case x if x > 0 => print sprintf("match statement: %d is positive", x)
+    case _ => print "match statement: non-positive"
+}
+
+// -----------------------------------------------------------------------------
+// 44) Async/await and concurrency
+// -----------------------------------------------------------------------------
+print "=== Async/await ===";
+
+// 44a) Basic async function + await
+let asyncDouble = async function(x) {
+    return x * 2;
+};
+let futureVal = asyncDouble(21);
+print sprintf("typeof future: %s", typeof futureVal);
+let resolved = await futureVal;
+print sprintf("await result: %d", resolved);
+
+// 44b) Async arrow function
+let asyncSquare = async (x) => x * x;
+let sq = await asyncSquare(7);
+print sprintf("async arrow: %d", sq);
+
+// 44c) await on non-future passes through
+let passthrough = await 42;
+print sprintf("await non-future: %d", passthrough);
+
+// 44d) await_all — concurrent execution of multiple futures
+let slowAdd = async function(a, b) {
+    return a + b;
+};
+let futures = [slowAdd(1, 2), slowAdd(3, 4), slowAdd(5, 6)];
+let results = await_all(futures);
+print sprintf("await_all: %v", results);
+
+// 44e) await_race — first to complete wins
+let raceA = async function() { return "A wins"; };
+let raceB = async function() { return "B wins"; };
+let winner = await_race([raceA(), raceB()]);
+print sprintf("await_race: %s", winner);
+
+// 44f) go_async — fire-and-forget (runs in background)
+go_async(function() {
+    // This runs concurrently; output may interleave
+    let _ = 1 + 1;
+});
+print "go_async: fired";
+
+// 44g) sleep builtin
+print "sleep: before";
+sleep(10); // 10ms — just to verify it works without blocking too long
+print "sleep: after";
+
+// 44h) Async error handling with try/catch
+let asyncFail = async function() {
+    throw "async boom";
+};
+let asyncCaught = try {
+    await asyncFail();
+} catch (e) {
+    "caught async: " + e;
+};
+print sprintf("async error: %s", asyncCaught);
+
+// -----------------------------------------------------------------------------
+// 45) Structured errors (Error object + typed catch)
+// -----------------------------------------------------------------------------
+print "=== Structured errors ===";
+let errObj = Error("Invalid input", {"code": "E_INPUT"});
+print errObj;
+let errCaught = try {
+    throw Error("Bad payload", {"code": "E_PAYLOAD"});
+} catch (e: Error) {
+    "message=" + e.message + " code=" + e.code;
+};
+print errCaught;
+
+// -----------------------------------------------------------------------------
+// 46) Optional typing (typed let/function signatures)
+// -----------------------------------------------------------------------------
+print "=== Optional typing ===";
+let typedX: int = 10;
+let typedAdd = function(a: int, b: int): int {
+    return a + b;
+};
+print typedX;
+print typedAdd(20, 22);
+
+// -----------------------------------------------------------------------------
+// 47) Classes / OOP (lightweight)
+// -----------------------------------------------------------------------------
+print "=== Classes ===";
+class User {
+    constructor(name) {
+        this.name = name;
+    }
+
+    greet() {
+        return "Hello " + this.name;
+    }
+}
+
+let u = new User("SPL");
+print u.greet();
+
+// -----------------------------------------------------------------------------
+// 48) Interfaces (runtime metadata)
+// -----------------------------------------------------------------------------
+print "=== Interfaces ===";
+interface Stringer {
+    to_string(v: string): string;
+}
+print Stringer;
+
+// -----------------------------------------------------------------------------
+// 49) Generators + pipeline operator
+// -----------------------------------------------------------------------------
+print "=== Generator + Pipeline ===";
+let gen = generator(function() {
+    return [1, 2, 3, 4, 5];
+});
+print gen;
+
+let stageMap = function(arr) { return arr.map(x => x * 2); };
+let stageFilter = function(arr) { return arr.filter(x => x > 5); };
+let stageReduce = function(arr) { return arr.reduce((a, b) => a + b, 0); };
+let pipelineResult = [1, 2, 3, 4, 5] |> stageMap |> stageFilter |> stageReduce;
+print pipelineResult;
+
+// -----------------------------------------------------------------------------
+// 50) Channels + go-style message passing builtin
+// -----------------------------------------------------------------------------
+print "=== Channels ===";
+let ch = channel();
+let producer = go(function() {
+    send(ch, 42);
+    return "sent";
+});
+print recv(ch);
+print await producer;
+
+// -----------------------------------------------------------------------------
+// 51) Runtime permissions
+// -----------------------------------------------------------------------------
+print "=== Permissions ===";
+permissions({"strict": true});
+let deniedExec = try {
+    exec("date", 1000);
+} catch (e) {
+    e;
+};
+print deniedExec;
+permissions({"strict": false});
+
+// -----------------------------------------------------------------------------
+// 52) Observability hooks
+// -----------------------------------------------------------------------------
+print "=== Observability ===";
+trace("showcase.start", {"section": "observability"});
+metric("showcase_runs", 1);
+metric("items_processed", 5);
+print "trace/metric emitted";
+
+// -----------------------------------------------------------------------------
+// 53) Immutable data structures
+// -----------------------------------------------------------------------------
+print "=== Immutable ===";
+let frozen = immutable({"a": 1});
+let immResult = try {
+    frozen.a = 2;
+    "unexpected";
+} catch (e) {
+    e;
+};
+print immResult;
+
+// -----------------------------------------------------------------------------
+// 54) CLI args support
+// -----------------------------------------------------------------------------
+print "=== CLI args ===";
+print ARGS;
+
+print "=== Ownership model ===";
+let ownedData = move([1, 2, 3]);
+print ownedData;
+
+// -----------------------------------------------------------------------------
+// 55) Module init hooks + test blocks
+// -----------------------------------------------------------------------------
+
+type Result = Ok(value) | Err(error);
+let resAdt = Ok(42);
+print match (resAdt) {
+    case Ok(v) => v
+    case Err(e) => e
+};
+
+init {
+    let init_marker = "module init executed";
+    print init_marker;
+}
+
+test "typed add works" {
+    assert_eq(typedAdd(2, 3), 5, "typed function in test block");
+}
+
+print "=== Showcase Complete ===";

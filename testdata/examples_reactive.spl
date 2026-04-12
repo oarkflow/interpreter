@@ -1,0 +1,297 @@
+// =============================================================================
+// Feature 1: Reactive System (Signals / Computed / Effects) + SSR/Hydration
+// Run: go run ./cmd/interpreter testdata/examples_reactive.spl
+// =============================================================================
+
+print "=== SPL Reactive System ===";
+
+// -----------------------------------------------------------------------------
+// 1) Signals — reactive state containers
+// -----------------------------------------------------------------------------
+
+print "--- Signals ---";
+
+// Create a signal with initial value
+let count = signal(0);
+print "Initial count: " + count.value;
+
+// Named signal
+let username = signal("username", "Alice");
+print "Username signal: " + username.value;
+print "Signal name: " + username.name;
+
+// Set signal value — triggers subscribers
+count.set(5);
+print "After set(5): " + count.value;
+
+count.set(count.value + 1);
+print "After increment: " + count.value;
+
+// Signal with different types
+let items = signal("items", []);
+print "Items signal: " + items.value;
+
+let config = signal("config", {"theme": "dark", "lang": "en"});
+print "Config signal: " + config.value;
+
+let isLoading = signal("loading", false);
+print "Loading signal: " + isLoading.value;
+
+// Using get() method (equivalent to .value)
+print "count.get(): " + count.get();
+
+// -----------------------------------------------------------------------------
+// 2) Computed — derived reactive values
+// -----------------------------------------------------------------------------
+
+print "\n--- Computed Values ---";
+
+let price = signal("price", 100);
+let quantity = signal("quantity", 3);
+
+// Computed value that auto-tracks dependencies
+let total = computed(function() {
+    return price.value * quantity.value;
+});
+print "Total (100 * 3): " + total.value;
+
+// Update dependency — computed automatically recalculates
+price.set(200);
+print "Total after price=200: " + total.value;
+
+quantity.set(5);
+print "Total after quantity=5: " + total.value;
+
+// Computed from computed
+let tax = computed(function() {
+    return total.value * 0.1;
+});
+print "Tax (10%): " + tax.value;
+
+let grandTotal = computed(function() {
+    return total.value + tax.value;
+});
+print "Grand total: " + grandTotal.value;
+
+// Computed with string concatenation
+let greeting = computed(function() {
+    return "Hello, " + username.value + "!";
+});
+print "Greeting: " + greeting.value;
+
+username.set("Bob");
+print "Greeting after name change: " + greeting.value;
+
+// Computed counter summary
+let counterSummary = computed(function() {
+    return "Count is " + count.value + " (even: " + (count.value % 2 == 0) + ")";
+});
+print "Summary: " + counterSummary.value;
+
+// -----------------------------------------------------------------------------
+// 3) Effects — side effects that react to signal changes
+// -----------------------------------------------------------------------------
+
+print "\n--- Effects ---";
+
+// Effect runs immediately and re-runs when tracked signals change
+let logEffect = effect(function() {
+    print "[EFFECT] Count changed to: " + count.value;
+});
+
+// Trigger the effect by changing the signal
+count.set(10);
+count.set(20);
+
+// Effect that tracks multiple signals
+let syncEffect = effect(function() {
+    print "[SYNC] Price=" + price.value + " Qty=" + quantity.value + " Total=" + total.value;
+});
+
+// This triggers both the sync effect and recomputes total
+price.set(150);
+
+// Dispose an effect — stops it from running
+logEffect.dispose();
+count.set(100);  // logEffect won't fire, but syncEffect might if count is tracked
+print "After disposing logEffect, count=" + count.value;
+
+// Effect for logging
+let email = signal("email", "");
+
+let validateEmail = effect(function() {
+    let val = email.value;
+    if (val == "") {
+        print "[VALIDATE] Email is required";
+    } else {
+        print "[VALIDATE] Email OK: " + val;
+    }
+});
+
+email.set("user@example.com");
+
+// -----------------------------------------------------------------------------
+// 4) Batch Updates
+// -----------------------------------------------------------------------------
+
+print "\n--- Batch Updates ---";
+
+// Batch multiple signal updates to avoid intermediate recomputations
+let a = signal("a", 1);
+let b = signal("b", 2);
+let sum = computed(function() {
+    return a.value + b.value;
+});
+
+print "Sum before batch: " + sum.value;
+
+batch(function() {
+    a.set(10);
+    b.set(20);
+});
+
+print "Sum after batch: " + sum.value;
+
+// -----------------------------------------------------------------------------
+// 5) Reactive Patterns
+// -----------------------------------------------------------------------------
+
+print "\n--- Reactive Patterns ---";
+
+// State machine pattern
+let state = signal("state", "idle");
+let stateMessage = computed(function() {
+    let s = state.value;
+    if (s == "idle") { return "Waiting for input..."; }
+    if (s == "loading") { return "Loading data..."; }
+    if (s == "success") { return "Data loaded successfully!"; }
+    if (s == "error") { return "An error occurred."; }
+    return "Unknown state";
+});
+
+print "State: " + stateMessage.value;
+state.set("loading");
+print "State: " + stateMessage.value;
+state.set("success");
+print "State: " + stateMessage.value;
+
+// Counter with undo
+let history = signal("history", [0]);
+let counter = signal("counter", 0);
+
+let increment = function() {
+    let newVal = counter.value + 1;
+    counter.set(newVal);
+};
+
+let getCounterValue = function() {
+    return counter.value;
+};
+
+increment();
+increment();
+increment();
+print "Counter: " + getCounterValue();
+
+// Form state management
+let formData = signal("form", {
+    "name": "",
+    "email": "",
+    "age": 0
+});
+
+let formValid = computed(function() {
+    let data = formData.value;
+    return data.name != "" && data.email != "";
+});
+
+print "Form valid (empty): " + formValid.value;
+formData.set({"name": "Alice", "email": "alice@test.com", "age": 30});
+print "Form valid (filled): " + formValid.value;
+
+// -----------------------------------------------------------------------------
+// 6) Reactive + Web Framework Integration
+// -----------------------------------------------------------------------------
+
+print "\n--- Web Framework Integration ---";
+
+// Reactive server state
+let serverState = signal("server-state", "starting");
+let connectedClients = signal("clients", 0);
+
+let statusReport = computed(function() {
+    return {
+        "state": serverState.value,
+        "clients": connectedClients.value,
+        "healthy": serverState.value == "running"
+    };
+});
+
+serverState.set("running");
+connectedClients.set(5);
+print "Server status: " + statusReport.value;
+
+// Example: SSE-powered reactive endpoint
+// let app = server();
+// route(app, "GET", "/reactive-dashboard", function(req, res) {
+//     let sse = res.sse();
+//
+//     // Subscribe to signal changes and push to client
+//     let pushEffect = effect(function() {
+//         sse.send("status", statusReport.value);
+//     });
+//
+//     // When client disconnects:
+//     // pushEffect.dispose();
+// });
+
+// -----------------------------------------------------------------------------
+// 7) SSR + Hydration (Template Integration)
+// -----------------------------------------------------------------------------
+
+print "\n--- SSR + Hydration ---";
+
+// In templates, signals can be used with data-spl-* attributes for hydration:
+//
+// Template (templates/reactive_page.html):
+//   <html>
+//   <body>
+//     @signal count = 0
+//     @signal name = "World"
+//
+//     <h1 data-spl-bind="name" data-spl-attr="textContent">Hello ${name}!</h1>
+//     <p>Count: <span data-spl-bind="count">0</span></p>
+//     <input data-spl-bind="name" data-spl-attr="value" value="${name}" />
+//     <button onclick="SPL.signal('count').set(SPL.signal('count').get() + 1)">
+//       Increment
+//     </button>
+//
+//     @effect
+//       <!-- Re-renders when count changes -->
+//       <div class="status">
+//         Count is now: ${count}
+//       </div>
+//     @end
+//   </body>
+//   </html>
+//
+// The SSR renderer:
+// 1. Renders initial HTML server-side (SEO-friendly)
+// 2. Adds data-spl-* attributes for client binding
+// 3. Generates hydration <script> that creates client-side signals
+// 4. Two-way binding: input changes update signal, signal changes update DOM
+
+// Programmatic SSR usage (Go API):
+//   ssr := template.NewSSRRenderer(engine, data)
+//   ssr.AddSignal("count", 0)
+//   ssr.AddSignal("name", "World")
+//   html, err := ssr.RenderSSR(templateString)
+//   // html includes the rendered page + hydration script
+
+print "SSR hydration generates client-side JavaScript for:";
+print "  - Signal initialization from server state";
+print "  - Two-way data binding (input <-> signal)";
+print "  - Auto-updating DOM elements on signal change";
+print "  - Event handlers that modify signals";
+
+print "\n=== Reactive System Examples Complete ===";
