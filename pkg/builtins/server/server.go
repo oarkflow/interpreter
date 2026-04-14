@@ -15,6 +15,7 @@ import (
 
 	"github.com/oarkflow/interpreter/pkg/eval"
 	"github.com/oarkflow/interpreter/pkg/object"
+	"github.com/oarkflow/interpreter/pkg/template"
 )
 
 // ── Template Runtime Interface ────────────────────────────────────
@@ -31,6 +32,7 @@ type TemplateRuntime interface {
 }
 
 // NewTemplateRuntimeFn creates a TemplateRuntime instance. Set from the main package.
+// Deprecated: Use template.NewTemplateRuntime instead
 var NewTemplateRuntimeFn func(baseDir string) TemplateRuntime
 
 // ── Object types ───────────────────────────────────────────────────
@@ -108,7 +110,10 @@ func (s *SPLServer) templateRuntime() TemplateRuntime {
 		if strings.TrimSpace(baseDir) == "" {
 			baseDir = "."
 		}
-		if NewTemplateRuntimeFn != nil {
+		// First try the template package's NewTemplateRuntime
+		s.template = template.NewTemplateRuntime(baseDir)
+		if s.template == nil && NewTemplateRuntimeFn != nil {
+			// Fallback to legacy NewTemplateRuntimeFn
 			s.template = NewTemplateRuntimeFn(baseDir)
 		}
 	}

@@ -307,7 +307,7 @@ const (
 	QUERY_BUILDER_OBJ = object.QUERY_BUILDER_OBJ
 	LAZY_DB_QUERY_OBJ = object.LAZY_DB_QUERY_OBJ
 	SIGNAL_OBJ        = object.SIGNAL_OBJ
-	COMPUTED_OBJ       = object.COMPUTED_OBJ
+	COMPUTED_OBJ      = object.COMPUTED_OBJ
 	EFFECT_OBJ        = object.EFFECT_OBJ
 )
 
@@ -381,8 +381,7 @@ const (
 // Unexported wrappers for test compatibility
 // =========================================================================
 
-
-func isError(obj Object) bool                      { return object.IsError(obj) }
+func isError(obj Object) bool                       { return object.IsError(obj) }
 func nativeBoolToBooleanObject(input bool) *Boolean { return object.NativeBoolToBooleanObject(input) }
 func formatCallStack(stack []CallFrame) string      { return object.FormatCallStack(stack) }
 
@@ -934,6 +933,11 @@ func init() {
 	}
 	config.CheckFileReadAllowedFn = security.CheckFileReadAllowed
 
+	// Wire template runtime
+	RegisterTemplateRuntimeFactory(func(baseDir string) TemplateRuntime {
+		return template.NewSimpleTemplateRuntime(baseDir)
+	})
+
 	// Wire repl function pointers
 	repl.BuiltinHelpTextFn = eval.BuiltinHelpText
 	repl.HasBuiltinFn = eval.HasBuiltin
@@ -1138,7 +1142,6 @@ func importSearchPaths() []string {
 type SPLModuleManifest = pkgmgr.SPLModuleManifest
 type SPLModuleLock = pkgmgr.SPLModuleLock
 type SPLLockedDependency = pkgmgr.SPLLockedDependency
-
 
 // scheduler wrappers
 type Scheduler = scheduler.Scheduler

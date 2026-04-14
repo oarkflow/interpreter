@@ -1,0 +1,16 @@
+{
+  "server": {
+    "port": 3000,
+    "host": "127.0.0.1"
+  },
+  "database": {
+    "driver": "sqlite",
+    "connection_string": ":memory:",
+    "max_connections": 10
+  },
+  "app": {
+    "name": "SPL Web Framework Demo",
+    "version": "1.0.0",
+    "debug": true
+  }
+}

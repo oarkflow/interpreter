@@ -356,7 +356,7 @@ func builtinDBQuery(env *object.Environment, args ...object.Object) object.Objec
 	}
 
 	params := object.Object(object.NULL)
-	format := "table"
+	format := "array"
 	if len(args) >= 3 {
 		if args[2].Type() == object.STRING_OBJ && len(args) == 3 {
 			format = strings.ToLower(args[2].(*object.String).Value)

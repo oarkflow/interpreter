@@ -1,9 +1,47 @@
 // =============================================================================
-// Feature 5: Native Web Framework Layer
+// Feature 5: Native Web Framework Layer with Config & Database
 // Run: go run ./cmd/interpreter testdata/examples_web_framework_new.spl
 // =============================================================================
 
-print "=== SPL Native Web Framework ===";
+print "=== SPL Native Web Framework with Config & Database ===";
+
+// Load configuration
+print "--- Loading configuration ---";
+let config = config_load("testdata/config.json", "json");
+print "Config loaded successfully:";
+print config;
+
+// Extract config values
+let serverConfig = config.server;
+let dbConfig = config.database;
+let appConfig = config.app;
+
+print "Server port: " + serverConfig.port;
+print "Database driver: " + dbConfig.driver;
+
+// Initialize database
+print "--- Initializing database ---";
+let db, dbErr = db_connect(dbConfig.driver, dbConfig.connection_string);
+if (dbErr != null) {
+    print "Database connection error: " + dbErr;
+    throw dbErr;
+}
+print "Database connected successfully";
+
+// Create users table
+let createTableSQL = "CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, email TEXT NOT NULL, created_at TEXT DEFAULT CURRENT_TIMESTAMP)";
+let _, createErr = db_exec(db, createTableSQL);
+if (createErr != null) {
+    print "Table creation error: " + createErr;
+    throw createErr;
+}
+print "Users table created";
+
+// Insert some sample data
+let _, _ = db_exec(db, "INSERT INTO users(name, email) VALUES(?, ?)", ["Alice Johnson", "alice@example.com"]);
+let _, _ = db_exec(db, "INSERT INTO users(name, email) VALUES(?, ?)", ["Bob Smith", "bob@example.com"]);
+let _, _ = db_exec(db, "INSERT INTO users(name, email) VALUES(?, ?)", ["Charlie Brown", "charlie@example.com"]);
+print "Sample users inserted";
 
 let app = web_app("./testdata/web");
 print "Web app created:";
@@ -26,6 +64,127 @@ route_group(app, "/api", "GET", "/users/:id", function(req, res) {
     res.json({"id": req.param("id"), "query": req.query});
 });
 
+// Database routes
+route_group(app, "/api", "GET", "/db/users", function(req, res) {
+    let rows, err = db_query(db, "SELECT id, name, email, created_at FROM users ORDER BY id");
+    if (err != null) {
+        res.status(500).json({"error": "Database query failed", "details": err});
+        return null;
+    }
+    res.json({"users": rows, "count": len(rows)});
+});
+
+route_group(app, "/api", "GET", "/db/users/:id", function(req, res) {
+    let userId = req.param("id");
+    let rows, err = db_query(db, "SELECT id, name, email, created_at FROM users WHERE id = ?", [userId]);
+    if (err != null) {
+        res.status(500).json({"error": "Database query failed", "details": err});
+        return null;
+    }
+    if (len(rows) == 0) {
+        res.status(404).json({"error": "User not found"});
+        return null;
+    }
+    res.json({"user": rows[0]});
+});
+
+route_group(app, "/api", "POST", "/db/users", function(req, res) {
+    let body = req.json();
+    if (body == null || body.name == null || body.email == null) {
+        res.status(400).json({"error": "Name and email are required"});
+        return null;
+    }
+
+    let result, err = db_exec(db, "INSERT INTO users(name, email) VALUES(?, ?)", [body.name, body.email]);
+    if (err != null) {
+        res.status(500).json({"error": "Database insert failed", "details": err});
+        return null;
+    }
+
+    // Get the inserted user
+    let userId = result.last_insert_id;
+    let rows, queryErr = db_query(db, "SELECT id, name, email, created_at FROM users WHERE id = ?", [userId]);
+    if (queryErr != null) {
+        res.status(500).json({"error": "Failed to retrieve inserted user", "details": queryErr});
+        return null;
+    }
+
+    res.status(201).json({"user": rows[0], "message": "User created successfully"});
+});
+
+route_group(app, "/api", "PUT", "/db/users/:id", function(req, res) {
+    let userId = req.param("id");
+    let body = req.json();
+    if (body == null) {
+        res.status(400).json({"error": "Request body is required"});
+        return null;
+    }
+
+    let updateFields = [];
+    let updateValues = [];
+
+    if (body.name != null) {
+        updateFields.push("name = ?");
+        updateValues.push(body.name);
+    }
+    if (body.email != null) {
+        updateFields.push("email = ?");
+        updateValues.push(body.email);
+    }
+
+    if (len(updateFields) == 0) {
+        res.status(400).json({"error": "No valid fields to update"});
+        return null;
+    }
+
+    let sql = "UPDATE users SET " + join(updateFields, ", ") + " WHERE id = ?";
+    updateValues.push(userId);
+
+    let result, err = db_exec(db, sql, updateValues);
+    if (err != null) {
+        res.status(500).json({"error": "Database update failed", "details": err});
+        return null;
+    }
+
+    if (result.rows_affected == 0) {
+        res.status(404).json({"error": "User not found"});
+        return null;
+    }
+
+    // Get the updated user
+    let rows, queryErr = db_query(db, "SELECT id, name, email, created_at FROM users WHERE id = ?", [userId]);
+    if (queryErr != null) {
+        res.status(500).json({"error": "Failed to retrieve updated user", "details": queryErr});
+        return null;
+    }
+
+    res.json({"user": rows[0], "message": "User updated successfully"});
+});
+
+route_group(app, "/api", "DELETE", "/db/users/:id", function(req, res) {
+    let userId = req.param("id");
+
+    // Check if user exists
+    let rows, checkErr = db_query(db, "SELECT id FROM users WHERE id = ?", [userId]);
+    if (checkErr != null) {
+        res.status(500).json({"error": "Database query failed", "details": checkErr});
+        return null;
+    }
+
+    if (len(rows) == 0) {
+        res.status(404).json({"error": "User not found"});
+        return null;
+    }
+
+    let result, err = db_exec(db, "DELETE FROM users WHERE id = ?", [userId]);
+    if (err != null) {
+        res.status(500).json({"error": "Database delete failed", "details": err});
+        return null;
+    }
+
+    res.json({"message": "User deleted successfully", "id": userId});
+});
+
 route(app, "GET", "/html", function(req, res) {
     res.html("<h1>Raw HTML response</h1>");
 });
@@ -38,7 +197,11 @@ route(app, "GET", "/page", function(req, res) {
         "items": [
             {"name": "Signals", "ready": true},
             {"name": "Streaming", "ready": false}
-        ]
+        ],
+        "now": now_iso(),
+        "appName": appConfig.name,
+        "appVersion": appConfig.version,
+        "dbDriver": dbConfig.driver
     });
 });
 
@@ -50,19 +213,38 @@ route(app, "GET", "/page-ssr", function(req, res) {
         "items": [
             {"name": "Hydration", "ready": true},
             {"name": "Lazy blocks", "ready": false}
-        ]
+        ],
+        "now": now_iso(),
+        "appName": appConfig.name,
+        "appVersion": appConfig.version,
+        "dbDriver": dbConfig.driver
     });
 });
 
 route(app, "GET", "/page-stream", function(req, res) {
-    res.stream("stream.html", {"title": "Streaming Route", "ready": true});
+    res.stream("stream.html", {
+        "title": "Streaming Route",
+        "ready": true,
+        "now": now_iso(),
+        "appName": appConfig.name,
+        "appVersion": appConfig.version,
+        "dbDriver": dbConfig.driver
+    });
 });
 
 static(app, "/assets/", "./testdata/web");
 
-listen(app, 3000);
 print "Routes registered:";
 print app.routes;
+print "Database API endpoints available at /api/db/users";
+print "  - GET /api/db/users - List all users";
+print "  - GET /api/db/users/:id - Get user by ID";
+print "  - POST /api/db/users - Create new user";
+print "  - PUT /api/db/users/:id - Update user";
+print "  - DELETE /api/db/users/:id - Delete user";
 print "Open /page-ssr to see button-driven reactive HTML updates after hydration.";
-print "Use listen(app, 3000); to run the server.";
-print "=== Web Framework Examples Complete ===";
+print "Configuration loaded from testdata/config.json";
+print "Database initialized with SQLite in-memory database";
+print "Use listen(app, " + serverConfig.port + "); to run the server.";
+print "=== Web Framework with Config & Database Examples Complete ===";
+listen(app, serverConfig.port);
