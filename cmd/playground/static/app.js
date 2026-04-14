@@ -227,10 +227,17 @@ function applyResponse(payload) {
   updateOutputLines();
   previewEl.srcdoc = '';
 
+  // Detect HTML in result or output and render in preview iframe
+  const htmlContent = detectHTML(payload.result) || detectHTML(payload.output);
+
   if (err) {
     const kind = payload.error_kind || 'error';
     setStatus('error', kind === 'parser' ? 'Parser Error' : 'Runtime Error');
     setTab('error');
+  } else if (htmlContent) {
+    previewEl.srcdoc = htmlContent;
+    setStatus('success', 'Success');
+    setTab('preview');
   } else if (payload.output) {
     setStatus('success', 'Success');
     setTab('output');
@@ -238,6 +245,14 @@ function applyResponse(payload) {
     setStatus('success', 'Success');
     setTab('result');
   }
+}
+
+function detectHTML(text) {
+  if (!text || typeof text !== 'string') return null;
+  const trimmed = text.trim();
+  if (/^<!DOCTYPE\s+html/i.test(trimmed) || /^<html[\s>]/i.test(trimmed)) return trimmed;
+  if (/<(div|span|p|h[1-6]|table|form|section|article|main|header|footer|nav|ul|ol|button|input|select|style|script|link|meta)[\s>\/]/i.test(trimmed) && /<\/\w+>/.test(trimmed)) return trimmed;
+  return null;
 }
 
 // --- Execution ---

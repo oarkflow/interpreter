@@ -1,7 +1,6 @@
 package interpreter_test
 
 import (
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -81,7 +80,7 @@ func TestProtectHostDeniesExec(t *testing.T) {
 }
 
 func TestProtectHostDeniesFileMutation(t *testing.T) {
-	path := filepath.Join("../../testdata", "host-protection-denied.txt")
+	path := "host-protection-denied.txt"
 	res, err := ExecWithOptions(`let ok, err = write_file("`+path+`", "blocked"); err;`, nil, ExecOptions{
 		Security: &SecurityPolicy{ProtectHost: true},
 	})

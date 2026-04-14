@@ -398,6 +398,56 @@ func init() {
 				return &object.String{Value: re.ReplaceAllString(s, replacement)}
 			},
 		},
+		"regex_find_all": {
+			Fn: func(args ...object.Object) object.Object {
+				if len(args) != 2 {
+					return &object.String{Value: fmt.Sprintf("wrong number of arguments. got=%d, want=2", len(args))}
+				}
+				s, errObj := asString(args[0], "s")
+				if errObj != nil {
+					return errObj
+				}
+				pattern, errObj := asString(args[1], "pattern")
+				if errObj != nil {
+					return errObj
+				}
+				re, err := regexp.Compile(pattern)
+				if err != nil {
+					return object.NewError("%s", err)
+				}
+				matches := re.FindAllString(s, -1)
+				out := make([]object.Object, len(matches))
+				for i, m := range matches {
+					out[i] = &object.String{Value: m}
+				}
+				return &object.Array{Elements: out}
+			},
+		},
+		"regex_split": {
+			Fn: func(args ...object.Object) object.Object {
+				if len(args) != 2 {
+					return &object.String{Value: fmt.Sprintf("wrong number of arguments. got=%d, want=2", len(args))}
+				}
+				s, errObj := asString(args[0], "s")
+				if errObj != nil {
+					return errObj
+				}
+				pattern, errObj := asString(args[1], "pattern")
+				if errObj != nil {
+					return errObj
+				}
+				re, err := regexp.Compile(pattern)
+				if err != nil {
+					return object.NewError("%s", err)
+				}
+				parts := re.Split(s, -1)
+				out := make([]object.Object, len(parts))
+				for i, p := range parts {
+					out[i] = &object.String{Value: p}
+				}
+				return &object.Array{Elements: out}
+			},
+		},
 		"trim_prefix": {
 			Fn: func(args ...object.Object) object.Object {
 				if len(args) != 2 {

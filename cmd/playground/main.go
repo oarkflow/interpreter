@@ -311,6 +311,414 @@ print sprintf("%%c: %c", 65);
 print sprintf("%%q: %q", "hello world");
 print sprintf("%%d from float: %d", 3.14);
 print sprintf("%%f from int:   %f", 42);`,
+		"stateful-server": `// SPL Stateful Server
+// The server is a long-lived, stateful process — not a fragment or API stub.
+// It manages routes, middleware, sessions, and in-memory state.
+
+let app = server(3000);
+
+// In-memory state lives on the server; the client never touches it.
+let users = {};
+let nextID = 1;
+
+// Middleware runs server-side on every request.
+middleware(app, function(req, res, next) {
+	print sprintf("[%s] %s %s", now_iso(), req.method, req.path);
+	res.header("X-Powered-By", "SPL");
+	next();
+});
+
+// All flow logic is server-side: create, read, lookup, delete.
+route(app, "GET", "/api/users", function(req, res) {
+	res.json(values(users));
+});
+
+route(app, "POST", "/api/users", function(req, res) {
+	let body = req.json();
+	let id = to_string(nextID);
+	nextID = nextID + 1;
+	let user = {"id": id, "name": body.name, "email": body.email, "created": now_iso()};
+	users[id] = user;
+	res.status(201).json(user);
+});
+
+route(app, "GET", "/api/users/:id", function(req, res) {
+	let id = req.param("id");
+	if (has_key(users, id)) {
+		res.json(users[id]);
+	} else {
+		res.status(404).json({"error": "user not found"});
+	}
+});
+
+route(app, "DELETE", "/api/users/:id", function(req, res) {
+	let id = req.param("id");
+	if (has_key(users, id)) {
+		let removed = users[id];
+		delete(users, id);
+		res.json({"deleted": removed.name});
+	} else {
+		res.status(404).json({"error": "user not found"});
+	}
+});
+
+route(app, "GET", "/api/stats", function(req, res) {
+	res.json({
+		"total_users": len(users),
+		"next_id": nextID,
+		"uptime": now_iso()
+	});
+});
+
+print "Stateful server defined with " + to_string(len(app.routes)) + " routes";
+print "State (users, nextID) lives in server memory — client is a thin shell";
+print "All create/read/delete decisions happen server-side";`,
+
+		"server-middleware": `// Server Middleware Chain
+// Middleware runs on the server, wrapping every handler.
+// The client sends plain requests; the server decides auth, logging, CORS.
+
+let app = server(3001);
+
+// Request counter — server-side state, invisible to client.
+let requestCount = 0;
+
+// Logging middleware — server decides what to log.
+middleware(app, function(req, res, next) {
+	requestCount = requestCount + 1;
+	print sprintf("#%d %s %s", requestCount, req.method, req.path);
+	next();
+});
+
+// Auth middleware on /api — server controls access, not the client.
+middleware(app, "/api", function(req, res, next) {
+	let token = req.get_header("Authorization");
+	if (token == null) {
+		res.status(401).json({"error": "missing token"});
+		return null;
+	}
+	if (!starts_with(token, "Bearer ")) {
+		res.status(401).json({"error": "invalid token format"});
+		return null;
+	}
+	// Server validates the token — client just sends it.
+	next();
+});
+
+// CORS middleware — server sets the policy.
+middleware(app, function(req, res, next) {
+	res.header("Access-Control-Allow-Origin", "*");
+	res.header("Access-Control-Allow-Methods", "GET, POST, DELETE");
+	res.header("Access-Control-Allow-Headers", "Authorization, Content-Type");
+	next();
+});
+
+route(app, "GET", "/health", function(req, res) {
+	res.json({"ok": true, "requests_served": requestCount});
+});
+
+route(app, "GET", "/api/protected", function(req, res) {
+	res.json({"message": "you passed server-side auth", "total_requests": requestCount});
+});
+
+print "Middleware chain defined: logging -> auth -> CORS -> handler";
+print "Client sends plain HTTP — server owns the entire request pipeline";`,
+
+		"reactive-state": `// Reactive State Management (Server-Side Signals)
+// Signals, computed values, and effects run on the server.
+// The client never manages derived state or triggers recalculations.
+
+let count = signal("count", 0);
+let multiplier = signal("multiplier", 3);
+
+// Computed value auto-tracks its signal dependencies on the server.
+let tripled = computed(function() {
+	return count.value * multiplier.value;
+});
+
+// Effects run server-side when their tracked signals change.
+let log = effect(function() {
+	print sprintf("count=%d multiplier=%d tripled=%d", count.value, multiplier.value, tripled.value);
+});
+
+// Mutate state — effects fire automatically on the server.
+print "--- Setting count to 5 ---";
+count.set(5);
+
+print "--- Setting multiplier to 10 ---";
+multiplier.set(10);
+
+// Updater function receives previous value — server computes new state.
+print "--- Incrementing count via updater ---";
+count.set(function(prev) { return prev + 1; });
+
+print sprintf("Final: count=%d tripled=%d", count.value, tripled.value);
+print "All reactive computation happened server-side";`,
+
+		"scheduler": `// Server-Side Job Scheduling
+// The scheduler is a stateful server component.
+// Jobs, timers, and execution are managed entirely on the server.
+
+let runLog = [];
+
+// Schedule a recurring job using cron — server keeps the schedule.
+let jobA = schedule("* * * * *", "heartbeat", function() {
+	let entry = sprintf("heartbeat at %s", now_iso());
+	print entry;
+});
+
+// Interval-based job — server tracks timing.
+let jobB = schedule_interval("2s", "cleanup", function() {
+	print sprintf("cleanup tick at %s", now_iso());
+});
+
+// One-shot job — server fires it once and deactivates.
+let jobC = schedule_once("* * * * *", "init", function() {
+	print "one-time initialization complete";
+});
+
+// List all jobs — server owns the registry.
+let jobs = schedule_list();
+print sprintf("Scheduled %d jobs:", len(jobs));
+for (let i = 0; i < len(jobs); i = i + 1) {
+	let j = jobs[i];
+	print sprintf("  %s: %s (active=%v)", j.id, j.name, j.active);
+}
+
+// Run due jobs synchronously for demo purposes.
+let executed = schedule_run(1);
+print sprintf("Executed %d due jobs", executed);
+
+// Cancel a job — server removes it from the registry.
+schedule_cancel(jobB);
+print sprintf("Cancelled job %s", jobB);
+
+// Background task — server runs it in a goroutine.
+let future = background(function() {
+	return "async work done on server";
+});
+
+print "Scheduler and background tasks are server-managed";
+print "Client never polls, retries, or sequences — server does it all";`,
+
+		"server-sse": `// Server-Sent Events (SSE)
+// The server pushes events to the client over a long-lived connection.
+// The client just listens — no polling, no flow control.
+
+let app = server(3002);
+
+// In-memory event log — server state.
+let eventLog = [];
+
+route(app, "GET", "/events", function(req, res) {
+	// Server initiates the SSE stream.
+	let sse = res.sse();
+
+	// Server decides what to send and when.
+	let i = 0;
+	while (i < 5) {
+		let payload = json_encode({"seq": i, "time": now_iso()});
+		sse.send("tick", payload);
+		let entry = sprintf("sent event %d", i);
+		eventLog = append(eventLog, entry);
+		print entry;
+		i = i + 1;
+	}
+
+	sse.send("done", json_encode({"total": i}));
+	sse.close();
+});
+
+route(app, "GET", "/log", function(req, res) {
+	res.json({"events": eventLog, "count": len(eventLog)});
+});
+
+print "SSE server defined — server pushes events, client only listens";
+print "Event sequence, timing, and payload are all server decisions";`,
+
+		"server-route-groups": `// Route Groups and Web App Pattern
+// All URL structure and handler mapping is server-side.
+// The client hits URLs — it does not decide which handler runs.
+
+let app = web_app("./templates");
+
+// API group — server organizes routes by prefix.
+route_group(app, "/api/v1", "GET", "/health", function(req, res) {
+	res.json({"status": "ok", "version": "1.0"});
+});
+
+route_group(app, "/api/v1", "GET", "/users", function(req, res) {
+	res.json([
+		{"id": 1, "name": "Alice"},
+		{"id": 2, "name": "Bob"}
+	]);
+});
+
+route_group(app, "/api/v1", "GET", "/users/:id", function(req, res) {
+	let id = req.param("id");
+	// Server resolves the user — client just requested a URL.
+	res.json({"id": to_int(id), "name": "User " + id});
+});
+
+// Admin group — server decides access, not the client.
+route_group(app, "/admin", "GET", "/dashboard", function(req, res) {
+	res.json({"section": "dashboard", "stats": {"users": 42, "active": 18}});
+});
+
+route_group(app, "/admin", "GET", "/settings", function(req, res) {
+	res.json({"section": "settings", "features": ["auth", "logging", "rate-limit"]});
+});
+
+// Static files served by the server.
+static(app, "/assets/", "./public");
+
+print "Web app with route groups:";
+let routes = app.routes;
+for (let i = 0; i < len(routes); i = i + 1) {
+	print sprintf("  %s %s", routes[i].method, routes[i].pattern);
+}
+print "URL dispatch, grouping, and static serving are all server-owned";`,
+
+		"reactive-html": `// Reactive HTML — Server-Rendered with Embedded Reactivity
+// The server builds the entire HTML page including reactive behavior.
+// The client receives a self-contained document — zero API round-trips.
+// All state, logic, and rendering decisions are made server-side.
+
+let title = "Task Manager";
+let theme_color = "#6366f1";
+
+// Server builds the items and renders them into HTML at response time.
+let tasks = [
+	{"id": 1, "text": "Build stateful server", "done": true},
+	{"id": 2, "text": "Move flow logic to server", "done": true},
+	{"id": 3, "text": "Remove client-side state", "done": false},
+	{"id": 4, "text": "Add reactive HTML rendering", "done": false}
+];
+
+// Server computes stats — client never calculates these.
+let total = len(tasks);
+let completed = 0;
+for (let i = 0; i < total; i = i + 1) {
+	if (tasks[i].done) {
+		completed = completed + 1;
+	}
+}
+let pct = 0;
+if (total > 0) {
+	pct = round((completed * 100) / total);
+}
+
+// Build task list HTML server-side.
+let task_items = "";
+for (let i = 0; i < total; i = i + 1) {
+	let t = tasks[i];
+	let checked = "";
+	let style = "";
+	if (t.done) {
+		checked = " checked";
+		style = " style=\"text-decoration:line-through;opacity:.6\"";
+	}
+	task_items = task_items + sprintf(
+		"<li class=\"task\"%s><label><input type=\"checkbox\" data-id=\"%d\"%s> %s</label></li>\n",
+		style, t.id, checked, t.text
+	);
+}
+
+// Server produces the complete HTML document with embedded reactive JS.
+// The reactive behavior (checkbox toggle, add task) runs client-side but
+// operates only on the rendered DOM — no API calls, no server round-trips.
+let html = sprintf("<!DOCTYPE html>
+<html lang=\"en\">
+<head>
+<meta charset=\"utf-8\">
+<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">
+<title>%s</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:system-ui,-apple-system,sans-serif;background:#f8fafc;color:#1e293b;min-height:100vh;display:flex;justify-content:center;padding:2rem 1rem}
+.app{width:100%%;max-width:480px}
+h1{font-size:1.5rem;font-weight:700;color:%s;margin-bottom:1.5rem;display:flex;align-items:center;gap:.5rem}
+h1::before{content:'\\2713';background:%s;color:white;width:2rem;height:2rem;border-radius:.5rem;display:flex;align-items:center;justify-content:center;font-size:.875rem}
+.stats{display:flex;gap:1rem;margin-bottom:1.5rem}
+.stat{flex:1;background:white;border:1px solid #e2e8f0;border-radius:.75rem;padding:.75rem 1rem;text-align:center}
+.stat-value{font-size:1.5rem;font-weight:700;color:%s}
+.stat-label{font-size:.75rem;color:#64748b;text-transform:uppercase;letter-spacing:.05em}
+.progress{height:.5rem;background:#e2e8f0;border-radius:.25rem;margin-bottom:1.5rem;overflow:hidden}
+.progress-bar{height:100%%;background:linear-gradient(90deg,%s,%s);border-radius:.25rem;transition:width .3s ease}
+.task-list{list-style:none;display:flex;flex-direction:column;gap:.5rem;margin-bottom:1.5rem}
+.task{background:white;border:1px solid #e2e8f0;border-radius:.75rem;padding:.75rem 1rem;transition:all .2s}
+.task:hover{border-color:%s;box-shadow:0 1px 3px rgba(0,0,0,.08)}
+.task label{display:flex;align-items:center;gap:.75rem;cursor:pointer;font-size:.9375rem}
+.task input[type=checkbox]{width:1.125rem;height:1.125rem;accent-color:%s}
+.add-form{display:flex;gap:.5rem}
+.add-form input{flex:1;padding:.625rem .875rem;border:1px solid #e2e8f0;border-radius:.5rem;font-size:.875rem;outline:none}
+.add-form input:focus{border-color:%s;box-shadow:0 0 0 3px rgba(99,102,241,.15)}
+.add-form button{padding:.625rem 1.25rem;background:%s;color:white;border:none;border-radius:.5rem;font-weight:600;cursor:pointer;font-size:.875rem}
+.add-form button:hover{opacity:.9}
+.footer{margin-top:1.5rem;text-align:center;font-size:.75rem;color:#94a3b8}
+</style>
+</head>
+<body>
+<div class=\"app\">
+<h1>%s</h1>
+<div class=\"stats\">
+ <div class=\"stat\"><div class=\"stat-value\" id=\"totalCount\">%d</div><div class=\"stat-label\">Total</div></div>
+ <div class=\"stat\"><div class=\"stat-value\" id=\"doneCount\">%d</div><div class=\"stat-label\">Done</div></div>
+ <div class=\"stat\"><div class=\"stat-value\" id=\"pctDisplay\">%d%%</div><div class=\"stat-label\">Progress</div></div>
+</div>
+<div class=\"progress\"><div class=\"progress-bar\" id=\"progressBar\" style=\"width:%d%%\"></div></div>
+<ul class=\"task-list\" id=\"taskList\">%s</ul>
+<form class=\"add-form\" id=\"addForm\">
+ <input type=\"text\" id=\"newTask\" placeholder=\"Add a new task...\" required>
+ <button type=\"submit\">Add</button>
+</form>
+<div class=\"footer\">Server-rendered by SPL &mdash; no API calls needed</div>
+</div>
+<script>
+// Minimal client-side JS for interactivity — operates on the DOM only.
+// No fetch(), no API endpoints, no server round-trips.
+let nextId=%d;
+function updateStats(){
+ const items=document.querySelectorAll('.task');
+ const done=document.querySelectorAll('.task input:checked').length;
+ const total=items.length;
+ const pct=total?Math.round(done/total*100):0;
+ document.getElementById('totalCount').textContent=total;
+ document.getElementById('doneCount').textContent=done;
+ document.getElementById('pctDisplay').textContent=pct+'%%';
+ document.getElementById('progressBar').style.width=pct+'%%';
+ items.forEach(li=>{
+  const cb=li.querySelector('input');
+  li.style.textDecoration=cb.checked?'line-through':'none';
+  li.style.opacity=cb.checked?'.6':'1';
+ });
+}
+document.getElementById('taskList').addEventListener('change',updateStats);
+document.getElementById('addForm').addEventListener('submit',function(e){
+ e.preventDefault();
+ const input=document.getElementById('newTask');
+ const text=input.value.trim();
+ if(!text)return;
+ const li=document.createElement('li');
+ li.className='task';
+ li.innerHTML='<label><input type=\"checkbox\" data-id=\"'+nextId+'\"> '+text+'</label>';
+ document.getElementById('taskList').appendChild(li);
+ nextId++;
+ input.value='';
+ updateStats();
+});
+</script>
+</body>
+</html>",
+	title, theme_color, theme_color, theme_color,
+	theme_color, theme_color, theme_color, theme_color,
+	theme_color, theme_color,
+	title, total, completed, pct, pct,
+	task_items, total + 1
+);
+
+print html;`,
+
 		"complete-tour": `// Complete SPL playground tour: modules, closures, loops, collections,
 // formatting, JSON, crypto/time helpers, and structured error handling.
 import "testdata/modules/math.spl" as math;

@@ -512,5 +512,116 @@ func init() {
 				return &object.Integer{Value: minVal + mrand.Int63n(maxVal-minVal)}
 			},
 		},
+
+		// zip(arr1, arr2) — pairs elements from two arrays.
+		// Returns array of [a, b] pairs with length = min(len(arr1), len(arr2)).
+		"zip": {
+			Fn: func(args ...object.Object) object.Object {
+				if len(args) != 2 {
+					return &object.String{Value: fmt.Sprintf("wrong number of arguments. got=%d, want=2", len(args))}
+				}
+				if args[0].Type() != object.ARRAY_OBJ {
+					return &object.String{Value: fmt.Sprintf("first argument to `zip` must be ARRAY, got %s", args[0].Type())}
+				}
+				if args[1].Type() != object.ARRAY_OBJ {
+					return &object.String{Value: fmt.Sprintf("second argument to `zip` must be ARRAY, got %s", args[1].Type())}
+				}
+				a := args[0].(*object.Array).Elements
+				b := args[1].(*object.Array).Elements
+				minLen := len(a)
+				if len(b) < minLen {
+					minLen = len(b)
+				}
+				out := make([]object.Object, minLen)
+				for i := 0; i < minLen; i++ {
+					out[i] = &object.Array{Elements: []object.Object{a[i], b[i]}}
+				}
+				return &object.Array{Elements: out}
+			},
+		},
+
+		// chunk(arr, size) — splits an array into sub-arrays of the given size.
+		"chunk": {
+			Fn: func(args ...object.Object) object.Object {
+				if len(args) != 2 {
+					return &object.String{Value: fmt.Sprintf("wrong number of arguments. got=%d, want=2", len(args))}
+				}
+				if args[0].Type() != object.ARRAY_OBJ {
+					return &object.String{Value: fmt.Sprintf("first argument to `chunk` must be ARRAY, got %s", args[0].Type())}
+				}
+				size, errObj := asInt(args[1], "size")
+				if errObj != nil {
+					return errObj
+				}
+				if size <= 0 {
+					return &object.String{Value: "ERROR: chunk size must be > 0"}
+				}
+				arr := args[0].(*object.Array).Elements
+				var out []object.Object
+				for i := 0; i < len(arr); i += int(size) {
+					end := i + int(size)
+					if end > len(arr) {
+						end = len(arr)
+					}
+					chunk := make([]object.Object, end-i)
+					copy(chunk, arr[i:end])
+					out = append(out, &object.Array{Elements: chunk})
+				}
+				if out == nil {
+					out = []object.Object{}
+				}
+				return &object.Array{Elements: out}
+			},
+		},
+
+		// partition(arr, key, value) — splits array of hashes into two groups:
+		// those where hash[key] == value, and those where it doesn't.
+		// Returns [[matching], [non-matching]].
+		"partition": {
+			Fn: func(args ...object.Object) object.Object {
+				if len(args) != 3 {
+					return &object.String{Value: fmt.Sprintf("wrong number of arguments. got=%d, want=3", len(args))}
+				}
+				if args[0].Type() != object.ARRAY_OBJ {
+					return &object.String{Value: fmt.Sprintf("first argument to `partition` must be ARRAY, got %s", args[0].Type())}
+				}
+				keyName, errObj := asString(args[1], "key")
+				if errObj != nil {
+					return errObj
+				}
+				matchValue := args[2]
+
+				arr := args[0].(*object.Array).Elements
+				var matching, rest []object.Object
+				keyObj := &object.String{Value: keyName}
+				hk := keyObj.HashKey()
+
+				for _, el := range arr {
+					matched := false
+					if h, ok := el.(*object.Hash); ok {
+						if pair, exists := h.Pairs[hk]; exists {
+							if pair.Value.Inspect() == matchValue.Inspect() {
+								matched = true
+							}
+						}
+					}
+					if matched {
+						matching = append(matching, el)
+					} else {
+						rest = append(rest, el)
+					}
+				}
+				if matching == nil {
+					matching = []object.Object{}
+				}
+				if rest == nil {
+					rest = []object.Object{}
+				}
+				return &object.Array{Elements: []object.Object{
+					&object.Array{Elements: matching},
+					&object.Array{Elements: rest},
+				}}
+			},
+		},
 	})
 }

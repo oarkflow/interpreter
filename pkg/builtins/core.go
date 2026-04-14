@@ -32,6 +32,7 @@ import (
 	"github.com/oarkflow/interpreter/pkg/config"
 	"github.com/oarkflow/interpreter/pkg/eval"
 	"github.com/oarkflow/interpreter/pkg/object"
+	"github.com/oarkflow/interpreter/pkg/sandbox"
 	"github.com/oarkflow/interpreter/pkg/security"
 )
 
@@ -2335,9 +2336,35 @@ func init() {
 // Helper functions for the new builtins
 // ---------------------------------------------------------------------------
 
-// SanitizePathLocal resolves user-supplied paths to absolute paths.
+// SanitizePathLocal resolves user-supplied paths to absolute paths and ensures
+// they remain within the allowed filesystem root. The root is determined by:
+//  1. The active sandbox base directory (sandbox.ActiveSandboxBaseDir()), if set
+//  2. The current working directory, as a fallback
+//
+// This prevents interpreter scripts from accessing or modifying files outside
+// the project/sandbox boundary.
 func SanitizePathLocal(userPath string) (string, error) {
-	return filepath.Abs(userPath)
+	abs, err := filepath.Abs(userPath)
+	if err != nil {
+		return "", err
+	}
+	// Clean the resolved path to remove any ".." components.
+	abs = filepath.Clean(abs)
+
+	root := sandbox.ActiveSandboxBaseDir()
+	if root == "" {
+		root, err = os.Getwd()
+		if err != nil {
+			return "", fmt.Errorf("cannot determine filesystem root: %w", err)
+		}
+	}
+	root = filepath.Clean(root)
+
+	// The path must be exactly the root or a child of it.
+	if abs != root && !strings.HasPrefix(abs, root+string(os.PathSeparator)) {
+		return "", fmt.Errorf("path %q is outside the allowed root %q", userPath, root)
+	}
+	return abs, nil
 }
 
 // isTruthyEnvVar checks if an environment variable is set to a truthy value.

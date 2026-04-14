@@ -802,6 +802,25 @@ func init() {
 		"listen_async": {FnWithEnv: builtinListenAsync},
 		"shutdown":     {Fn: builtinShutdown},
 	})
+
+	// Register dot expression hook for server types
+	prev := eval.DotExpressionHook
+	eval.DotExpressionHook = func(left object.Object, name string) object.Object {
+		switch obj := left.(type) {
+		case *SPLServer:
+			return GetServerProperty(obj, name)
+		case *SPLRequest:
+			return GetRequestProperty(obj, name)
+		case *SPLResponse:
+			return GetResponseProperty(obj, name)
+		case *SSEWriter:
+			return GetSSEWriterProperty(obj, name)
+		}
+		if prev != nil {
+			return prev(left, name)
+		}
+		return nil
+	}
 }
 
 func builtinServer(args ...object.Object) object.Object {

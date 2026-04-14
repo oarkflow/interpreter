@@ -304,6 +304,23 @@ func init() {
 		"effect":    {FnWithEnv: builtinEffect},
 		"batch":     {FnWithEnv: builtinBatch},
 	})
+
+	// Register dot expression hook for reactive types
+	prev := eval.DotExpressionHook
+	eval.DotExpressionHook = func(left object.Object, name string) object.Object {
+		switch obj := left.(type) {
+		case *Signal:
+			return GetSignalProperty(obj, name)
+		case *Computed:
+			return GetComputedProperty(obj, name)
+		case *Effect:
+			return GetEffectProperty(obj, name)
+		}
+		if prev != nil {
+			return prev(left, name)
+		}
+		return nil
+	}
 }
 
 // signal(initial_value) or signal(name, initial_value)
