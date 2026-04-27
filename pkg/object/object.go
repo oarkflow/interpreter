@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/oarkflow/interpreter/pkg/ast"
-	"github.com/oarkflow/squealx"
 )
 
 // ---------------------------------------------------------------------------
@@ -477,26 +476,6 @@ func (h *Hash) Inspect() string {
 	out.WriteString("}")
 	return out.String()
 }
-
-// ---------------------------------------------------------------------------
-// DB / DBTx
-// ---------------------------------------------------------------------------
-
-// DB represents a database connection.
-type DB struct {
-	*squealx.DB
-}
-
-func (db *DB) Type() ObjectType { return DB_OBJ }
-func (db *DB) Inspect() string  { return "<db connection>" }
-
-// DBTx represents a database transaction.
-type DBTx struct {
-	*squealx.Tx
-}
-
-func (tx *DBTx) Type() ObjectType { return DB_TX_OBJ }
-func (tx *DBTx) Inspect() string  { return "<db transaction>" }
 
 // ---------------------------------------------------------------------------
 // Future

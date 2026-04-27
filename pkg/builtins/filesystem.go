@@ -220,7 +220,7 @@ func init() {
 				if err := security.CheckFileWriteAllowed(safePath); err != nil {
 					return retErr(fmt.Sprintf("%s", err))
 				}
-				if err := os.Chmod(safePath, os.FileMode(mode)); err != nil {
+				if err := chmodPath(safePath, os.FileMode(mode)); err != nil {
 					return retErr(fmt.Sprintf("%s", err))
 				}
 				return retOk()
