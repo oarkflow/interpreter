@@ -146,6 +146,10 @@ func extendFunctionEnv(fn *object.Function, args []object.Object, callerEnv *obj
 		}
 	}
 
+	if fn.Name != "" {
+		env.Set(fn.Name, fn)
+	}
+
 	return env
 }
 
@@ -171,4 +175,3 @@ func ExtendFunctionEnv(fn *object.Function, args []object.Object, outer *object.
 	}
 	return extendFunctionEnv(fn, args, outer, call)
 }
-

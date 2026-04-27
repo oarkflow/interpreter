@@ -52,9 +52,9 @@ func TestSchedulerRestoreAndTimezone(t *testing.T) {
 	res, err := ExecWithOptions(`
 schedule_timezone("UTC");
 let id = schedule_interval("5s", "heartbeat", function() { 1; });
-schedule_persist("` + file + `");
+schedule_persist("`+file+`");
 schedule_cancel(id);
-schedule_restore("` + file + `");
+schedule_restore("`+file+`");
 let jobs = schedule_list();
 len(jobs);
 `, nil, ExecOptions{})
@@ -64,5 +64,25 @@ len(jobs);
 	count, ok := res.(*Integer)
 	if !ok || count.Value < 1 {
 		t.Fatalf("expected restored jobs, got %T (%v)", res, res)
+	}
+}
+
+func TestBackgroundNamedFunctionRecursion(t *testing.T) {
+	res, err := ExecWithOptions(`
+let future = background(function fib(n) {
+	if (n < 2) {
+		return n;
+	}
+	return fib(n - 1) + fib(n - 2);
+}, 8);
+
+await future;
+`, nil, ExecOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	value, ok := res.(*Integer)
+	if !ok || value.Value != 21 {
+		t.Fatalf("expected fibonacci result 21, got %T (%v)", res, res)
 	}
 }

@@ -74,15 +74,15 @@ const (
 
 // Extended ObjectType constants defined by other subsystems.
 const (
-	SERVER_OBJ       ObjectType = 100
-	REQUEST_OBJ      ObjectType = 101
-	RESPONSE_OBJ     ObjectType = 102
-	SSE_WRITER_OBJ   ObjectType = 103
+	SERVER_OBJ        ObjectType = 100
+	REQUEST_OBJ       ObjectType = 101
+	RESPONSE_OBJ      ObjectType = 102
+	SSE_WRITER_OBJ    ObjectType = 103
 	QUERY_BUILDER_OBJ ObjectType = 104
 	LAZY_DB_QUERY_OBJ ObjectType = 105
-	SIGNAL_OBJ       ObjectType = 106
-	COMPUTED_OBJ     ObjectType = 107
-	EFFECT_OBJ       ObjectType = 108
+	SIGNAL_OBJ        ObjectType = 106
+	COMPUTED_OBJ      ObjectType = 107
+	EFFECT_OBJ        ObjectType = 108
 )
 
 func (ot ObjectType) String() string {
@@ -322,6 +322,7 @@ func (c *Continue) Inspect() string  { return "continue" }
 // ---------------------------------------------------------------------------
 
 type Function struct {
+	Name       string
 	Parameters []*ast.Identifier
 	ParamTypes []string
 	Defaults   []ast.Expression
@@ -335,7 +336,13 @@ type Function struct {
 func (f *Function) Type() ObjectType { return FUNCTION_OBJ }
 func (f *Function) Inspect() string {
 	var out strings.Builder
-	out.WriteString("function(")
+	if f.Name != "" {
+		out.WriteString("function ")
+		out.WriteString(f.Name)
+		out.WriteString("(")
+	} else {
+		out.WriteString("function(")
+	}
 	for i, p := range f.Parameters {
 		if i > 0 {
 			out.WriteString(", ")

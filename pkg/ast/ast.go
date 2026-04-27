@@ -196,6 +196,7 @@ func (ie *IfExpression) String() string {
 }
 
 type FunctionLiteral struct {
+	Name       *Identifier
 	Parameters []*Identifier
 	ParamTypes []string
 	Defaults   []Expression
@@ -209,7 +210,13 @@ type FunctionLiteral struct {
 func (fl *FunctionLiteral) expressionNode() {}
 func (fl *FunctionLiteral) String() string {
 	var out strings.Builder
-	out.WriteString("function(")
+	if fl.Name != nil {
+		out.WriteString("function ")
+		out.WriteString(fl.Name.String())
+		out.WriteString("(")
+	} else {
+		out.WriteString("function(")
+	}
 	for i, p := range fl.Parameters {
 		if i > 0 {
 			out.WriteString(", ")

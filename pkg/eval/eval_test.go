@@ -293,6 +293,7 @@ func TestFunctionApplication(t *testing.T) {
 		{"let add = function(x, y) { x + y; }; add(5, 5);", 10},
 		{"let add = function(x, y) { x + y; }; add(5 + 5, add(5, 5));", 20},
 		{"function(x) { x; }(5)", 5},
+		{"[7].map(function fib(n) { if (n < 2) { return n; } return fib(n - 1) + fib(n - 2); })[0]", 13},
 	}
 
 	for _, tt := range tests {
@@ -310,6 +311,23 @@ let addTwo = newAdder(2);
 addTwo(2);`
 
 	testIntegerObject(t, testEval(input), 4)
+}
+
+func TestNamedFunctionExpressionRecursionInNestedScope(t *testing.T) {
+	input := `
+let run = function(start) {
+	let values = [start];
+	return values.map(function fib(n) {
+		if (n < 2) {
+			return n;
+		}
+		return fib(n - 1) + fib(n - 2);
+	})[0];
+};
+
+run(8);`
+
+	testIntegerObject(t, testEval(input), 21)
 }
 
 func TestStringLiteral(t *testing.T) {

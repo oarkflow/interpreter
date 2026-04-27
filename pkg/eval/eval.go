@@ -422,7 +422,12 @@ func Eval(node ast.Node, env *object.Environment) object.Object {
 		return evalIdentifier(node, env)
 
 	case *ast.FunctionLiteral:
+		name := ""
+		if node.Name != nil {
+			name = node.Name.Name
+		}
 		return &object.Function{
+			Name:       name,
 			Parameters: node.Parameters,
 			ParamTypes: node.ParamTypes,
 			Defaults:   node.Defaults,
@@ -481,6 +486,7 @@ func evalClassStatement(node *ast.ClassStatement, env *object.Environment) objec
 	instanceMethods := make(map[object.HashKey]object.HashPair, len(node.Methods))
 	for _, method := range node.Methods {
 		fn := &object.Function{
+			Name:       method.Name.Name,
 			Parameters: method.Parameters,
 			Defaults:   make([]ast.Expression, len(method.Parameters)),
 			HasRest:    false,
@@ -498,6 +504,7 @@ func evalClassStatement(node *ast.ClassStatement, env *object.Environment) objec
 		if ctorPair, ok := obj.Pairs[(&object.String{Value: "constructor"}).HashKey()]; ok {
 			if ctorFn, ok := ctorPair.Value.(*object.Function); ok {
 				bound := &object.Function{
+					Name:       ctorFn.Name,
 					Parameters: ctorFn.Parameters,
 					Defaults:   ctorFn.Defaults,
 					HasRest:    ctorFn.HasRest,
@@ -518,6 +525,7 @@ func evalClassStatement(node *ast.ClassStatement, env *object.Environment) objec
 					methodEnv := object.NewEnclosedEnvironment(fnCopy.Env)
 					methodEnv.Set("this", obj)
 					boundFn := &object.Function{
+						Name:       fnCopy.Name,
 						Parameters: fnCopy.Parameters,
 						Defaults:   fnCopy.Defaults,
 						HasRest:    fnCopy.HasRest,

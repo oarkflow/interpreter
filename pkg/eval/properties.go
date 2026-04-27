@@ -691,12 +691,7 @@ func ExecuteCallback(fnObj object.Object, args []object.Object) object.Object {
 func executeCallback(fnObj object.Object, args []object.Object) object.Object {
 	switch fn := fnObj.(type) {
 	case *object.Function:
-		extendedEnv := object.NewEnclosedEnvironment(fn.Env)
-		for i, param := range fn.Parameters {
-			if i < len(args) {
-				extendedEnv.Set(param.Name, args[i])
-			}
-		}
+		extendedEnv := extendFunctionEnv(fn, args, nil, nil)
 		evaluated := Eval(fn.Body, extendedEnv)
 		return unwrapReturnValue(evaluated)
 	case *object.Builtin:

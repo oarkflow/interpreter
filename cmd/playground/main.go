@@ -51,9 +51,26 @@ let makeMultiplier = function(factor) {
 	};
 };
 
+let fib = function fib(n) {
+	if (n < 2) {
+		return n;
+	}
+	return fib(n - 1) + fib(n - 2);
+};
+
+let scores = [6, 7, 8];
+let fibScores = scores.map(function fibScore(n) {
+	if (n < 2) {
+		return n;
+	}
+	return fibScore(n - 1) + fibScore(n - 2);
+});
+
 let double = makeMultiplier(2);
 print add(20, 22);
-print double(21);`,
+print double(21);
+print fib(8);
+print fibScores;`,
 		"formatting": `let payload = {"name": "spl", "ok": true, "count": 3};
 print sprintf("name=%s type=%T val=%v", payload.name, payload, payload);
 print interpolate("Hello {name}, items={count}", {"name": "Playground", "count": 3});`,
@@ -267,7 +284,7 @@ assert_contains("hello world", "world");
 // View test summary
 let summary = test_summary();
 print sprintf("total=%v passed=%v failed=%v", summary.total, summary.passed, summary.failed);`,
-				"type-casting": `// === Type Conversion ===
+		"type-casting": `// === Type Conversion ===
 print sprintf("to_int(\"42\")     = %v", to_int("42"));
 print sprintf("to_int(3.14)     = %v", to_int(3.14));
 print sprintf("to_int(true)     = %v", to_int(true));
@@ -363,10 +380,17 @@ route(app, "DELETE", "/api/users/:id", function(req, res) {
 });
 
 route(app, "GET", "/api/stats", function(req, res) {
+	let fib = function fib(n) {
+		if (n < 2) {
+			return n;
+		}
+		return fib(n - 1) + fib(n - 2);
+	};
 	res.json({
 		"total_users": len(users),
 		"next_id": nextID,
-		"uptime": now_iso()
+		"uptime": now_iso(),
+		"fib_8": fib(8)
 	});
 });
 

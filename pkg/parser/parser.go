@@ -1669,7 +1669,7 @@ func (p *Parser) parseStringLiteral() ast.Expression {
 			break
 		}
 		if idx > 0 {
-			tl.Parts = append(tl.Parts, &ast.StringLiteral{Value: raw[i:i+idx]})
+			tl.Parts = append(tl.Parts, &ast.StringLiteral{Value: raw[i : i+idx]})
 		}
 		// Find matching }
 		start := i + idx + 2
@@ -1959,6 +1959,11 @@ func (p *Parser) parseIfExpression() ast.Expression {
 func (p *Parser) parseFunctionLiteral() ast.Expression {
 	lit := &ast.FunctionLiteral{}
 
+	if p.peekTokenIs(token.IDENT) {
+		p.nextToken()
+		lit.Name = p.internIdentifier(p.curToken.Literal)
+	}
+
 	if !p.expectPeek(token.LPAREN) {
 		return nil
 	}
@@ -2004,7 +2009,7 @@ func (p *Parser) parseFunctionDeclaration() ast.Statement {
 	}
 	body := p.parseBlockStatement()
 
-	fn := &ast.FunctionLiteral{Parameters: params, ParamTypes: paramTypes, Defaults: defaults, HasRest: hasRest, ReturnType: returnType, Body: body}
+	fn := &ast.FunctionLiteral{Name: name, Parameters: params, ParamTypes: paramTypes, Defaults: defaults, HasRest: hasRest, ReturnType: returnType, Body: body}
 	return &ast.LetStatement{Name: name, Names: []*ast.Identifier{name}, Value: fn}
 }
 
