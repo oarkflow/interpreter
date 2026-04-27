@@ -330,6 +330,28 @@ run(8);`
 	testIntegerObject(t, testEval(input), 21)
 }
 
+func TestNamedFunctionDeclaration(t *testing.T) {
+	input := `
+function add(a, b) {
+	return a + b;
+}
+
+add(3, 5);`
+
+	testIntegerObject(t, testEval(input), 8)
+}
+
+func TestArrayMethodChaining(t *testing.T) {
+	input := `
+let nums = [1, 2, 3, 4, 5, 6];
+nums
+	.map(function(x) { return x * 3; })
+	.filter(function(x) { return x > 10; })
+	.reduce(function(acc, x) { return acc + x; }, 0);`
+
+	testIntegerObject(t, testEval(input), 45)
+}
+
 func TestStringLiteral(t *testing.T) {
 	input := `"Hello World!"`
 

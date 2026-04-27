@@ -206,6 +206,12 @@ func TestBuiltinCodeExamplesContainCompleteExamples(t *testing.T) {
 	if !strings.Contains(examples["collections"], `.reduce(`) {
 		t.Fatalf("expected collections example to include reduce, got %q", examples["collections"])
 	}
+	if !strings.Contains(examples["collections"], `.filter(`) || !strings.Contains(examples["collections"], `.map(`) {
+		t.Fatalf("expected collections example to include chained collection methods, got %q", examples["collections"])
+	}
+	if !strings.Contains(examples["functions"], `function add(a, b)`) {
+		t.Fatalf("expected functions example to include named function declaration, got %q", examples["functions"])
+	}
 }
 
 func TestExamplesAPIContainsCompleteCodeExamples(t *testing.T) {

@@ -41,9 +41,9 @@ type executeResponse struct {
 func builtinCodeExamples() map[string]string {
 	return map[string]string{
 		"hello": `print "Hello SPL Playground";`,
-		"functions": `let add = function(a, b) {
+		"functions": `function add(a, b) {
 	return a + b;
-};
+}
 
 let makeMultiplier = function(factor) {
 	return function(value) {
@@ -83,10 +83,15 @@ print math.base + math.increment;`,
 let doubled = nums.map(function(x) { return x * 2; });
 let evens = nums.filter(function(x) { return x % 2 == 0; });
 let total = nums.reduce(function(acc, x) { return acc + x; }, 0);
+let chained = nums
+	.map(function(x) { return x * 3; })
+	.filter(function(x) { return x > 10; })
+	.reduce(function(acc, x) { return acc + x; }, 0);
 
 print doubled;
 print evens;
 print total;
+print chained;
 print {"first_even": evens[0], "count": len(nums)};`,
 		"error-handling": `let payload = {"name": "spl", "count": 3};
 print sprintf("payload=%v type=%T", payload, payload);
