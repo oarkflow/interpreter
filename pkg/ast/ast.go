@@ -643,8 +643,13 @@ func (es *ExportStatement) String() string {
 	if es.Declaration == nil {
 		return fmt.Sprintf("export %s;", kind)
 	}
-	if ls, ok := es.Declaration.(*LetStatement); ok && len(ls.Names) > 0 {
-		return fmt.Sprintf("export %s %s = %s;", kind, ls.Names[0].String(), ls.Value.String())
+	if ls, ok := es.Declaration.(*LetStatement); ok {
+		if ls.Name != nil {
+			return fmt.Sprintf("export %s %s = %s;", kind, ls.Name.String(), ls.Value.String())
+		}
+		if len(ls.Names) > 0 {
+			return fmt.Sprintf("export %s %s = %s;", kind, ls.Names[0].String(), ls.Value.String())
+		}
 	}
 	return fmt.Sprintf("export %s %s", kind, es.Declaration.String())
 }

@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/oarkflow/interpreter/pkg/ast"
@@ -786,10 +787,11 @@ type Environment struct {
 	OwnerID        string
 }
 
+var environmentOwnerIDCounter atomic.Uint64
+
 func NewEnvironment() *Environment {
 	return &Environment{
-		Store:   make(map[string]Object),
-		OwnerID: fmt.Sprintf("env-%d", time.Now().UnixNano()),
+		Store: make(map[string]Object),
 	}
 }
 
@@ -818,8 +820,17 @@ func NewEnclosedEnvironment(outer *Environment) *Environment {
 		SecurityPolicy: outer.SecurityPolicy,
 		Output:         outer.Output,
 		CallStack:      append([]CallFrame(nil), outer.CallStack...),
-		OwnerID:        fmt.Sprintf("env-%d", time.Now().UnixNano()),
 	}
+}
+
+func (e *Environment) EnsureOwnerID() string {
+	if e == nil {
+		return ""
+	}
+	if e.OwnerID == "" {
+		e.OwnerID = "env-" + strconv.FormatUint(environmentOwnerIDCounter.Add(1), 10)
+	}
+	return e.OwnerID
 }
 
 func (e *Environment) ModuleCacheMap() map[string]ModuleCacheEntry {

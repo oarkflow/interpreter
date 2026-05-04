@@ -27,4 +27,9 @@ func main() {
 		fmt.Fprintf(os.Stderr, "focused benchmark run failed: %v\n", err)
 		os.Exit(1)
 	}
+
+	if err := run("Competitor interpreter suite", "test", ".", "-run", "^$", "-bench", "^BenchmarkCompetitor", "-benchmem", "-count", "5"); err != nil {
+		fmt.Fprintf(os.Stderr, "competitor benchmark run failed: %v\n", err)
+		os.Exit(1)
+	}
 }

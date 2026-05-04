@@ -18,8 +18,10 @@ type Parser struct {
 	curToken  token.Token
 	peekToken token.Token
 
-	identIntern map[string]*ast.Identifier
-	initBlocks  []*ast.InitStatement
+	identIntern      map[string]*ast.Identifier
+	identInternSmall [16]*ast.Identifier
+	identInternCount int
+	initBlocks       []*ast.InitStatement
 }
 
 // ParserState captures the parser's position for back-tracking.
@@ -79,10 +81,7 @@ func LineContext(input string, line, col int) string {
 // NewParser creates a new Parser that reads tokens from l.
 func NewParser(l *lexer.Lexer) *Parser {
 	p := &Parser{
-		l:           l,
-		errors:      []string{},
-		identIntern: make(map[string]*ast.Identifier, 128),
-		initBlocks:  make([]*ast.InitStatement, 0, 2),
+		l: l,
 	}
 	p.nextToken()
 	p.nextToken()
@@ -95,10 +94,30 @@ func (p *Parser) InitBlocks() []*ast.InitStatement {
 }
 
 func (p *Parser) internIdentifier(name string) *ast.Identifier {
-	if ident, ok := p.identIntern[name]; ok {
-		return ident
+	for i := 0; i < p.identInternCount; i++ {
+		ident := p.identInternSmall[i]
+		if ident.Name == name {
+			return ident
+		}
+	}
+	if p.identIntern != nil {
+		if ident, ok := p.identIntern[name]; ok {
+			return ident
+		}
 	}
 	ident := &ast.Identifier{Name: name}
+	if p.identInternCount < len(p.identInternSmall) {
+		p.identInternSmall[p.identInternCount] = ident
+		p.identInternCount++
+		return ident
+	}
+	if p.identIntern == nil {
+		p.identIntern = make(map[string]*ast.Identifier, len(p.identInternSmall)*2)
+		for i := 0; i < p.identInternCount; i++ {
+			small := p.identInternSmall[i]
+			p.identIntern[small.Name] = small
+		}
+	}
 	p.identIntern[name] = ident
 	return ident
 }
@@ -150,7 +169,7 @@ func (p *Parser) expectPeek(t token.TokenType) bool {
 
 // ParseProgram parses the full input and returns the root AST node.
 func (p *Parser) ParseProgram() *ast.Program {
-	program := &ast.Program{Statements: make([]ast.Statement, 0, 64)}
+	program := &ast.Program{Statements: make([]ast.Statement, 0, 8)}
 
 	for !p.curTokenIs(token.EOF) {
 		stmt := p.parseStatement()
@@ -251,14 +270,14 @@ func (p *Parser) parseLetStatement() ast.Statement {
 		return nil
 	}
 
-	// Always populate Names
 	firstIdent := p.internIdentifier(p.curToken.Literal)
-	stmt.Names = make([]*ast.Identifier, 1, 2)
-	stmt.Names[0] = firstIdent
 	stmt.Name = firstIdent
 
 	// Check for tuple assignment: let x, y = ...
 	for p.peekTokenIs(token.COMMA) {
+		if stmt.Names == nil {
+			stmt.Names = []*ast.Identifier{firstIdent}
+		}
 		p.nextToken() // consume comma
 		if !p.expectPeek(token.IDENT) {
 			return nil
@@ -266,7 +285,7 @@ func (p *Parser) parseLetStatement() ast.Statement {
 		stmt.Names = append(stmt.Names, p.internIdentifier(p.curToken.Literal))
 	}
 
-	if len(stmt.Names) == 1 && p.peekTokenIs(token.COLON) {
+	if stmt.Name != nil && len(stmt.Names) == 0 && p.peekTokenIs(token.COLON) {
 		p.nextToken()
 		typeName := p.parseTypeName()
 		if typeName == "" {

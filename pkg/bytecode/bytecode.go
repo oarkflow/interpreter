@@ -117,7 +117,7 @@ func (c *Compiler) compileStatement(stmt ast.Statement, allowPop bool) error {
 		}
 		return nil
 	case *ast.LetStatement:
-		if len(node.Names) != 1 || node.Name == nil {
+		if len(node.Names) > 1 || node.Name == nil {
 			return &ErrUnsupportedNode{Node: "multi-let"}
 		}
 		if err := c.compileExpression(node.Value); err != nil {
@@ -217,10 +217,14 @@ type VM struct {
 
 // RunOnVM executes a compiled BytecodeProgram in the given environment.
 func RunOnVM(program *BytecodeProgram, env *object.Environment) object.Object {
+	stackCap := len(program.Instructions)
+	if stackCap < 8 {
+		stackCap = 8
+	}
 	v := &VM{
 		program: program,
 		env:     env,
-		stack:   make([]object.Object, 0, 256),
+		stack:   make([]object.Object, 0, stackCap),
 		ip:      0,
 	}
 	return v.Run()

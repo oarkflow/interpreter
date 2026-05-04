@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/oarkflow/interpreter/pkg/ast"
@@ -43,6 +44,20 @@ var BytecodeRunFn func(compiled any, env *object.Environment) object.Object
 // BytecodeIsUnsupportedErr returns true when the error from BytecodeCompileFn
 // indicates an unsupported AST node (meaning we should fall back to tree-walk).
 var BytecodeIsUnsupportedErr func(err error) bool
+
+type bytecodeStatementCacheEntry struct {
+	compiled    any
+	unsupported bool
+}
+
+var bytecodeStatementCache = struct {
+	sync.RWMutex
+	items map[ast.Statement]bytecodeStatementCacheEntry
+}{
+	items: make(map[ast.Statement]bytecodeStatementCacheEntry),
+}
+
+const maxBytecodeStatementCacheEntries = 512
 
 // ---------------------------------------------------------------------------
 // RuntimeLimits enter helper
@@ -666,7 +681,8 @@ func evalProgram(program *ast.Program, env *object.Environment) object.Object {
 func runProgramStatement(statement ast.Statement, env *object.Environment) object.Object {
 	// Statements that affect control flow must go through tree-walk.
 	switch statement.(type) {
-	case *ast.ReturnStatement, *ast.BreakStatement, *ast.ContinueStatement:
+	case *ast.ReturnStatement, *ast.BreakStatement, *ast.ContinueStatement,
+		*ast.ForStatement, *ast.ForInStatement, *ast.WhileStatement, *ast.DoWhileStatement:
 		return Eval(statement, env)
 	}
 
@@ -675,16 +691,42 @@ func runProgramStatement(statement ast.Statement, env *object.Environment) objec
 		return Eval(statement, env)
 	}
 
+	bytecodeStatementCache.RLock()
+	entry, cached := bytecodeStatementCache.items[statement]
+	bytecodeStatementCache.RUnlock()
+	if cached {
+		if entry.unsupported {
+			return Eval(statement, env)
+		}
+		return BytecodeRunFn(entry.compiled, env)
+	}
+
+	switch statement.(type) {
+	case *ast.LetStatement, *ast.ExpressionStatement, *ast.PrintStatement:
+		return Eval(statement, env)
+	}
+
 	prog := &ast.Program{Statements: []ast.Statement{statement}}
 	compiled, err := BytecodeCompileFn(prog)
 	if err == nil {
+		storeBytecodeStatementCacheEntry(statement, bytecodeStatementCacheEntry{compiled: compiled})
 		return BytecodeRunFn(compiled, env)
 	}
 	// Unsupported node → fall back to tree-walk.
 	if BytecodeIsUnsupportedErr != nil && BytecodeIsUnsupportedErr(err) {
+		storeBytecodeStatementCacheEntry(statement, bytecodeStatementCacheEntry{unsupported: true})
 		return Eval(statement, env)
 	}
 	return object.NewError("bytecode compile failed: %s", err)
+}
+
+func storeBytecodeStatementCacheEntry(key ast.Statement, entry bytecodeStatementCacheEntry) {
+	bytecodeStatementCache.Lock()
+	if len(bytecodeStatementCache.items) >= maxBytecodeStatementCacheEntries {
+		bytecodeStatementCache.items = make(map[ast.Statement]bytecodeStatementCacheEntry)
+	}
+	bytecodeStatementCache.items[key] = entry
+	bytecodeStatementCache.Unlock()
 }
 
 func evalBlockStatement(block *ast.BlockStatement, env *object.Environment) object.Object {
@@ -839,6 +881,9 @@ func evalDoWhileStatement(dw *ast.DoWhileStatement, env *object.Environment) obj
 }
 
 func evalForStatement(fs *ast.ForStatement, env *object.Environment) object.Object {
+	if result, ok := evalFastForStatement(fs, env); ok {
+		return result
+	}
 	if fs.Init != nil {
 		initResult := Eval(fs.Init, env)
 		if object.IsError(initResult) {
@@ -1173,7 +1218,7 @@ func evalIdentifier(node *ast.Identifier, env *object.Environment) object.Object
 			return lazy.Force()
 		}
 		if owned, ok := val.(*object.OwnedValue); ok {
-			if env != nil && owned.OwnerID != "" && owned.OwnerID != env.OwnerID {
+			if env != nil && owned.OwnerID != "" && owned.OwnerID != env.EnsureOwnerID() {
 				return object.NewError("ownership violation: value moved to another scope")
 			}
 			return owned.Inner
@@ -1447,6 +1492,14 @@ func evalExportStatement(node *ast.ExportStatement, env *object.Environment) obj
 
 	switch decl := node.Declaration.(type) {
 	case *ast.LetStatement:
+		if len(decl.Names) == 0 && decl.Name != nil {
+			value, ok := env.Get(decl.Name.Name)
+			if !ok {
+				return object.NewError("missing export binding: %s", decl.Name.Name)
+			}
+			env.ModuleContext.Exports[decl.Name.Name] = value
+			break
+		}
 		for _, name := range decl.Names {
 			value, ok := env.Get(name.Name)
 			if !ok {

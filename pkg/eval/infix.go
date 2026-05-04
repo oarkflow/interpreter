@@ -369,10 +369,10 @@ func maybeWrapOwned(val object.Object, env *object.Environment) object.Object {
 	}
 	switch v := val.(type) {
 	case *object.OwnedValue:
-		v.OwnerID = env.OwnerID
+		v.OwnerID = env.EnsureOwnerID()
 		return v
 	case *object.Array, *object.Hash, *object.ADTValue:
-		return &object.OwnedValue{OwnerID: env.OwnerID, Inner: val}
+		return &object.OwnedValue{OwnerID: env.EnsureOwnerID(), Inner: val}
 	default:
 		return val
 	}
