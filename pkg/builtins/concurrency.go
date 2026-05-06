@@ -14,6 +14,9 @@ func init() {
 		// -----------------------------------------------------------------
 		"go": {
 			FnWithEnv: func(env *object.Environment, args ...object.Object) object.Object {
+				if err := security.CheckCapabilityAllowed(security.CapabilityAsync); err != nil {
+					return &object.String{Value: err.Error()}
+				}
 				if len(args) < 1 {
 					return &object.String{Value: "go expects function and optional args"}
 				}
@@ -63,6 +66,13 @@ func init() {
 		// -----------------------------------------------------------------
 		"permissions": {
 			FnWithEnv: func(env *object.Environment, args ...object.Object) object.Object {
+				if err := security.CheckCapabilityAllowed(security.CapabilityPolicy); err != nil {
+					return &object.String{Value: err.Error()}
+				}
+				active := security.ActiveSecurityPolicy()
+				if active.ProtectHost {
+					return &object.String{Value: "permissions denied by host protection policy"}
+				}
 				if len(args) != 1 {
 					return &object.String{Value: "permissions expects 1 hash argument"}
 				}

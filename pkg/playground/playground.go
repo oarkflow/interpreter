@@ -2,6 +2,7 @@ package playground
 
 import (
 	"bytes"
+	"io"
 	"strings"
 	"time"
 
@@ -53,14 +54,40 @@ type PlaygroundResult struct {
 }
 
 type PlaygroundOptions struct {
-	Args      []string
-	MaxDepth  int
-	MaxSteps  int64
-	MaxHeapMB int64
-	TimeoutMS int64
-	ModuleDir string
-	Security  *object.SecurityPolicy
+	Args           []string
+	MaxDepth       int
+	MaxSteps       int64
+	MaxHeapMB      int64
+	TimeoutMS      int64
+	ModuleDir      string
+	Security       *object.SecurityPolicy
+	MaxOutputBytes int64
 }
+
+type limitedBuffer struct {
+	buf   *bytes.Buffer
+	limit int64
+}
+
+func (w *limitedBuffer) Write(p []byte) (int, error) {
+	if w == nil || w.buf == nil {
+		return len(p), nil
+	}
+	if w.limit <= 0 {
+		return w.buf.Write(p)
+	}
+	if int64(w.buf.Len()) >= w.limit {
+		return len(p), nil
+	}
+	remaining := int(w.limit - int64(w.buf.Len()))
+	if remaining < len(p) {
+		_, _ = w.buf.Write(p[:remaining])
+		return len(p), nil
+	}
+	return w.buf.Write(p)
+}
+
+var _ io.Writer = (*limitedBuffer)(nil)
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -125,7 +152,11 @@ func EvalForPlayground(script string, opts PlaygroundOptions) PlaygroundResult {
 		env.SourcePath = "<playground>"
 
 		buf := &bytes.Buffer{}
-		env.Output = buf
+		maxOutput := opts.MaxOutputBytes
+		if maxOutput <= 0 {
+			maxOutput = 64 * 1024
+		}
+		env.Output = &limitedBuffer{buf: buf, limit: maxOutput}
 
 		rl := &object.RuntimeLimits{HeapCheckEvery: 128}
 		if opts.MaxDepth > 0 {
@@ -186,6 +217,9 @@ func EvalForPlayground(script string, opts PlaygroundOptions) PlaygroundResult {
 				}
 			} else {
 				res.Result = evaluated.Inspect()
+				if maxOutput > 0 && int64(len(res.Result)) > maxOutput {
+					res.Result = res.Result[:maxOutput]
+				}
 				res.ResultTy = evaluated.Type().String()
 			}
 		}

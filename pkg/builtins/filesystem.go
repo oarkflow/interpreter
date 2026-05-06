@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/oarkflow/interpreter/pkg/eval"
 	"github.com/oarkflow/interpreter/pkg/object"
@@ -60,7 +61,23 @@ func init() {
 				if errObj != nil {
 					return errObj
 				}
-				matches, err := filepath.Glob(pattern)
+				hasMeta := strings.ContainsAny(pattern, "*?[")
+				base := pattern
+				if hasMeta {
+					base = filepath.Dir(pattern)
+				}
+				safeBase, err := SanitizePathLocal(base)
+				if err != nil {
+					return retErr(fmt.Sprintf("%s", err))
+				}
+				if err := security.CheckFileReadAllowed(safeBase); err != nil {
+					return retErr(fmt.Sprintf("%s", err))
+				}
+				safePattern := safeBase
+				if hasMeta {
+					safePattern = filepath.Join(safeBase, filepath.Base(pattern))
+				}
+				matches, err := filepath.Glob(safePattern)
 				if err != nil {
 					return retErr(fmt.Sprintf("%s", err))
 				}

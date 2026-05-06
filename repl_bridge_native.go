@@ -12,6 +12,7 @@ import (
 	"github.com/oarkflow/interpreter/pkg/object"
 	"github.com/oarkflow/interpreter/pkg/parser"
 	"github.com/oarkflow/interpreter/pkg/repl"
+	"github.com/oarkflow/interpreter/pkg/sandbox"
 	"github.com/oarkflow/interpreter/pkg/token"
 )
 
@@ -39,6 +40,9 @@ func initReplBridge() {
 	}
 	repl.EvalFn = func(program any, env *object.Environment) object.Object {
 		return eval.Eval(program.(*ast.Program), env)
+	}
+	repl.RunProgramSandboxedFn = func(program any, env *object.Environment, policy *object.SecurityPolicy) object.Object {
+		return sandbox.RunProgramSandboxed(program, env, policy)
 	}
 	repl.LineContextFn = func(source string, line, column int) string {
 		return parser.LineContext(source, line, column)

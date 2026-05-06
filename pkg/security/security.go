@@ -27,6 +27,8 @@ func LoadSecurityPolicyFromEnv() *SecurityPolicy {
 		StrictMode:            strict,
 		ProtectHost:           protectHost,
 		AllowEnvWrite:         allowEnvWrite,
+		AllowedCapabilities:   parseCSVEnv("SPL_CAP_ALLOW"),
+		DeniedCapabilities:    parseCSVEnv("SPL_CAP_DENY"),
 		AllowedExecCommands:   parseCSVEnv("SPL_EXEC_ALLOW_CMDS"),
 		DeniedExecCommands:    parseCSVEnv("SPL_EXEC_DENY_CMDS"),
 		AllowedNetworkHosts:   parseCSVEnv("SPL_NETWORK_ALLOW"),
@@ -124,13 +126,71 @@ func ContainsToken(list []string, item string) bool {
 	return false
 }
 
+const (
+	CapabilityAsync           = "async"
+	CapabilityDB              = "db"
+	CapabilityEnvWrite        = "env_write"
+	CapabilityExec            = "exec"
+	CapabilityFilesystemRead  = "filesystem_read"
+	CapabilityFilesystemWrite = "filesystem_write"
+	CapabilityNetwork         = "network"
+	CapabilityPolicy          = "policy"
+	CapabilityProcessExit     = "process_exit"
+	CapabilityScheduler       = "scheduler"
+	CapabilityServer          = "server"
+	CapabilityWatch           = "watch"
+)
+
+func CheckCapabilityAllowed(capability string) error {
+	p := ActiveSecurityPolicy()
+	capability = strings.ToLower(strings.TrimSpace(capability))
+	if capability == "" {
+		return fmt.Errorf("empty capability")
+	}
+	if p.ProtectHost && hostProtectedCapability(capability) && !ContainsToken(p.AllowedCapabilities, capability) {
+		if capability == CapabilityExec {
+			return fmt.Errorf("exec denied by host protection policy")
+		}
+		return fmt.Errorf("capability denied by host protection policy: %s", capability)
+	}
+	if ContainsToken(p.DeniedCapabilities, capability) {
+		return fmt.Errorf("capability denied by policy: %s", capability)
+	}
+	if len(p.AllowedCapabilities) > 0 && !ContainsToken(p.AllowedCapabilities, capability) {
+		return fmt.Errorf("capability not allowed by policy: %s", capability)
+	}
+	return nil
+}
+
+func hostProtectedCapability(capability string) bool {
+	switch capability {
+	case CapabilityAsync,
+		CapabilityDB,
+		CapabilityEnvWrite,
+		CapabilityExec,
+		CapabilityFilesystemWrite,
+		CapabilityNetwork,
+		CapabilityPolicy,
+		CapabilityProcessExit,
+		CapabilityScheduler,
+		CapabilityServer,
+		CapabilityWatch:
+		return true
+	default:
+		return false
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Policy check functions
 // ---------------------------------------------------------------------------
 
 func CheckExecAllowed(cmd string) error {
+	if err := CheckCapabilityAllowed(CapabilityExec); err != nil {
+		return err
+	}
 	p := ActiveSecurityPolicy()
-	if p.ProtectHost {
+	if p.ProtectHost && !ContainsToken(p.AllowedCapabilities, CapabilityExec) {
 		return fmt.Errorf("exec denied by host protection policy")
 	}
 	name := strings.ToLower(strings.TrimSpace(cmd))
@@ -189,6 +249,9 @@ func HostFromTarget(target string) (string, error) {
 }
 
 func CheckNetworkAllowed(target string) error {
+	if err := CheckCapabilityAllowed(CapabilityNetwork); err != nil {
+		return err
+	}
 	p := ActiveSecurityPolicy()
 	host, err := HostFromTarget(target)
 	if err != nil {
@@ -214,6 +277,9 @@ func CheckNetworkAllowed(target string) error {
 }
 
 func CheckDBAllowed(driver string, dsn string) error {
+	if err := CheckCapabilityAllowed(CapabilityDB); err != nil {
+		return err
+	}
 	p := ActiveSecurityPolicy()
 	d := strings.ToLower(strings.TrimSpace(driver))
 	if ContainsToken(p.DeniedDBDrivers, d) {
@@ -276,6 +342,9 @@ func PathMatches(path string, patterns []string) bool {
 }
 
 func CheckFileReadAllowed(path string) error {
+	if err := CheckCapabilityAllowed(CapabilityFilesystemRead); err != nil {
+		return err
+	}
 	p := ActiveSecurityPolicy()
 	if PathMatches(path, p.DeniedFileReadPaths) {
 		return fmt.Errorf("file read denied by policy")
@@ -290,8 +359,11 @@ func CheckFileReadAllowed(path string) error {
 }
 
 func CheckFileWriteAllowed(path string) error {
+	if err := CheckCapabilityAllowed(CapabilityFilesystemWrite); err != nil {
+		return err
+	}
 	p := ActiveSecurityPolicy()
-	if p.ProtectHost {
+	if p.ProtectHost && !ContainsToken(p.AllowedCapabilities, CapabilityFilesystemWrite) {
 		return fmt.Errorf("file mutation denied by host protection policy")
 	}
 	if PathMatches(path, p.DeniedFileWritePaths) {
@@ -307,16 +379,22 @@ func CheckFileWriteAllowed(path string) error {
 }
 
 func ExitAllowed() error {
+	if err := CheckCapabilityAllowed(CapabilityProcessExit); err != nil {
+		return err
+	}
 	p := ActiveSecurityPolicy()
-	if p.ProtectHost {
+	if p.ProtectHost && !ContainsToken(p.AllowedCapabilities, CapabilityProcessExit) {
 		return fmt.Errorf("process exit denied by host protection policy")
 	}
 	return nil
 }
 
 func EnvWriteAllowed(key string) error {
+	if err := CheckCapabilityAllowed(CapabilityEnvWrite); err != nil {
+		return err
+	}
 	p := ActiveSecurityPolicy()
-	if p.ProtectHost {
+	if p.ProtectHost && !ContainsToken(p.AllowedCapabilities, CapabilityEnvWrite) {
 		return fmt.Errorf("environment writes are disabled by host protection policy")
 	}
 	if strings.HasPrefix(strings.ToUpper(strings.TrimSpace(key)), "SPL_") {

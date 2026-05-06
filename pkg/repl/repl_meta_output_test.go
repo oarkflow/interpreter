@@ -51,7 +51,7 @@ func TestHelpMetaCommandOutputUsesCRPerLine(t *testing.T) {
 	if !strings.Contains(out, "\r- Arrow keys: history and cursor movement") {
 		t.Fatalf("missing CR-prefixed bullet: %q", out)
 	}
-	if !strings.Contains(out, ":debug <expr>") || !strings.Contains(out, ":mem") || !strings.Contains(out, ":install <alias> <path>") || !strings.Contains(out, ":config <file> [format]") {
+	if !strings.Contains(out, ":debug <expr>") || !strings.Contains(out, ":mem") || !strings.Contains(out, ":install <alias> <path>") || !strings.Contains(out, ":config set <key> <value>") {
 		t.Fatalf("missing newly documented commands: %q", out)
 	}
 }

@@ -671,14 +671,18 @@ func (g *GeneratorValue) Inspect() string {
 // ---------------------------------------------------------------------------
 
 type RuntimeLimits struct {
-	MaxDepth       int
-	CurrentDepth   int
-	MaxSteps       int64
-	Steps          int64
-	Deadline       time.Time
-	Ctx            context.Context
-	MaxHeapBytes   uint64
-	HeapCheckEvery int64
+	MaxDepth           int
+	CurrentDepth       int
+	MaxSteps           int64
+	Steps              int64
+	Deadline           time.Time
+	Ctx                context.Context
+	MaxHeapBytes       uint64
+	HeapCheckEvery     int64
+	MaxOutputBytes     int64
+	OutputBytes        int64
+	MaxHTTPBodyBytes   int64
+	MaxExecOutputBytes int64
 }
 
 // ---------------------------------------------------------------------------
@@ -753,6 +757,8 @@ type SecurityPolicy struct {
 	StrictMode            bool
 	ProtectHost           bool
 	AllowEnvWrite         bool
+	AllowedCapabilities   []string
+	DeniedCapabilities    []string
 	AllowedExecCommands   []string
 	DeniedExecCommands    []string
 	AllowedNetworkHosts   []string
@@ -785,6 +791,7 @@ type Environment struct {
 	Output         io.Writer
 	CallStack      []CallFrame
 	OwnerID        string
+	Cleanup        []func()
 }
 
 var environmentOwnerIDCounter atomic.Uint64
@@ -820,6 +827,32 @@ func NewEnclosedEnvironment(outer *Environment) *Environment {
 		SecurityPolicy: outer.SecurityPolicy,
 		Output:         outer.Output,
 		CallStack:      append([]CallFrame(nil), outer.CallStack...),
+		Cleanup:        outer.Cleanup,
+	}
+}
+
+func (e *Environment) RegisterCleanup(fn func()) {
+	if e == nil || fn == nil {
+		return
+	}
+	e.Mu.Lock()
+	e.Cleanup = append(e.Cleanup, fn)
+	e.Mu.Unlock()
+}
+
+func (e *Environment) RunCleanup() {
+	if e == nil {
+		return
+	}
+	e.Mu.Lock()
+	cleanup := e.Cleanup
+	e.Cleanup = nil
+	e.Mu.Unlock()
+	for i := len(cleanup) - 1; i >= 0; i-- {
+		func(fn func()) {
+			defer func() { _ = recover() }()
+			fn()
+		}(cleanup[i])
 	}
 }
 

@@ -9,7 +9,9 @@ import (
 	"path/filepath"
 	"runtime"
 	"sort"
+	"strconv"
 	"strings"
+	"sync"
 	"time"
 	"unicode"
 
@@ -137,6 +139,34 @@ type ReplEditor struct {
 }
 
 const replHistoryFileName = ".interpreter_repl_history"
+
+type ReplConfig struct {
+	ExecutionProfile      string
+	ModuleDir             string
+	StrictMode            bool
+	ProtectHost           bool
+	AllowEnvWrite         bool
+	AllowedCapabilities   []string
+	DeniedCapabilities    []string
+	AllowedExecCommands   []string
+	AllowedNetworkHosts   []string
+	AllowedDBDrivers      []string
+	AllowedDBDSNPatterns  []string
+	AllowedFileReadPaths  []string
+	AllowedFileWritePaths []string
+	MaxDepth              int
+	MaxSteps              int64
+	MaxHeapMB             int64
+	TimeoutMS             int64
+	MaxOutputBytes        int64
+	MaxHTTPBodyBytes      int64
+	MaxExecOutputBytes    int64
+}
+
+var replConfigs = struct {
+	mu    sync.Mutex
+	items map[string]*ReplConfig
+}{items: make(map[string]*ReplConfig)}
 
 type keyAction int
 
@@ -357,7 +387,11 @@ func ReplEvalSource(input string, env *object.Environment, sourcePath string, pr
 
 	var evaluated object.Object
 	if RunProgramSandboxedFn != nil {
-		evaluated = RunProgramSandboxedFn(program, env, env.SecurityPolicy)
+		var policy *object.SecurityPolicy
+		if env != nil {
+			policy = env.SecurityPolicy
+		}
+		evaluated = RunProgramSandboxedFn(program, env, policy)
 	} else if EvalFn != nil {
 		evaluated = EvalFn(program, env)
 	} else {
@@ -403,7 +437,7 @@ func ReplCandidatesForEnv(env *object.Environment) []string {
 		"exit", ":help", ":builtins", ":search", ":history", ":clear",
 		":vars", ":type", ":doc", ":methods", ":fields", ":ast", ":time", ":load", ":reload", ":reset",
 		":debug", ":mem", ":install",
-		":config",
+		":config", ":config list", ":config set", ":config get", ":config profile",
 	}
 	all := make(map[string]struct{}, len(kw)+16)
 	if BuiltinNames != nil {
@@ -460,7 +494,11 @@ func replEvalExpression(input string, env *object.Environment) (object.Object, [
 		}()
 	}
 	if RunProgramSandboxedFn != nil {
-		return RunProgramSandboxedFn(program, env, env.SecurityPolicy), nil
+		var policy *object.SecurityPolicy
+		if env != nil {
+			policy = env.SecurityPolicy
+		}
+		return RunProgramSandboxedFn(program, env, policy), nil
 	}
 	if EvalFn != nil {
 		return EvalFn(program, env), nil
@@ -570,6 +608,537 @@ func replDescribeObjectList(title string, items []string) string {
 	return title + ":\n- " + strings.Join(items, "\n- ")
 }
 
+func ReplConfigForEnv(env *object.Environment) *ReplConfig {
+	key := "global"
+	if env != nil {
+		key = env.EnsureOwnerID()
+	}
+	replConfigs.mu.Lock()
+	defer replConfigs.mu.Unlock()
+	if cfg := replConfigs.items[key]; cfg != nil {
+		return cfg
+	}
+	cfg := defaultReplConfig(env)
+	replConfigs.items[key] = cfg
+	return cfg
+}
+
+func defaultReplConfig(env *object.Environment) *ReplConfig {
+	moduleDir := "."
+	if env != nil && strings.TrimSpace(env.ModuleDir) != "" {
+		moduleDir = env.ModuleDir
+	}
+	cfg := &ReplConfig{
+		ExecutionProfile:     "trusted",
+		ModuleDir:            moduleDir,
+		AllowEnvWrite:        true,
+		MaxDepth:             256,
+		MaxSteps:             2_000_000,
+		MaxHeapMB:            256,
+		TimeoutMS:            0,
+		MaxOutputBytes:       1 << 20,
+		MaxHTTPBodyBytes:     1 << 20,
+		MaxExecOutputBytes:   1 << 20,
+		AllowedCapabilities:  nil,
+		DeniedCapabilities:   nil,
+		AllowedFileReadPaths: nil,
+	}
+	if env != nil {
+		if p := env.SecurityPolicy; p != nil {
+			cfg.StrictMode = p.StrictMode
+			cfg.ProtectHost = p.ProtectHost
+			cfg.AllowEnvWrite = p.AllowEnvWrite
+			cfg.AllowedCapabilities = append([]string(nil), p.AllowedCapabilities...)
+			cfg.DeniedCapabilities = append([]string(nil), p.DeniedCapabilities...)
+			cfg.AllowedExecCommands = append([]string(nil), p.AllowedExecCommands...)
+			cfg.AllowedNetworkHosts = append([]string(nil), p.AllowedNetworkHosts...)
+			cfg.AllowedDBDrivers = append([]string(nil), p.AllowedDBDrivers...)
+			cfg.AllowedDBDSNPatterns = append([]string(nil), p.AllowedDBDSNPatterns...)
+			cfg.AllowedFileReadPaths = append([]string(nil), p.AllowedFileReadPaths...)
+			cfg.AllowedFileWritePaths = append([]string(nil), p.AllowedFileWritePaths...)
+		}
+		if rl := env.RuntimeLimits; rl != nil {
+			if rl.MaxDepth > 0 {
+				cfg.MaxDepth = rl.MaxDepth
+			}
+			if rl.MaxSteps > 0 {
+				cfg.MaxSteps = rl.MaxSteps
+			}
+			if rl.MaxHeapBytes > 0 {
+				cfg.MaxHeapMB = int64(rl.MaxHeapBytes / 1024 / 1024)
+			}
+			if !rl.Deadline.IsZero() {
+				cfg.TimeoutMS = int64(time.Until(rl.Deadline) / time.Millisecond)
+				if cfg.TimeoutMS < 0 {
+					cfg.TimeoutMS = 0
+				}
+			}
+			if rl.MaxOutputBytes > 0 {
+				cfg.MaxOutputBytes = rl.MaxOutputBytes
+			}
+			if rl.MaxHTTPBodyBytes > 0 {
+				cfg.MaxHTTPBodyBytes = rl.MaxHTTPBodyBytes
+			}
+			if rl.MaxExecOutputBytes > 0 {
+				cfg.MaxExecOutputBytes = rl.MaxExecOutputBytes
+			}
+		}
+	}
+	return cfg
+}
+
+func applyReplConfig(env *object.Environment, cfg *ReplConfig) {
+	if env == nil || cfg == nil {
+		return
+	}
+	if strings.TrimSpace(cfg.ModuleDir) != "" {
+		env.ModuleDir = cfg.ModuleDir
+	}
+	env.SecurityPolicy = &object.SecurityPolicy{
+		StrictMode:            cfg.StrictMode,
+		ProtectHost:           cfg.ProtectHost,
+		AllowEnvWrite:         cfg.AllowEnvWrite,
+		AllowedCapabilities:   append([]string(nil), cfg.AllowedCapabilities...),
+		DeniedCapabilities:    append([]string(nil), cfg.DeniedCapabilities...),
+		AllowedExecCommands:   append([]string(nil), cfg.AllowedExecCommands...),
+		AllowedNetworkHosts:   append([]string(nil), cfg.AllowedNetworkHosts...),
+		AllowedDBDrivers:      append([]string(nil), cfg.AllowedDBDrivers...),
+		AllowedDBDSNPatterns:  append([]string(nil), cfg.AllowedDBDSNPatterns...),
+		AllowedFileReadPaths:  append([]string(nil), cfg.AllowedFileReadPaths...),
+		AllowedFileWritePaths: append([]string(nil), cfg.AllowedFileWritePaths...),
+	}
+	rl := &object.RuntimeLimits{HeapCheckEvery: 128}
+	if cfg.MaxDepth > 0 {
+		rl.MaxDepth = cfg.MaxDepth
+	}
+	if cfg.MaxSteps > 0 {
+		rl.MaxSteps = cfg.MaxSteps
+	}
+	if cfg.MaxHeapMB > 0 {
+		rl.MaxHeapBytes = uint64(cfg.MaxHeapMB) * 1024 * 1024
+	}
+	if cfg.TimeoutMS > 0 {
+		rl.Deadline = time.Now().Add(time.Duration(cfg.TimeoutMS) * time.Millisecond)
+	}
+	if cfg.MaxOutputBytes > 0 {
+		rl.MaxOutputBytes = cfg.MaxOutputBytes
+	}
+	if cfg.MaxHTTPBodyBytes > 0 {
+		rl.MaxHTTPBodyBytes = cfg.MaxHTTPBodyBytes
+	}
+	if cfg.MaxExecOutputBytes > 0 {
+		rl.MaxExecOutputBytes = cfg.MaxExecOutputBytes
+	}
+	if rl.MaxDepth == 0 && rl.MaxSteps == 0 && rl.MaxHeapBytes == 0 && rl.MaxOutputBytes == 0 && rl.MaxHTTPBodyBytes == 0 && rl.MaxExecOutputBytes == 0 && rl.Deadline.IsZero() {
+		env.RuntimeLimits = nil
+	} else {
+		env.RuntimeLimits = rl
+	}
+}
+
+func applyReplProfile(cfg *ReplConfig, profile string) error {
+	switch strings.ToLower(strings.TrimSpace(profile)) {
+	case "trusted", "":
+		cfg.ExecutionProfile = "trusted"
+		cfg.StrictMode = false
+		cfg.ProtectHost = false
+		cfg.AllowEnvWrite = true
+		cfg.AllowedCapabilities = nil
+		cfg.DeniedCapabilities = nil
+	case "untrusted":
+		cfg.ExecutionProfile = "untrusted"
+		cfg.StrictMode = true
+		cfg.ProtectHost = true
+		cfg.AllowEnvWrite = false
+		cfg.AllowedCapabilities = []string{"filesystem_read"}
+		cfg.DeniedCapabilities = []string{"async", "db", "env_write", "exec", "filesystem_write", "network", "policy", "process_exit", "scheduler", "server", "watch"}
+		if len(cfg.AllowedFileReadPaths) == 0 {
+			cfg.AllowedFileReadPaths = []string{cfg.ModuleDir}
+		}
+		cfg.AllowedFileWritePaths = nil
+		if cfg.MaxDepth <= 0 || cfg.MaxDepth > 128 {
+			cfg.MaxDepth = 128
+		}
+		if cfg.MaxSteps <= 0 || cfg.MaxSteps > 500_000 {
+			cfg.MaxSteps = 500_000
+		}
+		if cfg.MaxHeapMB <= 0 || cfg.MaxHeapMB > 64 {
+			cfg.MaxHeapMB = 64
+		}
+		if cfg.TimeoutMS <= 0 || cfg.TimeoutMS > 2_000 {
+			cfg.TimeoutMS = 2_000
+		}
+		if cfg.MaxOutputBytes <= 0 || cfg.MaxOutputBytes > 64*1024 {
+			cfg.MaxOutputBytes = 64 * 1024
+		}
+		if cfg.MaxHTTPBodyBytes <= 0 || cfg.MaxHTTPBodyBytes > 64*1024 {
+			cfg.MaxHTTPBodyBytes = 64 * 1024
+		}
+		if cfg.MaxExecOutputBytes <= 0 || cfg.MaxExecOutputBytes > 64*1024 {
+			cfg.MaxExecOutputBytes = 64 * 1024
+		}
+	default:
+		return fmt.Errorf("unknown profile %q", profile)
+	}
+	return nil
+}
+
+func ReplConfigTable(env *object.Environment) string {
+	cfg := ReplConfigForEnv(env)
+	rows := [][]string{
+		{"execution.profile", cfg.ExecutionProfile, "trusted|untrusted"},
+		{"module.dir", cfg.ModuleDir, "import/file root"},
+		{"security.strict", formatBool(cfg.StrictMode), "deny unspecified host access"},
+		{"security.protect_host", formatBool(cfg.ProtectHost), "deny host mutation by default"},
+		{"security.allow_env_write", formatBool(cfg.AllowEnvWrite), "allow os_env writes"},
+		{"security.allow_capabilities", strings.Join(cfg.AllowedCapabilities, ","), "capability allowlist"},
+		{"security.deny_capabilities", strings.Join(cfg.DeniedCapabilities, ","), "capability denylist"},
+		{"security.allow_exec", strings.Join(cfg.AllowedExecCommands, ","), "allowed commands"},
+		{"security.allow_network", strings.Join(cfg.AllowedNetworkHosts, ","), "allowed hosts"},
+		{"security.allow_db_drivers", strings.Join(cfg.AllowedDBDrivers, ","), "allowed DB drivers"},
+		{"security.allow_db_dsn", strings.Join(cfg.AllowedDBDSNPatterns, ","), "allowed DSN patterns"},
+		{"security.allow_file_read", strings.Join(cfg.AllowedFileReadPaths, ","), "read roots"},
+		{"security.allow_file_write", strings.Join(cfg.AllowedFileWritePaths, ","), "write roots"},
+		{"runtime.max_depth", strconv.Itoa(cfg.MaxDepth), "call depth"},
+		{"runtime.max_steps", strconv.FormatInt(cfg.MaxSteps, 10), "eval steps"},
+		{"runtime.max_heap_mb", strconv.FormatInt(cfg.MaxHeapMB, 10), "heap guard"},
+		{"runtime.timeout_ms", strconv.FormatInt(cfg.TimeoutMS, 10), "wall-clock guard"},
+		{"runtime.max_output_bytes", strconv.FormatInt(cfg.MaxOutputBytes, 10), "print/result output cap"},
+		{"runtime.max_http_body_bytes", strconv.FormatInt(cfg.MaxHTTPBodyBytes, 10), "HTTP response cap"},
+		{"runtime.max_exec_output_bytes", strconv.FormatInt(cfg.MaxExecOutputBytes, 10), "exec output cap"},
+	}
+	return formatTable([]string{"Key", "Value", "Description"}, rows)
+}
+
+func formatTable(headers []string, rows [][]string) string {
+	widths := make([]int, len(headers))
+	for i, h := range headers {
+		widths[i] = len(h)
+	}
+	for _, row := range rows {
+		for i := range headers {
+			if i < len(row) && len(row[i]) > widths[i] {
+				widths[i] = len(row[i])
+			}
+		}
+	}
+	var b strings.Builder
+	writeRow := func(cols []string) {
+		for i := range headers {
+			if i > 0 {
+				b.WriteString("  ")
+			}
+			val := ""
+			if i < len(cols) {
+				val = cols[i]
+			}
+			b.WriteString(val)
+			if pad := widths[i] - len(val); pad > 0 {
+				b.WriteString(strings.Repeat(" ", pad))
+			}
+		}
+		b.WriteString("\n")
+	}
+	writeRow(headers)
+	sep := make([]string, len(headers))
+	for i := range headers {
+		sep[i] = strings.Repeat("-", widths[i])
+	}
+	writeRow(sep)
+	for _, row := range rows {
+		writeRow(row)
+	}
+	return strings.TrimRight(b.String(), "\n")
+}
+
+func formatBool(v bool) string {
+	if v {
+		return "true"
+	}
+	return "false"
+}
+
+func handleReplConfigCommand(trimmed string, env *object.Environment) bool {
+	if trimmed != ":config" && !strings.HasPrefix(trimmed, ":config ") {
+		return false
+	}
+	raw := strings.TrimSpace(strings.TrimPrefix(trimmed, ":config"))
+	if raw == "" || raw == "list" {
+		replPrintBlock(ReplConfigTable(env))
+		return true
+	}
+	args := strings.Fields(raw)
+	if len(args) == 0 {
+		replPrintBlock(ReplConfigTable(env))
+		return true
+	}
+	switch args[0] {
+	case "get":
+		if len(args) != 2 {
+			ReplPrintLine("usage: :config get <key>")
+			return true
+		}
+		cfg := ReplConfigForEnv(env)
+		val, err := replConfigValue(cfg, args[1])
+		if err != nil {
+			ReplPrintLine("config error: " + err.Error())
+			return true
+		}
+		ReplPrintLine(fmt.Sprintf("%s = %s", args[1], val))
+		return true
+	case "set":
+		if len(args) < 3 {
+			ReplPrintLine("usage: :config set <key> <value>")
+			return true
+		}
+		cfg := ReplConfigForEnv(env)
+		if err := setReplConfigValue(cfg, args[1], strings.Join(args[2:], " ")); err != nil {
+			ReplPrintLine("config error: " + err.Error())
+			return true
+		}
+		applyReplConfig(env, cfg)
+		ReplPrintLine(fmt.Sprintf("%s = %s", args[1], strings.Join(args[2:], " ")))
+		return true
+	case "profile":
+		if len(args) != 2 {
+			ReplPrintLine("usage: :config profile <trusted|untrusted>")
+			return true
+		}
+		cfg := ReplConfigForEnv(env)
+		if err := applyReplProfile(cfg, args[1]); err != nil {
+			ReplPrintLine("config error: " + err.Error())
+			return true
+		}
+		applyReplConfig(env, cfg)
+		ReplPrintLine("execution.profile = " + cfg.ExecutionProfile)
+		return true
+	case "reset":
+		key := "global"
+		if env != nil {
+			key = env.EnsureOwnerID()
+		}
+		replConfigs.mu.Lock()
+		delete(replConfigs.items, key)
+		replConfigs.mu.Unlock()
+		cfg := ReplConfigForEnv(env)
+		applyReplConfig(env, cfg)
+		ReplPrintLine("configuration reset")
+		return true
+	case "load":
+		if len(args) < 2 || len(args) > 3 {
+			ReplPrintLine("usage: :config load <file> [json|yaml|env]")
+			return true
+		}
+		format := ""
+		if len(args) == 3 {
+			format = args[2]
+		}
+		return replLoadConfigFile(args[1], format, env)
+	default:
+		if len(args) >= 1 && len(args) <= 2 {
+			format := ""
+			if len(args) == 2 {
+				format = args[1]
+			}
+			return replLoadConfigFile(args[0], format, env)
+		}
+		ReplPrintLine("usage: :config [list|get|set|profile|reset|load]")
+		return true
+	}
+}
+
+func replLoadConfigFile(path, format string, env *object.Environment) bool {
+	if LoadConfigObjectFromPathFn == nil {
+		ReplPrintLine("config loader not available")
+		return true
+	}
+	obj, err := LoadConfigObjectFromPathFn(path, format)
+	if err != nil {
+		ReplPrintLine("config error: " + err.Error())
+		return true
+	}
+	if env != nil {
+		env.Set("CONFIG", obj)
+	}
+	ReplPrintLine("CONFIG loaded")
+	return true
+}
+
+func replConfigValue(cfg *ReplConfig, key string) (string, error) {
+	switch strings.ToLower(strings.TrimSpace(key)) {
+	case "execution.profile":
+		return cfg.ExecutionProfile, nil
+	case "module.dir":
+		return cfg.ModuleDir, nil
+	case "security.strict":
+		return formatBool(cfg.StrictMode), nil
+	case "security.protect_host":
+		return formatBool(cfg.ProtectHost), nil
+	case "security.allow_env_write":
+		return formatBool(cfg.AllowEnvWrite), nil
+	case "security.allow_capabilities":
+		return strings.Join(cfg.AllowedCapabilities, ","), nil
+	case "security.deny_capabilities":
+		return strings.Join(cfg.DeniedCapabilities, ","), nil
+	case "security.allow_exec":
+		return strings.Join(cfg.AllowedExecCommands, ","), nil
+	case "security.allow_network":
+		return strings.Join(cfg.AllowedNetworkHosts, ","), nil
+	case "security.allow_db_drivers":
+		return strings.Join(cfg.AllowedDBDrivers, ","), nil
+	case "security.allow_db_dsn":
+		return strings.Join(cfg.AllowedDBDSNPatterns, ","), nil
+	case "security.allow_file_read":
+		return strings.Join(cfg.AllowedFileReadPaths, ","), nil
+	case "security.allow_file_write":
+		return strings.Join(cfg.AllowedFileWritePaths, ","), nil
+	case "runtime.max_depth":
+		return strconv.Itoa(cfg.MaxDepth), nil
+	case "runtime.max_steps":
+		return strconv.FormatInt(cfg.MaxSteps, 10), nil
+	case "runtime.max_heap_mb":
+		return strconv.FormatInt(cfg.MaxHeapMB, 10), nil
+	case "runtime.timeout_ms":
+		return strconv.FormatInt(cfg.TimeoutMS, 10), nil
+	case "runtime.max_output_bytes":
+		return strconv.FormatInt(cfg.MaxOutputBytes, 10), nil
+	case "runtime.max_http_body_bytes":
+		return strconv.FormatInt(cfg.MaxHTTPBodyBytes, 10), nil
+	case "runtime.max_exec_output_bytes":
+		return strconv.FormatInt(cfg.MaxExecOutputBytes, 10), nil
+	default:
+		return "", fmt.Errorf("unknown config key %q", key)
+	}
+}
+
+func setReplConfigValue(cfg *ReplConfig, key, raw string) error {
+	key = strings.ToLower(strings.TrimSpace(key))
+	raw = strings.TrimSpace(raw)
+	switch key {
+	case "execution.profile":
+		return applyReplProfile(cfg, raw)
+	case "module.dir":
+		if raw == "" {
+			return fmt.Errorf("module.dir cannot be empty")
+		}
+		cfg.ModuleDir = raw
+	case "security.strict":
+		v, err := parseReplBool(raw)
+		if err != nil {
+			return err
+		}
+		cfg.StrictMode = v
+	case "security.protect_host":
+		v, err := parseReplBool(raw)
+		if err != nil {
+			return err
+		}
+		cfg.ProtectHost = v
+	case "security.allow_env_write":
+		v, err := parseReplBool(raw)
+		if err != nil {
+			return err
+		}
+		cfg.AllowEnvWrite = v
+	case "security.allow_capabilities":
+		cfg.AllowedCapabilities = parseReplCSV(raw)
+	case "security.deny_capabilities":
+		cfg.DeniedCapabilities = parseReplCSV(raw)
+	case "security.allow_exec":
+		cfg.AllowedExecCommands = parseReplCSV(raw)
+	case "security.allow_network":
+		cfg.AllowedNetworkHosts = parseReplCSV(raw)
+	case "security.allow_db_drivers":
+		cfg.AllowedDBDrivers = parseReplCSV(raw)
+	case "security.allow_db_dsn":
+		cfg.AllowedDBDSNPatterns = parseReplCSV(raw)
+	case "security.allow_file_read":
+		cfg.AllowedFileReadPaths = parseReplCSV(raw)
+	case "security.allow_file_write":
+		cfg.AllowedFileWritePaths = parseReplCSV(raw)
+	case "runtime.max_depth":
+		v, err := parseReplInt(raw)
+		if err != nil {
+			return err
+		}
+		cfg.MaxDepth = int(v)
+	case "runtime.max_steps":
+		v, err := parseReplInt(raw)
+		if err != nil {
+			return err
+		}
+		cfg.MaxSteps = v
+	case "runtime.max_heap_mb":
+		v, err := parseReplInt(raw)
+		if err != nil {
+			return err
+		}
+		cfg.MaxHeapMB = v
+	case "runtime.timeout_ms":
+		v, err := parseReplInt(raw)
+		if err != nil {
+			return err
+		}
+		cfg.TimeoutMS = v
+	case "runtime.max_output_bytes":
+		v, err := parseReplInt(raw)
+		if err != nil {
+			return err
+		}
+		cfg.MaxOutputBytes = v
+	case "runtime.max_http_body_bytes":
+		v, err := parseReplInt(raw)
+		if err != nil {
+			return err
+		}
+		cfg.MaxHTTPBodyBytes = v
+	case "runtime.max_exec_output_bytes":
+		v, err := parseReplInt(raw)
+		if err != nil {
+			return err
+		}
+		cfg.MaxExecOutputBytes = v
+	default:
+		return fmt.Errorf("unknown config key %q", key)
+	}
+	return nil
+}
+
+func parseReplBool(raw string) (bool, error) {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "1", "true", "yes", "on":
+		return true, nil
+	case "0", "false", "no", "off":
+		return false, nil
+	default:
+		return false, fmt.Errorf("expected boolean, got %q", raw)
+	}
+}
+
+func parseReplInt(raw string) (int64, error) {
+	v, err := strconv.ParseInt(strings.TrimSpace(raw), 10, 64)
+	if err != nil || v < 0 {
+		return 0, fmt.Errorf("expected non-negative integer, got %q", raw)
+	}
+	return v, nil
+}
+
+func parseReplCSV(raw string) []string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" || raw == "-" || strings.EqualFold(raw, "none") {
+		return nil
+	}
+	parts := strings.Split(raw, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
 // ---------------------------------------------------------------------------
 // Meta-command handler
 // ---------------------------------------------------------------------------
@@ -607,34 +1176,15 @@ func HandleReplMetaCommand(line string, editor *ReplEditor, env *object.Environm
 		ReplPrintLine("- :load <file> load and execute a script file")
 		ReplPrintLine("- :reload [file] clear module cache or one module")
 		ReplPrintLine("- :install <alias> <path> add dependency to spl.mod and refresh lock")
-		ReplPrintLine("- :config <file> [format] load config with secret masking")
+		ReplPrintLine("- :config     list active REPL runtime/security configuration")
+		ReplPrintLine("- :config set <key> <value> change REPL configuration")
+		ReplPrintLine("- :config profile <trusted|untrusted> apply a preset")
+		ReplPrintLine("- :config load <file> [format] load app config into CONFIG")
 		ReplPrintLine("- !<cmd>      execute shell command")
 		ReplPrintLine("- :reset      reset the environment")
 		return true
 	}
-	if strings.HasPrefix(trimmed, ":config ") {
-		args := strings.Fields(strings.TrimSpace(strings.TrimPrefix(trimmed, ":config ")))
-		if len(args) < 1 || len(args) > 2 {
-			ReplPrintLine("usage: :config <file> [json|yaml|env]")
-			return true
-		}
-		format := ""
-		if len(args) == 2 {
-			format = args[1]
-		}
-		if LoadConfigObjectFromPathFn == nil {
-			ReplPrintLine("config loader not available")
-			return true
-		}
-		obj, err := LoadConfigObjectFromPathFn(args[0], format)
-		if err != nil {
-			ReplPrintLine("config error: " + err.Error())
-			return true
-		}
-		if env != nil {
-			env.Set("CONFIG", obj)
-		}
-		ReplPrintLine("CONFIG loaded")
+	if handleReplConfigCommand(trimmed, env) {
 		return true
 	}
 	if strings.HasPrefix(trimmed, "!") {
@@ -1016,13 +1566,14 @@ func (e *ReplEditor) readLine(prompt string) (string, error) {
 	cursor := 0
 	e.HistoryPos = len(e.History)
 	render := func() {
-		_, _ = fmt.Fprint(e.Out, "\r\033[2K")
+		_, _ = fmt.Fprint(e.Out, "\r\033[2K\033[J")
 		line := string(buf)
 		styledPrompt := StylePrompt(prompt)
 		if strings.HasPrefix(prompt, "..") {
 			styledPrompt = StyleContinuationPrompt(prompt)
 		}
 		_, _ = fmt.Fprint(e.Out, styledPrompt, ColorizeInputLine(line))
+		helperLines := []string{}
 		if cursor == len(buf) {
 			ctx := CompletionContext(buf, cursor)
 			if ctx.Ok && ctx.Prefix != "" {
@@ -1032,8 +1583,14 @@ func (e *ReplEditor) readLine(prompt string) (string, error) {
 				}
 			}
 			if tip := ReplCallTip(line, cursor, e.Env); tip != "" {
-				_, _ = fmt.Fprint(e.Out, Paint("  "+tip, ColorGray))
+				helperLines = ReplHintLines(tip, replEditorWidth(e))
 			}
+		}
+		if len(helperLines) > 0 {
+			for _, helper := range helperLines {
+				_, _ = fmt.Fprint(e.Out, "\r\n", Paint("  "+helper, ColorGray))
+			}
+			_, _ = fmt.Fprintf(e.Out, "\033[%dA", len(helperLines))
 		}
 		_, _ = fmt.Fprint(e.Out, "\r")
 		_, _ = fmt.Fprintf(e.Out, "\033[%dC", len([]rune(prompt))+cursor)
@@ -1367,18 +1924,123 @@ func ReplCallTip(line string, cursor int, env *object.Environment) string {
 	}
 	if HasBuiltinFn != nil && HasBuiltinFn(name) {
 		if BuiltinHelpTextFn != nil {
-			return BuiltinHelpTextFn(name)
+			return ReplCompactHint(BuiltinHelpTextFn(name), 140)
 		}
 	}
 	if env != nil {
 		if val, ok := env.Get(name); ok {
 			if fn, ok := val.(*object.Function); ok {
-				return fn.Inspect()
+				return ReplFunctionSignature(name, fn)
 			}
-			return fmt.Sprintf("%s: %s", name, val.Type())
+			return ReplCompactHint(fmt.Sprintf("%s: %s", name, val.Type()), 140)
 		}
 	}
 	return ""
+}
+
+func ReplFunctionSignature(name string, fn *object.Function) string {
+	if fn == nil {
+		return ""
+	}
+	fnName := strings.TrimSpace(fn.Name)
+	if fnName == "" {
+		fnName = strings.TrimSpace(name)
+	}
+	if fnName == "" {
+		fnName = "function"
+	}
+	parts := make([]string, 0, len(fn.Parameters))
+	for i, p := range fn.Parameters {
+		part := "arg"
+		if p != nil && strings.TrimSpace(p.String()) != "" {
+			part = p.String()
+		}
+		if fn.HasRest && i == len(fn.Parameters)-1 {
+			part = "..." + part
+		}
+		if i < len(fn.ParamTypes) && strings.TrimSpace(fn.ParamTypes[i]) != "" {
+			part += ": " + strings.TrimSpace(fn.ParamTypes[i])
+		}
+		if i < len(fn.Defaults) && fn.Defaults[i] != nil {
+			part += " = ..."
+		}
+		parts = append(parts, part)
+	}
+	signature := fmt.Sprintf("%s(%s)", fnName, strings.Join(parts, ", "))
+	if strings.TrimSpace(fn.ReturnType) != "" {
+		signature += " -> " + strings.TrimSpace(fn.ReturnType)
+	}
+	return ReplCompactHint(signature, 140)
+}
+
+func ReplCompactHint(text string, maxRunes int) string {
+	text = strings.Join(strings.Fields(text), " ")
+	if maxRunes <= 0 {
+		return text
+	}
+	runes := []rune(text)
+	if len(runes) <= maxRunes {
+		return text
+	}
+	if maxRunes <= 3 {
+		return string(runes[:maxRunes])
+	}
+	return string(runes[:maxRunes-3]) + "..."
+}
+
+func ReplHintLines(text string, width int) []string {
+	text = ReplCompactHint(text, 180)
+	if text == "" {
+		return nil
+	}
+	if width <= 0 {
+		width = 100
+	}
+	lineWidth := width - 4
+	if lineWidth < 40 {
+		lineWidth = 40
+	}
+	if lineWidth > 100 {
+		lineWidth = 100
+	}
+	words := strings.Fields(text)
+	if len(words) == 0 {
+		return nil
+	}
+	lines := make([]string, 0, 2)
+	var current strings.Builder
+	for _, word := range words {
+		if current.Len() == 0 {
+			current.WriteString(word)
+			continue
+		}
+		if current.Len()+1+len(word) > lineWidth {
+			lines = append(lines, current.String())
+			current.Reset()
+			current.WriteString(word)
+			if len(lines) == 2 {
+				break
+			}
+			continue
+		}
+		current.WriteByte(' ')
+		current.WriteString(word)
+	}
+	if current.Len() > 0 && len(lines) < 2 {
+		lines = append(lines, current.String())
+	}
+	return lines
+}
+
+func replEditorWidth(e *ReplEditor) int {
+	if e == nil || e.Fd <= 0 {
+		return 100
+	}
+	width, _, err := term.GetSize(e.Fd)
+	if err != nil || width <= 0 {
+		return 100
+	}
+	return width
 }
 
 func CurrentToken(buf []rune, cursor int) (prefix string, start int, end int, ok bool) {

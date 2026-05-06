@@ -339,7 +339,13 @@ func builtinDBConnect(env *object.Environment, args ...object.Object) object.Obj
 	if err := db.PingContext(runtimeContext(env)); err != nil {
 		return dbTupleResult(nil, fmt.Sprintf("failed to ping database: %v", err))
 	}
-	return dbTupleResult(&object.DB{DB: db}, "")
+	dbObj := &object.DB{DB: db}
+	if env != nil {
+		env.RegisterCleanup(func() {
+			_ = dbObj.Close()
+		})
+	}
+	return dbTupleResult(dbObj, "")
 }
 
 func builtinDBQuery(env *object.Environment, args ...object.Object) object.Object {

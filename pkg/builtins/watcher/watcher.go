@@ -12,6 +12,7 @@ import (
 	"github.com/oarkflow/interpreter/pkg/lexer"
 	"github.com/oarkflow/interpreter/pkg/object"
 	"github.com/oarkflow/interpreter/pkg/parser"
+	"github.com/oarkflow/interpreter/pkg/security"
 )
 
 // DispatchHotReloadHooksFn is called after a file is hot-reloaded.
@@ -250,6 +251,9 @@ func init() {
 
 // watch(path, handler) or watch(path, pattern, handler) or watch(path, options)
 func builtinWatch(env *object.Environment, args ...object.Object) object.Object {
+	if err := security.CheckCapabilityAllowed(security.CapabilityWatch); err != nil {
+		return object.NewError("%s", err)
+	}
 	if len(args) < 2 {
 		return object.NewError("watch() requires at least (path, handler)")
 	}
@@ -301,6 +305,11 @@ func builtinWatch(env *object.Environment, args ...object.Object) object.Object 
 
 	globalWatcher.start()
 	id := globalWatcher.addWatch(entry)
+	if env != nil {
+		env.RegisterCleanup(func() {
+			globalWatcher.removeWatch(id)
+		})
+	}
 	return &object.String{Value: id}
 }
 
@@ -321,6 +330,9 @@ func builtinUnwatch(args ...object.Object) object.Object {
 
 // hot_reload(path) — watches a file and re-evaluates it on change
 func builtinHotReload(env *object.Environment, args ...object.Object) object.Object {
+	if err := security.CheckCapabilityAllowed(security.CapabilityWatch); err != nil {
+		return object.NewError("%s", err)
+	}
 	if len(args) < 1 {
 		return object.NewError("hot_reload() requires a file path")
 	}
@@ -375,5 +387,10 @@ func builtinHotReload(env *object.Environment, args ...object.Object) object.Obj
 
 	globalWatcher.start()
 	id := globalWatcher.addWatch(entry)
+	if env != nil {
+		env.RegisterCleanup(func() {
+			globalWatcher.removeWatch(id)
+		})
+	}
 	return &object.String{Value: id}
 }

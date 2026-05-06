@@ -12,6 +12,7 @@ import (
 
 	"github.com/oarkflow/interpreter/pkg/eval"
 	"github.com/oarkflow/interpreter/pkg/object"
+	"github.com/oarkflow/interpreter/pkg/security"
 )
 
 // ── Cron Parser ────────────────────────────────────────────────────
@@ -429,6 +430,9 @@ func init() {
 
 // schedule(cron_expr, handler) or schedule(cron_expr, name, handler)
 func builtinSchedule(env *object.Environment, args ...object.Object) object.Object {
+	if err := security.CheckCapabilityAllowed(security.CapabilityScheduler); err != nil {
+		return object.NewError("%s", err)
+	}
 	if len(args) < 2 {
 		return object.NewError("schedule() requires (cron_expr, handler)")
 	}
@@ -463,11 +467,19 @@ func builtinSchedule(env *object.Environment, args ...object.Object) object.Obje
 
 	GlobalScheduler.start()
 	id := GlobalScheduler.addJob(job)
+	if env != nil {
+		env.RegisterCleanup(func() {
+			GlobalScheduler.cancelJob(id)
+		})
+	}
 	return &object.String{Value: id}
 }
 
 // schedule_once(cron_expr, handler)
 func builtinScheduleOnce(env *object.Environment, args ...object.Object) object.Object {
+	if err := security.CheckCapabilityAllowed(security.CapabilityScheduler); err != nil {
+		return object.NewError("%s", err)
+	}
 	if len(args) < 2 {
 		return object.NewError("schedule_once() requires (cron_expr, handler)")
 	}
@@ -499,11 +511,19 @@ func builtinScheduleOnce(env *object.Environment, args ...object.Object) object.
 
 	GlobalScheduler.start()
 	id := GlobalScheduler.addJob(job)
+	if env != nil {
+		env.RegisterCleanup(func() {
+			GlobalScheduler.cancelJob(id)
+		})
+	}
 	return &object.String{Value: id}
 }
 
 // schedule_interval(duration_ms, handler) or schedule_interval(duration_str, handler)
 func builtinScheduleInterval(env *object.Environment, args ...object.Object) object.Object {
+	if err := security.CheckCapabilityAllowed(security.CapabilityScheduler); err != nil {
+		return object.NewError("%s", err)
+	}
 	if len(args) < 2 {
 		return object.NewError("schedule_interval() requires (duration, handler)")
 	}
@@ -548,11 +568,19 @@ func builtinScheduleInterval(env *object.Environment, args ...object.Object) obj
 
 	GlobalScheduler.start()
 	id := GlobalScheduler.addJob(job)
+	if env != nil {
+		env.RegisterCleanup(func() {
+			GlobalScheduler.cancelJob(id)
+		})
+	}
 	return &object.String{Value: id}
 }
 
 // schedule_cancel(job_id)
 func builtinScheduleCancel(args ...object.Object) object.Object {
+	if err := security.CheckCapabilityAllowed(security.CapabilityScheduler); err != nil {
+		return object.NewError("%s", err)
+	}
 	if len(args) < 1 {
 		return object.NewError("schedule_cancel() requires a job ID")
 	}
@@ -568,6 +596,9 @@ func builtinScheduleCancel(args ...object.Object) object.Object {
 
 // schedule_list() -> array of job info hashes
 func builtinScheduleList(args ...object.Object) object.Object {
+	if err := security.CheckCapabilityAllowed(security.CapabilityScheduler); err != nil {
+		return object.NewError("%s", err)
+	}
 	jobs := GlobalScheduler.listJobs()
 	elems := make([]object.Object, len(jobs))
 	for i, job := range jobs {
@@ -605,6 +636,9 @@ func builtinScheduleList(args ...object.Object) object.Object {
 
 // schedule_persist(path)
 func builtinSchedulePersist(args ...object.Object) object.Object {
+	if err := security.CheckCapabilityAllowed(security.CapabilityScheduler); err != nil {
+		return object.NewError("%s", err)
+	}
 	if len(args) < 1 {
 		return object.NewError("schedule_persist() requires a file path")
 	}
@@ -623,6 +657,9 @@ func builtinSchedulePersist(args ...object.Object) object.Object {
 
 // schedule_restore(path)
 func builtinScheduleRestore(args ...object.Object) object.Object {
+	if err := security.CheckCapabilityAllowed(security.CapabilityScheduler); err != nil {
+		return object.NewError("%s", err)
+	}
 	if len(args) < 1 {
 		return object.NewError("schedule_restore() requires a file path")
 	}
@@ -639,6 +676,9 @@ func builtinScheduleRestore(args ...object.Object) object.Object {
 
 // schedule_now(handler)
 func builtinScheduleNow(env *object.Environment, args ...object.Object) object.Object {
+	if err := security.CheckCapabilityAllowed(security.CapabilityScheduler); err != nil {
+		return object.NewError("%s", err)
+	}
 	if len(args) < 1 {
 		return object.NewError("schedule_now() requires a handler")
 	}
@@ -648,6 +688,9 @@ func builtinScheduleNow(env *object.Environment, args ...object.Object) object.O
 
 // schedule_run() or schedule_run(limit)
 func builtinScheduleRun(args ...object.Object) object.Object {
+	if err := security.CheckCapabilityAllowed(security.CapabilityScheduler); err != nil {
+		return object.NewError("%s", err)
+	}
 	limit := 1
 	if len(args) >= 1 {
 		if n, ok := args[0].(*object.Integer); ok {
@@ -669,6 +712,9 @@ func builtinScheduleRun(args ...object.Object) object.Object {
 
 // schedule_worker() or schedule_worker(duration_ms|duration_str)
 func builtinScheduleWorker(args ...object.Object) object.Object {
+	if err := security.CheckCapabilityAllowed(security.CapabilityScheduler); err != nil {
+		return object.NewError("%s", err)
+	}
 	var stopAt time.Time
 	if len(args) >= 1 {
 		switch v := args[0].(type) {
@@ -701,6 +747,9 @@ func builtinScheduleWorker(args ...object.Object) object.Object {
 
 // schedule_timezone(name)
 func builtinScheduleTimezone(args ...object.Object) object.Object {
+	if err := security.CheckCapabilityAllowed(security.CapabilityScheduler); err != nil {
+		return object.NewError("%s", err)
+	}
 	if len(args) < 1 {
 		return object.NewError("schedule_timezone() requires a timezone name")
 	}
@@ -720,6 +769,9 @@ func builtinScheduleTimezone(args ...object.Object) object.Object {
 
 // background(handler) — runs function in goroutine, returns future
 func builtinBackground(env *object.Environment, args ...object.Object) object.Object {
+	if err := security.CheckCapabilityAllowed(security.CapabilityAsync); err != nil {
+		return object.NewError("%s", err)
+	}
 	if len(args) < 1 {
 		return object.NewError("background() requires a function")
 	}

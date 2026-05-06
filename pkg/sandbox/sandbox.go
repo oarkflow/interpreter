@@ -46,13 +46,18 @@ type SandboxConfig struct {
 	ProtectHost   bool
 	AllowEnvWrite bool
 
-	MaxDepth  int
-	MaxSteps  int64
-	MaxHeapMB int64
-	Timeout   time.Duration
+	MaxDepth           int
+	MaxSteps           int64
+	MaxHeapMB          int64
+	MaxOutputBytes     int64
+	MaxHTTPBodyBytes   int64
+	MaxExecOutputBytes int64
+	Timeout            time.Duration
 
 	BaseDir string
 
+	AllowedCapabilities   []string
+	DeniedCapabilities    []string
 	AllowedExecCommands   []string
 	DeniedExecCommands    []string
 	AllowedNetworkHosts   []string
@@ -170,10 +175,19 @@ func sandboxRuntimeLimits(cfg SandboxConfig) *object.RuntimeLimits {
 	if cfg.MaxHeapMB > 0 {
 		rl.MaxHeapBytes = uint64(cfg.MaxHeapMB) * 1024 * 1024
 	}
+	if cfg.MaxOutputBytes > 0 {
+		rl.MaxOutputBytes = cfg.MaxOutputBytes
+	}
+	if cfg.MaxHTTPBodyBytes > 0 {
+		rl.MaxHTTPBodyBytes = cfg.MaxHTTPBodyBytes
+	}
+	if cfg.MaxExecOutputBytes > 0 {
+		rl.MaxExecOutputBytes = cfg.MaxExecOutputBytes
+	}
 	if cfg.Timeout > 0 {
 		rl.Deadline = time.Now().Add(cfg.Timeout)
 	}
-	if rl.MaxDepth == 0 && rl.MaxSteps == 0 && rl.MaxHeapBytes == 0 && rl.Deadline.IsZero() {
+	if rl.MaxDepth == 0 && rl.MaxSteps == 0 && rl.MaxHeapBytes == 0 && rl.MaxOutputBytes == 0 && rl.MaxHTTPBodyBytes == 0 && rl.MaxExecOutputBytes == 0 && rl.Deadline.IsZero() {
 		return nil
 	}
 	return rl
@@ -195,6 +209,8 @@ func sandboxSecurityPolicy(cfg SandboxConfig) *object.SecurityPolicy {
 		StrictMode:            cfg.StrictMode,
 		ProtectHost:           cfg.ProtectHost,
 		AllowEnvWrite:         cfg.AllowEnvWrite,
+		AllowedCapabilities:   append([]string(nil), cfg.AllowedCapabilities...),
+		DeniedCapabilities:    append([]string(nil), cfg.DeniedCapabilities...),
 		AllowedExecCommands:   append([]string(nil), cfg.AllowedExecCommands...),
 		DeniedExecCommands:    append([]string(nil), cfg.DeniedExecCommands...),
 		AllowedNetworkHosts:   append([]string(nil), cfg.AllowedNetworkHosts...),
@@ -234,6 +250,7 @@ func ResetRuntimeLimitCounters(env *object.Environment) {
 	}
 	env.RuntimeLimits.Steps = 0
 	env.RuntimeLimits.CurrentDepth = 0
+	env.RuntimeLimits.OutputBytes = 0
 }
 
 // RunProgramSandboxed evaluates an AST program inside the sandbox, resetting

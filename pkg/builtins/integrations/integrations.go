@@ -347,9 +347,17 @@ func doHTTPRequest(env *object.Environment, method, target string, body []byte, 
 	}
 	defer resp.Body.Close()
 
-	rawBody, err := io.ReadAll(resp.Body)
+	bodyLimit := httpBodyLimit(env)
+	reader := io.Reader(resp.Body)
+	if bodyLimit > 0 {
+		reader = io.LimitReader(resp.Body, bodyLimit+1)
+	}
+	rawBody, err := io.ReadAll(reader)
 	if err != nil {
 		return tupleErr(fmt.Sprintf("failed reading response body: %v", err))
+	}
+	if bodyLimit > 0 && int64(len(rawBody)) > bodyLimit {
+		return tupleErr(fmt.Sprintf("http response body exceeded %d bytes", bodyLimit))
 	}
 
 	headersMap := make(map[object.HashKey]object.HashPair)
@@ -368,6 +376,16 @@ func doHTTPRequest(env *object.Environment, method, target string, body []byte, 
 		"headers":     &object.Hash{Pairs: headersMap},
 	}
 	return tupleOK(toObject(payload))
+}
+
+func httpBodyLimit(env *object.Environment) int64 {
+	if env != nil && env.RuntimeLimits != nil && env.RuntimeLimits.MaxHTTPBodyBytes > 0 {
+		return env.RuntimeLimits.MaxHTTPBodyBytes
+	}
+	if v := object.ParsePositiveInt64Env("SPL_HTTP_MAX_BODY_BYTES"); v > 0 {
+		return v
+	}
+	return 1024 * 1024
 }
 
 // ── Builtins ───────────────────────────────────────────────────────

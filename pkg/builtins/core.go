@@ -2,6 +2,7 @@ package builtins
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"crypto/aes"
 	"crypto/cipher"
@@ -61,6 +62,36 @@ type GeneratorValue struct {
 func (g *GeneratorValue) Type() object.ObjectType { return object.ARRAY_OBJ }
 func (g *GeneratorValue) Inspect() string {
 	return (&object.Array{Elements: g.elements}).Inspect()
+}
+
+type cappedBuffer struct {
+	buf   bytes.Buffer
+	limit int64
+}
+
+func (b *cappedBuffer) Write(p []byte) (int, error) {
+	if b == nil {
+		return len(p), nil
+	}
+	if b.limit <= 0 {
+		return b.buf.Write(p)
+	}
+	if int64(b.buf.Len()) >= b.limit {
+		return len(p), nil
+	}
+	remaining := int(b.limit - int64(b.buf.Len()))
+	if remaining < len(p) {
+		_, _ = b.buf.Write(p[:remaining])
+		return len(p), nil
+	}
+	return b.buf.Write(p)
+}
+
+func (b *cappedBuffer) Bytes() []byte {
+	if b == nil {
+		return nil
+	}
+	return b.buf.Bytes()
 }
 
 // ---------------------------------------------------------------------------
@@ -2250,7 +2281,12 @@ func init() {
 				defer cancel()
 				cmd := exec.CommandContext(ctx, cmdName, cmdArgs...)
 
-				output, err := cmd.CombinedOutput()
+				var outputBuf cappedBuffer
+				outputBuf.limit = execOutputLimit(env)
+				cmd.Stdout = &outputBuf
+				cmd.Stderr = &outputBuf
+				err := cmd.Run()
+				output := outputBuf.Bytes()
 				if err != nil {
 					if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 						return &object.String{Value: fmt.Sprintf("ERROR: command timed out after %dms\n%s", timeoutDur/time.Millisecond, string(output))}
@@ -2270,6 +2306,9 @@ func init() {
 
 		"go_async": {
 			Fn: func(args ...object.Object) object.Object {
+				if err := security.CheckCapabilityAllowed(security.CapabilityAsync); err != nil {
+					return object.NewError("%s", err)
+				}
 				if len(args) < 1 {
 					return object.NewError("go_async: expected at least 1 argument (function)")
 				}
@@ -2403,6 +2442,16 @@ func execTimeoutFromArgsAndEnv(timeoutArgMs int64) (time.Duration, object.Object
 		return 0, &object.String{Value: "ERROR: exec timeout must be > 0 milliseconds"}
 	}
 	return parsePositiveDurationMs(os.Getenv("SPL_EXEC_TIMEOUT_MS"), "SPL_EXEC_TIMEOUT_MS")
+}
+
+func execOutputLimit(env *object.Environment) int64 {
+	if env != nil && env.RuntimeLimits != nil && env.RuntimeLimits.MaxExecOutputBytes > 0 {
+		return env.RuntimeLimits.MaxExecOutputBytes
+	}
+	if v := object.ParsePositiveInt64Env("SPL_EXEC_MAX_OUTPUT_BYTES"); v > 0 {
+		return v
+	}
+	return 1024 * 1024
 }
 
 // runtimeContextWithTimeout creates a context from the environment with an optional timeout.

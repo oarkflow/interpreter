@@ -333,6 +333,23 @@ func (v *VM) Run() object.Object {
 			if v.env != nil && v.env.Output != nil {
 				out = v.env.Output
 			}
+			if v.env != nil && v.env.RuntimeLimits != nil && v.env.RuntimeLimits.MaxOutputBytes > 0 {
+				text := val.Inspect() + "\n"
+				rl := v.env.RuntimeLimits
+				remaining := rl.MaxOutputBytes - rl.OutputBytes
+				if remaining <= 0 {
+					return object.NewError("output limit exceeded (%d bytes)", rl.MaxOutputBytes)
+				}
+				if int64(len(text)) > remaining {
+					fmt.Fprint(out, text[:remaining])
+					rl.OutputBytes += remaining
+					return object.NewError("output limit exceeded (%d bytes)", rl.MaxOutputBytes)
+				}
+				fmt.Fprint(out, text)
+				rl.OutputBytes += int64(len(text))
+				v.push(object.NULL)
+				break
+			}
 			fmt.Fprintln(out, val.Inspect())
 			v.push(object.NULL)
 		default:

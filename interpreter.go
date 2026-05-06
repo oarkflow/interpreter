@@ -10,6 +10,7 @@ package interpreter
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -479,15 +480,19 @@ func (e *ExecError) Error() string {
 
 // ExecOptions controls the behaviour of ExecWithOptions / ExecFileWithOptions.
 type ExecOptions struct {
-	Args      []string
-	ModuleDir string
-	MaxDepth  int
-	MaxSteps  int64
-	MaxHeapMB int64
-	Timeout   time.Duration
-	Context   context.Context
-	Security  *SecurityPolicy
-	Sandbox   *SandboxConfig
+	Args               []string
+	ModuleDir          string
+	MaxDepth           int
+	MaxSteps           int64
+	MaxHeapMB          int64
+	MaxOutputBytes     int64
+	MaxHTTPBodyBytes   int64
+	MaxExecOutputBytes int64
+	Timeout            time.Duration
+	Context            context.Context
+	Output             io.Writer
+	Security           *SecurityPolicy
+	Sandbox            *SandboxConfig
 }
 
 // Exec executes the given SPL script content with the provided data.
@@ -521,8 +526,12 @@ func ExecWithOptions(script string, data map[string]interface{}, opts ExecOption
 			return nil, &ExecError{Kind: ExecErrorValidation, Message: vmErr.Error()}
 		}
 		env := vm.Environment()
+		defer env.RunCleanup()
 		if len(opts.Args) > 0 {
 			env.Set("ARGS", toObject(opts.Args))
+		}
+		if opts.Output != nil {
+			env.Output = opts.Output
 		}
 		env.SourcePath = "<memory>"
 		applyExecRuntimeOptions(env, opts)
@@ -590,8 +599,12 @@ func ExecFileWithOptions(filename string, data map[string]interface{}, opts Exec
 			return nil, &ExecError{Kind: ExecErrorValidation, Message: vmErr.Error(), Path: filename}
 		}
 		env := vm.Environment()
+		defer env.RunCleanup()
 		if len(opts.Args) > 0 {
 			env.Set("ARGS", toObject(opts.Args))
+		}
+		if opts.Output != nil {
+			env.Output = opts.Output
 		}
 		env.SourcePath = filename
 		applyExecRuntimeOptions(env, opts)
@@ -648,6 +661,15 @@ func validateExecOptions(opts ExecOptions) error {
 	if opts.MaxHeapMB < 0 {
 		return &ExecError{Kind: ExecErrorValidation, Message: "MaxHeapMB must be >= 0"}
 	}
+	if opts.MaxOutputBytes < 0 {
+		return &ExecError{Kind: ExecErrorValidation, Message: "MaxOutputBytes must be >= 0"}
+	}
+	if opts.MaxHTTPBodyBytes < 0 {
+		return &ExecError{Kind: ExecErrorValidation, Message: "MaxHTTPBodyBytes must be >= 0"}
+	}
+	if opts.MaxExecOutputBytes < 0 {
+		return &ExecError{Kind: ExecErrorValidation, Message: "MaxExecOutputBytes must be >= 0"}
+	}
 	if opts.Timeout < 0 {
 		return &ExecError{Kind: ExecErrorValidation, Message: "Timeout must be >= 0"}
 	}
@@ -669,6 +691,15 @@ func applyExecRuntimeOptions(env *Environment, opts ExecOptions) {
 	if opts.MaxHeapMB > 0 {
 		rl.MaxHeapBytes = uint64(opts.MaxHeapMB) * 1024 * 1024
 	}
+	if opts.MaxOutputBytes > 0 {
+		rl.MaxOutputBytes = opts.MaxOutputBytes
+	}
+	if opts.MaxHTTPBodyBytes > 0 {
+		rl.MaxHTTPBodyBytes = opts.MaxHTTPBodyBytes
+	}
+	if opts.MaxExecOutputBytes > 0 {
+		rl.MaxExecOutputBytes = opts.MaxExecOutputBytes
+	}
 	if opts.Timeout > 0 {
 		rl.Deadline = time.Now().Add(opts.Timeout)
 	}
@@ -676,7 +707,7 @@ func applyExecRuntimeOptions(env *Environment, opts ExecOptions) {
 		rl.Ctx = opts.Context
 	}
 
-	if rl.MaxDepth == 0 && rl.MaxSteps == 0 && rl.MaxHeapBytes == 0 && rl.Deadline.IsZero() && rl.Ctx == nil {
+	if rl.MaxDepth == 0 && rl.MaxSteps == 0 && rl.MaxHeapBytes == 0 && rl.MaxOutputBytes == 0 && rl.MaxHTTPBodyBytes == 0 && rl.MaxExecOutputBytes == 0 && rl.Deadline.IsZero() && rl.Ctx == nil {
 		env.RuntimeLimits = nil
 		return
 	}

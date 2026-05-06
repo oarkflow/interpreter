@@ -15,6 +15,7 @@ import (
 
 	"github.com/oarkflow/interpreter/pkg/eval"
 	"github.com/oarkflow/interpreter/pkg/object"
+	"github.com/oarkflow/interpreter/pkg/security"
 	"github.com/oarkflow/interpreter/pkg/template"
 )
 
@@ -829,6 +830,9 @@ func init() {
 }
 
 func builtinServer(args ...object.Object) object.Object {
+	if err := security.CheckCapabilityAllowed(security.CapabilityServer); err != nil {
+		return object.NewError("%s", err)
+	}
 	srv := &SPLServer{
 		routes:      make([]RouteHandler, 0),
 		middlewares: make([]MiddlewareEntry, 0),
@@ -1011,6 +1015,9 @@ func builtinRouteGroup(args ...object.Object) object.Object {
 }
 
 func builtinListen(env *object.Environment, args ...object.Object) object.Object {
+	if err := security.CheckCapabilityAllowed(security.CapabilityServer); err != nil {
+		return object.NewError("%s", err)
+	}
 	if len(args) < 1 {
 		return object.NewError("listen() requires a server argument")
 	}
@@ -1055,6 +1062,9 @@ func builtinListen(env *object.Environment, args ...object.Object) object.Object
 }
 
 func builtinListenAsync(env *object.Environment, args ...object.Object) object.Object {
+	if err := security.CheckCapabilityAllowed(security.CapabilityServer); err != nil {
+		return object.NewError("%s", err)
+	}
 	if len(args) < 1 {
 		return object.NewError("listen_async() requires a server argument")
 	}
@@ -1097,6 +1107,15 @@ func builtinListenAsync(env *object.Environment, args ...object.Object) object.O
 		}
 	}()
 
+	if env != nil {
+		env.RegisterCleanup(func() {
+			if srv.server != nil {
+				ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+				defer cancel()
+				_ = srv.server.Shutdown(ctx)
+			}
+		})
+	}
 	time.Sleep(50 * time.Millisecond)
 	return srv
 }

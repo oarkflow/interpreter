@@ -91,6 +91,26 @@ func runtimeLimitsEnter(rl *object.RuntimeLimits) object.Object {
 	return nil
 }
 
+func writeRuntimeOutput(env *object.Environment, out io.Writer, text string) object.Object {
+	if env == nil || env.RuntimeLimits == nil || env.RuntimeLimits.MaxOutputBytes <= 0 {
+		fmt.Fprint(out, text)
+		return nil
+	}
+	rl := env.RuntimeLimits
+	remaining := rl.MaxOutputBytes - rl.OutputBytes
+	if remaining <= 0 {
+		return object.NewError("output limit exceeded (%d bytes)", rl.MaxOutputBytes)
+	}
+	if int64(len(text)) > remaining {
+		fmt.Fprint(out, text[:remaining])
+		rl.OutputBytes += remaining
+		return object.NewError("output limit exceeded (%d bytes)", rl.MaxOutputBytes)
+	}
+	fmt.Fprint(out, text)
+	rl.OutputBytes += int64(len(text))
+	return nil
+}
+
 // ---------------------------------------------------------------------------
 // Eval – main entry point
 // ---------------------------------------------------------------------------
@@ -430,7 +450,9 @@ func Eval(node ast.Node, env *object.Environment) object.Object {
 		if env != nil && env.Output != nil {
 			out = env.Output
 		}
-		fmt.Fprintln(out, val.Inspect())
+		if errObj := writeRuntimeOutput(env, out, val.Inspect()+"\n"); errObj != nil {
+			return errObj
+		}
 		return object.NULL
 
 	case *ast.Identifier:
