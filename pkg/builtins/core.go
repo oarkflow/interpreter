@@ -202,6 +202,35 @@ func objectToNative(obj object.Object) interface{} {
 			out[pair.Key.Inspect()] = objectToNative(pair.Value)
 		}
 		return out
+	case *object.TableValue:
+		rows := make([]interface{}, 0, len(v.Rows))
+		for _, row := range v.Rows {
+			nativeRow := make(map[string]interface{}, len(row))
+			for key, value := range row {
+				nativeRow[key] = objectToNative(value)
+			}
+			rows = append(rows, nativeRow)
+		}
+		return rows
+	case *object.FileValue:
+		return map[string]interface{}{
+			"name":        v.Name,
+			"path":        v.Path,
+			"mime":        v.MIME,
+			"encoding":    v.Encoding,
+			"source_type": v.SourceType,
+			"size":        v.Size,
+		}
+	case *object.ImageValue:
+		return map[string]interface{}{
+			"name":        v.Name,
+			"path":        v.Path,
+			"mime":        v.MIME,
+			"format":      v.Format,
+			"source_type": v.SourceType,
+			"width":       v.Width,
+			"height":      v.Height,
+		}
 	default:
 		return v.Inspect()
 	}

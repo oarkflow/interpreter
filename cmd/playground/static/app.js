@@ -14,11 +14,16 @@ const resultEl = document.getElementById('result');
 const outputEl = document.getElementById('output');
 const errorEl = document.getElementById('error');
 const diagnosticsEl = document.getElementById('diagnostics');
+const artifactsEl = document.getElementById('artifacts');
 const previewEl = document.getElementById('preview');
 const durationEl = document.getElementById('duration');
 const resultTypeEl = document.getElementById('resultType');
 const outputLinesEl = document.getElementById('outputLines');
 const statusBadge = document.getElementById('statusBadge');
+const renderServerStatus = document.getElementById('renderServerStatus');
+const renderModeEl = document.getElementById('renderMode');
+const renderAllowUrlsEl = document.getElementById('renderAllowUrls');
+const renderUrlHostsEl = document.getElementById('renderUrlHosts');
 const healthText = document.getElementById('healthText');
 const exampleList = document.getElementById('exampleList');
 const exampleSearch = document.getElementById('exampleSearch');
@@ -33,11 +38,13 @@ const panels = Array.from(document.querySelectorAll('.panel'));
 const STORAGE_KEY = 'spl.playground.editor';
 const THEME_KEY = 'spl.playground.theme';
 const SIDEBAR_KEY = 'spl.playground.sidebar';
+const RENDER_URLS_KEY = 'spl.playground.render_urls';
 
 let codeExamples = {};
 let monacoEditor = null;
 let authenticated = false;
 let currentSidebar = 'examples';
+let serverRenderConfig = { mode: 'auto', max_bytes: 1048576, allow_urls: false, allow_url_hosts: [] };
 
 const interpreterGuideSections = [
   {
@@ -69,6 +76,29 @@ const interpreterGuideSections = [
       'Runtime guards cap recursion depth, evaluation steps, heap usage, and wall-clock time to keep runaway code from consuming the server.',
       'The general sandbox system also supports strict-mode policies for exec, file access, environment writes, network targets, database drivers, and DSN patterns.',
       'HTTP handlers add rate limiting, session auth, panic recovery, body size caps, and security headers before requests reach the interpreter.'
+    ]
+  },
+  {
+    title: 'Renderable Artifacts',
+    accent: 'from-amber-600 to-cyan-600 dark:from-amber-400 dark:to-cyan-300',
+    body: 'The playground understands typed artifact values. Use these commands when a script should load a file, image, or HTML preview instead of only printing text.',
+    bullets: [
+      '`print file("docs/README.md", {"mime": "text/markdown"});` loads a local file artifact.',
+      '`print image("data:image/svg+xml;base64,...", {"name": "badge.svg"});` loads an inline image artifact.',
+      '`print render("<html>...</html>", {"mime": "text/html"});` loads inline HTML into Preview.',
+      'Remote URLs require `PLAYGROUND_RENDER_ALLOW_URLS=true`, optional `PLAYGROUND_RENDER_ALLOW_URL_HOSTS`, and the URLs checkbox in the run toolbar before commands such as `image("https://example.com/pic.png")` can resolve.'
+    ]
+  },
+  {
+    title: 'Working Values',
+    accent: 'from-lime-600 to-emerald-600 dark:from-lime-400 dark:to-emerald-300',
+    body: 'SPL can now load files, images, JSON, and CSV data into working values so you can keep them in variables, transform them, and then render the result back into Preview.',
+    bullets: [
+      'Try the `file-values`, `image-values`, and `json-csv-values` playground examples for read-only workflows that run in the browser playground.',
+      'File helpers include `file_load`, `file_text`, `file_bytes`, `file_name`, `file_mime`, `file_size`, and `render(fileValue)`.',
+      'Image helpers include `image_load`, `image_resize`, `image_crop`, `image_rotate`, `image_convert`, `image_info`, and `image_render`.',
+      'Structured-data helpers include `read_json`, `read_csv`, `csv_decode`, `csv_encode`, `table_columns`, `table_rows`, `table_select`, `table_filter`, and `table_map`.',
+      'Write helpers such as `file_save`, `write_json`, `write_csv`, `image_save`, `image_resize_file`, and `image_convert_file` are shown in the `write-ops` example for CLI or REPL use when filesystem writes are allowed.'
     ]
   },
   {
@@ -215,6 +245,117 @@ function updateOutputLines() {
   outputLinesEl.textContent = String(lines);
 }
 
+function parseHostList(value) {
+  return String(value || '')
+    .split(',')
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function persistedRenderUrlsEnabled() {
+  const raw = localStorage.getItem(RENDER_URLS_KEY);
+  if (raw == null) return null;
+  return raw === 'true';
+}
+
+function applyRenderConfig(config) {
+  serverRenderConfig = {
+    mode: config && config.mode ? config.mode : 'auto',
+    max_bytes: config && config.max_bytes ? config.max_bytes : 1048576,
+    allow_urls: !!(config && config.allow_urls),
+    allow_url_hosts: Array.isArray(config && config.allow_url_hosts) ? config.allow_url_hosts : [],
+  };
+  if (renderModeEl) renderModeEl.value = serverRenderConfig.mode || 'auto';
+  if (renderAllowUrlsEl) {
+    const saved = persistedRenderUrlsEnabled();
+    renderAllowUrlsEl.checked = serverRenderConfig.allow_urls && (saved == null ? true : saved);
+    renderAllowUrlsEl.disabled = !serverRenderConfig.allow_urls;
+    renderAllowUrlsEl.title = serverRenderConfig.allow_urls
+      ? 'Allow this run to resolve URL artifacts through the playground server.'
+      : 'Server URL rendering is disabled. Start with PLAYGROUND_RENDER_ALLOW_URLS=true.';
+  }
+  if (renderUrlHostsEl) {
+    renderUrlHostsEl.value = serverRenderConfig.allow_url_hosts.join(',');
+    renderUrlHostsEl.disabled = !serverRenderConfig.allow_urls;
+    renderUrlHostsEl.title = serverRenderConfig.allow_urls
+      ? 'Optional comma-separated subset of server-allowed URL hosts.'
+      : 'Server URL rendering is disabled. Configure PLAYGROUND_RENDER_ALLOW_URL_HOSTS.';
+  }
+  if (renderServerStatus) {
+    const hosts = serverRenderConfig.allow_url_hosts.length ? serverRenderConfig.allow_url_hosts.join(',') : 'any host';
+    renderServerStatus.textContent = serverRenderConfig.allow_urls ? `URLs available: ${hosts}` : 'URLs disabled';
+  }
+}
+
+function renderRequestOptions() {
+  return {
+    render_mode: renderModeEl ? renderModeEl.value : serverRenderConfig.mode,
+    render_allow_urls: !!(renderAllowUrlsEl && renderAllowUrlsEl.checked && serverRenderConfig.allow_urls),
+    render_url_hosts: parseHostList(renderUrlHostsEl ? renderUrlHostsEl.value : ''),
+    render_max_bytes: serverRenderConfig.max_bytes,
+  };
+}
+
+function renderArtifacts(artifacts) {
+  const items = Array.isArray(artifacts) ? artifacts : [];
+  if (!artifactsEl) return null;
+  artifactsEl.innerHTML = '';
+  if (!items.length) return null;
+
+  let previewHTML = null;
+  for (const item of items) {
+    const mime = String(item.mime || '').toLowerCase();
+    const name = item.name || item.source || item.kind || 'artifact';
+    const wrap = document.createElement('section');
+    wrap.className = 'mb-3 rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 overflow-hidden';
+    const head = document.createElement('div');
+    head.className = 'px-3 py-2 border-b border-slate-200 dark:border-slate-800 flex flex-wrap items-center gap-2 text-xs';
+    head.innerHTML = `<strong>${escapeHTML(name)}</strong><span class="text-slate-500">${escapeHTML(item.kind || 'file')}</span><span class="text-slate-500">${escapeHTML(item.mime || 'unknown')}</span><span class="text-slate-500">${item.size || 0} bytes</span>`;
+    wrap.appendChild(head);
+
+    const body = document.createElement('div');
+    body.className = 'p-3';
+    if (item.error) {
+      body.className += ' text-sm text-rose-700 dark:text-rose-300';
+      body.textContent = item.error.includes('URL rendering is disabled')
+        ? `${item.error}. Enable server URL rendering with PLAYGROUND_RENDER_ALLOW_URLS=true and optionally PLAYGROUND_RENDER_ALLOW_URL_HOSTS, then tick URLs before running.`
+        : item.error;
+    } else if (item.data_url && mime.startsWith('image/')) {
+      const img = document.createElement('img');
+      img.src = item.data_url;
+      img.alt = item.alt || name;
+      img.className = 'max-h-[32rem] max-w-full object-contain bg-white';
+      if (item.width) img.width = item.width;
+      if (item.height) img.height = item.height;
+      body.appendChild(img);
+      if (!previewHTML) {
+        previewHTML = `<!doctype html><html><body style="margin:0;min-height:100vh;display:grid;place-items:center;background:#fff"><img src="${item.data_url}" alt="${escapeHTML(item.alt || name)}" style="max-width:100%;max-height:100vh;object-fit:contain"></body></html>`;
+      }
+    } else if (item.content && mime.includes('html')) {
+      const frame = document.createElement('iframe');
+      frame.className = 'h-[28rem] w-full rounded-md border border-slate-200 dark:border-slate-800 bg-white';
+      frame.setAttribute('sandbox', 'allow-scripts');
+      frame.srcdoc = item.content;
+      body.appendChild(frame);
+      if (!previewHTML) previewHTML = item.content;
+    } else if (item.content) {
+      const pre = document.createElement('pre');
+      pre.className = 'text-xs code-font whitespace-pre-wrap break-words';
+      pre.textContent = item.content;
+      body.appendChild(pre);
+      if (!previewHTML) {
+        previewHTML = `<pre style="white-space:pre-wrap;font:13px ui-monospace,SFMono-Regular,Menlo,monospace;padding:16px">${escapeHTML(item.content)}</pre>`;
+      }
+    } else {
+      body.className += ' text-sm text-slate-600 dark:text-slate-300';
+      body.textContent = `${item.source_type || 'source'} artifact available as ${item.mime || 'unknown type'}.`;
+    }
+    wrap.appendChild(body);
+    artifactsEl.appendChild(wrap);
+  }
+  return previewHTML;
+}
+
 function applyResponse(payload) {
   resultEl.textContent = payload.result || '-';
   outputEl.textContent = payload.output || '';
@@ -226,9 +367,10 @@ function applyResponse(payload) {
   resultTypeEl.textContent = payload.result_type || '-';
   updateOutputLines();
   previewEl.srcdoc = '';
+  const artifactPreview = renderArtifacts(payload.artifacts);
 
   // Detect HTML in result or output and render in preview iframe
-  const htmlContent = detectHTML(payload.result) || detectHTML(payload.output);
+  const htmlContent = artifactPreview || detectHTML(payload.result) || detectHTML(payload.output);
 
   if (err) {
     const kind = payload.error_kind || 'error';
@@ -238,6 +380,9 @@ function applyResponse(payload) {
     previewEl.srcdoc = htmlContent;
     setStatus('success', 'Success');
     setTab('preview');
+  } else if (Array.isArray(payload.artifacts) && payload.artifacts.length) {
+    setStatus('success', 'Success');
+    setTab('artifacts');
   } else if (payload.output) {
     setStatus('success', 'Success');
     setTab('output');
@@ -266,7 +411,7 @@ async function runCode() {
     const res = await fetch('/api/execute', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ code: getEditorValue() }),
+      body: JSON.stringify({ code: getEditorValue(), ...renderRequestOptions() }),
       credentials: 'include',
     });
     const payload = await res.json();
@@ -333,6 +478,7 @@ function clearPanels() {
   outputEl.textContent = '';
   errorEl.textContent = '';
   diagnosticsEl.textContent = '';
+  if (artifactsEl) artifactsEl.innerHTML = '';
   previewEl.srcdoc = '';
   durationEl.textContent = '-';
   resultTypeEl.textContent = '-';
@@ -404,6 +550,7 @@ async function loadSession() {
   try {
     const res = await fetch('/api/session', { credentials: 'include' });
     const payload = await res.json();
+    applyRenderConfig(payload.render || {});
     if (payload.auth_enabled === false) {
       authPanel.classList.add('hidden');
       authStatus.classList.add('hidden');
@@ -557,6 +704,12 @@ copyBtn.addEventListener('click', async () => {
   await navigator.clipboard.writeText(getEditorValue());
   setStatus('success', 'Copied');
 });
+
+if (renderAllowUrlsEl) {
+  renderAllowUrlsEl.addEventListener('change', () => {
+    localStorage.setItem(RENDER_URLS_KEY, String(renderAllowUrlsEl.checked));
+  });
+}
 
 resetBtn.addEventListener('click', () => {
   localStorage.removeItem(STORAGE_KEY);

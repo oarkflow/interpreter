@@ -11,6 +11,13 @@ var ApplyFn func(object.Object, []object.Object, *object.Environment, *ast.CallE
 
 func init() {
 	ApplyFn = ApplyFunction
+	object.ApplyFunctionFn = func(fn object.Object, args []object.Object, env *object.Environment) object.Object {
+		return ApplyFunction(fn, args, env, nil)
+	}
+	object.ExtendFunctionEnvFn = func(fn *object.Function, args []object.Object, callerEnv *object.Environment) *object.Environment {
+		return extendFunctionEnv(fn, args, callerEnv, nil)
+	}
+	object.UnwrapReturnValueFn = unwrapReturnValue
 }
 
 // ApplyFunction calls a function object with the given arguments.
@@ -97,17 +104,21 @@ func extendFunctionEnv(fn *object.Function, args []object.Object, callerEnv *obj
 		callStack = append(callStack, callFrameFromExpression(call.Function, callerEnv, call.Line, call.Column))
 	}
 	env := &object.Environment{
-		Store:          make(map[string]object.Object, len(fn.Parameters)),
-		Outer:          fn.Env,
-		ModuleContext:  fn.Env.ModuleContext,
-		ModuleDir:      fn.Env.ModuleDir,
-		SourcePath:     fn.Env.SourcePath,
-		ModuleCache:    fn.Env.ModuleCache,
-		ModuleLoading:  fn.Env.ModuleLoading,
-		RuntimeLimits:  fn.Env.RuntimeLimits,
-		SecurityPolicy: fn.Env.SecurityPolicy,
-		Output:         fn.Env.Output,
-		CallStack:      callStack,
+		Store:                  make(map[string]object.Object, len(fn.Parameters)),
+		Outer:                  fn.Env,
+		ModuleContext:          fn.Env.ModuleContext,
+		ModuleDir:              fn.Env.ModuleDir,
+		SourcePath:             fn.Env.SourcePath,
+		ModuleCache:            fn.Env.ModuleCache,
+		ModuleLoading:          fn.Env.ModuleLoading,
+		RuntimeLimits:          fn.Env.RuntimeLimits,
+		SecurityPolicy:         fn.Env.SecurityPolicy,
+		Output:                 fn.Env.Output,
+		RenderConfig:           fn.Env.RenderConfig,
+		RenderArtifacts:        fn.Env.RenderArtifacts,
+		RenderArtifactSink:     fn.Env.RenderArtifactSink,
+		CollectRenderArtifacts: fn.Env.CollectRenderArtifacts,
+		CallStack:              callStack,
 	}
 	if len(fn.ParamTypes) > 0 {
 		env.Set("__param_types", ToObject(fn.ParamTypes))

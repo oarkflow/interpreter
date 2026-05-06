@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/oarkflow/interpreter/pkg/object"
+	renderpkg "github.com/oarkflow/interpreter/pkg/render"
 )
 
 // ---------------------------------------------------------------------------
@@ -44,13 +45,14 @@ var FormatCallStackFn func(stack []object.CallFrame) string
 // ---------------------------------------------------------------------------
 
 type PlaygroundResult struct {
-	Output      string   `json:"output"`
-	Result      string   `json:"result"`
-	ResultTy    string   `json:"result_type"`
-	Error       string   `json:"error"`
-	ErrorKind   string   `json:"error_kind"`
-	Diagnostics []string `json:"diagnostics,omitempty"`
-	Duration    int64    `json:"duration_ms"`
+	Output      string                       `json:"output"`
+	Result      string                       `json:"result"`
+	ResultTy    string                       `json:"result_type"`
+	Error       string                       `json:"error"`
+	ErrorKind   string                       `json:"error_kind"`
+	Diagnostics []string                     `json:"diagnostics,omitempty"`
+	Artifacts   []renderpkg.ResolvedArtifact `json:"artifacts,omitempty"`
+	Duration    int64                        `json:"duration_ms"`
 }
 
 type PlaygroundOptions struct {
@@ -62,6 +64,7 @@ type PlaygroundOptions struct {
 	ModuleDir      string
 	Security       *object.SecurityPolicy
 	MaxOutputBytes int64
+	RenderConfig   *object.RenderConfig
 }
 
 type limitedBuffer struct {
@@ -150,6 +153,12 @@ func EvalForPlayground(script string, opts PlaygroundOptions) PlaygroundResult {
 			env.ModuleDir = "."
 		}
 		env.SourcePath = "<playground>"
+		env.CollectRenderArtifacts = true
+		env.RenderArtifactSink = &env.RenderArtifacts
+		env.RenderConfig = opts.RenderConfig
+		if env.RenderConfig == nil {
+			env.RenderConfig = object.DefaultRenderConfig()
+		}
 
 		buf := &bytes.Buffer{}
 		maxOutput := opts.MaxOutputBytes
@@ -216,11 +225,43 @@ func EvalForPlayground(script string, opts PlaygroundOptions) PlaygroundResult {
 					}
 				}
 			} else {
+				if art, ok := evaluated.(*object.RenderArtifact); ok {
+					env.AddRenderArtifact(art)
+				}
 				res.Result = evaluated.Inspect()
 				if maxOutput > 0 && int64(len(res.Result)) > maxOutput {
 					res.Result = res.Result[:maxOutput]
 				}
 				res.ResultTy = evaluated.Type().String()
+			}
+		}
+		renderMode := "auto"
+		if env.RenderConfig != nil && strings.TrimSpace(env.RenderConfig.Mode) != "" {
+			renderMode = strings.ToLower(strings.TrimSpace(env.RenderConfig.Mode))
+		}
+		for _, art := range env.RenderArtifacts {
+			if renderMode == "off" {
+				continue
+			}
+			if renderMode == "metadata" {
+				res.Artifacts = append(res.Artifacts, renderpkg.ResolvedArtifact{
+					Kind:       art.Kind,
+					SourceType: art.SourceTyp,
+					Source:     art.Source,
+					Name:       art.Name,
+					MIME:       art.MIME,
+					Alt:        art.Alt,
+					Width:      art.Width,
+					Height:     art.Height,
+				})
+				continue
+			}
+			resolved, rerr := renderpkg.Resolve(nil, env, art)
+			if resolved != nil {
+				res.Artifacts = append(res.Artifacts, *resolved)
+			}
+			if rerr != nil {
+				res.Diagnostics = append(res.Diagnostics, "render: "+rerr.Error())
 			}
 		}
 		return evaluated, nil

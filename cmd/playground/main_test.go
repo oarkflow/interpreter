@@ -6,9 +6,13 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/oarkflow/interpreter/pkg/security"
 )
 
 func TestLoadConfigWithoutSecret(t *testing.T) {
@@ -20,6 +24,56 @@ func TestLoadConfigWithoutSecret(t *testing.T) {
 	}
 	if cfg.AuthSecret != "" {
 		t.Fatalf("expected empty auth secret, got %q", cfg.AuthSecret)
+	}
+}
+
+func TestApplyCLIFlagsForRenderURLSettings(t *testing.T) {
+	cfg, err := loadConfig()
+	if err != nil {
+		t.Fatalf("loadConfig: %v", err)
+	}
+	err = applyCLIFlags(&cfg, []string{
+		"--render-allow-urls",
+		"--render-url-hosts", "nikonrumors.com,cdn.example.com",
+		"--render-mode", "inline",
+		"--render-max-bytes", "2048",
+	})
+	if err != nil {
+		t.Fatalf("applyCLIFlags: %v", err)
+	}
+	if !cfg.RenderAllowURLs {
+		t.Fatalf("expected render URLs to be enabled")
+	}
+	if cfg.RenderMode != "inline" {
+		t.Fatalf("expected inline render mode, got %q", cfg.RenderMode)
+	}
+	if cfg.RenderMaxBytes != 2048 {
+		t.Fatalf("expected render max bytes 2048, got %d", cfg.RenderMaxBytes)
+	}
+	if got := strings.Join(cfg.RenderAllowURLHosts, ","); got != "nikonrumors.com,cdn.example.com" {
+		t.Fatalf("unexpected render URL hosts: %q", got)
+	}
+}
+
+func TestPlaygroundSecurityPolicyAllowsReadsButNotWrites(t *testing.T) {
+	policy := playgroundSecurityPolicy("/workspace/project", true, []string{"example.com"})
+	if !policy.ProtectHost {
+		t.Fatalf("expected host protection to remain enabled")
+	}
+	if !security.ContainsToken(policy.AllowedCapabilities, security.CapabilityFilesystemRead) {
+		t.Fatalf("expected filesystem_read to be allowed, got %#v", policy.AllowedCapabilities)
+	}
+	if security.ContainsToken(policy.AllowedCapabilities, security.CapabilityFilesystemWrite) {
+		t.Fatalf("did not expect filesystem_write to be allowed, got %#v", policy.AllowedCapabilities)
+	}
+	if !security.ContainsToken(policy.AllowedCapabilities, security.CapabilityNetwork) {
+		t.Fatalf("expected network to be allowed when URL rendering is enabled")
+	}
+	if got := strings.Join(policy.AllowedFileReadPaths, ","); got != "/workspace/project" {
+		t.Fatalf("unexpected allowed read roots: %q", got)
+	}
+	if got := strings.Join(policy.AllowedNetworkHosts, ","); got != "example.com" {
+		t.Fatalf("unexpected network hosts: %q", got)
 	}
 }
 
@@ -188,7 +242,7 @@ func TestIndexNoEmbeddedSecret(t *testing.T) {
 
 func TestBuiltinCodeExamplesContainCompleteExamples(t *testing.T) {
 	examples := builtinCodeExamples()
-	for _, name := range []string{"hello", "functions", "formatting", "modules", "collections", "error-handling", "loops", "math", "strings", "collections-advanced", "crypto", "time", "testing", "complete-tour"} {
+	for _, name := range []string{"hello", "functions", "formatting", "artifacts", "file-values", "image-values", "json-csv-values", "write-ops", "modules", "collections", "error-handling", "loops", "math", "strings", "collections-advanced", "crypto", "time", "testing", "complete-tour"} {
 		content, ok := examples[name]
 		if !ok {
 			t.Fatalf("expected code example %q", name)
@@ -212,6 +266,15 @@ func TestBuiltinCodeExamplesContainCompleteExamples(t *testing.T) {
 	if !strings.Contains(examples["functions"], `function add(a, b)`) {
 		t.Fatalf("expected functions example to include named function declaration, got %q", examples["functions"])
 	}
+	if !strings.Contains(examples["file-values"], `file_load("testdata/test_io.txt")`) {
+		t.Fatalf("expected file-values example to demonstrate file_load, got %q", examples["file-values"])
+	}
+	if !strings.Contains(examples["image-values"], `image_resize(`) || !strings.Contains(examples["image-values"], `image_render(`) {
+		t.Fatalf("expected image-values example to demonstrate image transforms, got %q", examples["image-values"])
+	}
+	if !strings.Contains(examples["json-csv-values"], `table_filter(`) || !strings.Contains(examples["json-csv-values"], `csv_decode(`) {
+		t.Fatalf("expected json-csv-values example to demonstrate table helpers, got %q", examples["json-csv-values"])
+	}
 }
 
 func TestExamplesAPIContainsCompleteCodeExamples(t *testing.T) {
@@ -233,9 +296,28 @@ func TestExamplesAPIContainsCompleteCodeExamples(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range []string{"collections", "error-handling", "complete-tour"} {
+	for _, name := range []string{"collections", "error-handling", "complete-tour", "file-values", "image-values", "json-csv-values", "write-ops"} {
 		if strings.TrimSpace(payload.Examples[name]) == "" {
 			t.Fatalf("expected API to include non-empty example %q", name)
+		}
+	}
+}
+
+func TestDataOperationExampleFilesExist(t *testing.T) {
+	for _, rel := range []string{
+		filepath.Join("..", "..", "testdata", "examples_file_values.spl"),
+		filepath.Join("..", "..", "testdata", "examples_image_values.spl"),
+		filepath.Join("..", "..", "testdata", "examples_json_csv_values.spl"),
+		filepath.Join("..", "..", "testdata", "examples_write_ops.spl"),
+		filepath.Join("..", "..", "testdata", "data", "profile.json"),
+		filepath.Join("..", "..", "testdata", "data", "people.csv"),
+	} {
+		data, err := os.ReadFile(rel)
+		if err != nil {
+			t.Fatalf("read %s: %v", rel, err)
+		}
+		if strings.TrimSpace(string(data)) == "" {
+			t.Fatalf("expected %s to be non-empty", rel)
 		}
 	}
 }

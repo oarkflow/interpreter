@@ -1,0 +1,18 @@
+// Write-oriented helpers are available in SPL, but the browser playground runs with
+// ProtectHost enabled, so filesystem writes are intentionally blocked there.
+// Use this script in the CLI or REPL when filesystem write access is allowed.
+
+let payload = file_load("testdata/test_io.txt");
+let tiny = image_load("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO5W2MsAAAAASUVORK5CYII=");
+
+// file_save(payload, "tmp/test_io_copy.txt");
+// file_copy("testdata/test_io.txt", "tmp/test_io_copy_2.txt");
+// file_move("tmp/test_io_copy_2.txt", "tmp/test_io_moved.txt");
+// file_rename("tmp/test_io_moved.txt", "test_io_renamed.txt");
+// write_json("tmp/profile.json", {"team": "playground", "ok": true}, {"pretty": true});
+// write_csv("tmp/people.csv", [{"name": "Ada", "role": "engineer"}]);
+// image_save(tiny, "tmp/tiny.png");
+// image_resize_file("tmp/tiny.png", "tmp/tiny-large.png", 48, 48);
+// image_convert_file("tmp/tiny-large.png", "tmp/tiny-large.jpg", "jpeg");
+
+print "Write helpers are documented here for CLI/REPL workflows.";

@@ -88,6 +88,18 @@ func TestReplConfigListAndSetRuntime(t *testing.T) {
 	if env.RuntimeLimits == nil || env.RuntimeLimits.MaxSteps != 1234 {
 		t.Fatalf("expected runtime max steps to be applied, got %#v", env.RuntimeLimits)
 	}
+
+	out = captureReplStdout(t, func() {
+		if !repl.HandleReplMetaCommand(":config set render.mode metadata", nil, env) {
+			t.Fatalf(":config set render.mode was not handled")
+		}
+	})
+	if !strings.Contains(out, "render.mode = metadata") {
+		t.Fatalf("unexpected render mode output: %q", out)
+	}
+	if env.RenderConfig == nil || env.RenderConfig.Mode != "metadata" {
+		t.Fatalf("expected render config to be applied, got %#v", env.RenderConfig)
+	}
 }
 
 func TestReplConfigUntrustedProfileDeniesExec(t *testing.T) {

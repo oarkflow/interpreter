@@ -5,6 +5,8 @@ import (
 	"embed"
 	"encoding/json"
 	"errors"
+	"flag"
+	"fmt"
 	"io"
 	"log/slog"
 	"net"
@@ -19,23 +21,45 @@ import (
 	"time"
 
 	"github.com/oarkflow/interpreter"
+	"github.com/oarkflow/interpreter/pkg/render"
+	"github.com/oarkflow/interpreter/pkg/security"
 )
 
 //go:embed static/*
 var staticFS embed.FS
 
 type executeRequest struct {
-	Code string `json:"code"`
+	Code            string   `json:"code"`
+	RenderMode      string   `json:"render_mode,omitempty"`
+	RenderAllowURLs bool     `json:"render_allow_urls,omitempty"`
+	RenderURLHosts  []string `json:"render_url_hosts,omitempty"`
+	RenderMaxBytes  int64    `json:"render_max_bytes,omitempty"`
 }
 
 type executeResponse struct {
-	Output      string   `json:"output"`
-	Result      string   `json:"result"`
-	ResultType  string   `json:"result_type"`
-	Error       string   `json:"error"`
-	ErrorKind   string   `json:"error_kind"`
-	Diagnostics []string `json:"diagnostics,omitempty"`
-	DurationMS  int64    `json:"duration_ms"`
+	Output      string                    `json:"output"`
+	Result      string                    `json:"result"`
+	ResultType  string                    `json:"result_type"`
+	Error       string                    `json:"error"`
+	ErrorKind   string                    `json:"error_kind"`
+	Diagnostics []string                  `json:"diagnostics,omitempty"`
+	Artifacts   []render.ResolvedArtifact `json:"artifacts,omitempty"`
+	DurationMS  int64                     `json:"duration_ms"`
+}
+
+func playgroundSecurityPolicy(root string, renderAllowURLs bool, renderURLHosts []string) *interpreter.SecurityPolicy {
+	policy := &interpreter.SecurityPolicy{
+		ProtectHost:         true,
+		AllowedCapabilities: []string{security.CapabilityFilesystemRead},
+	}
+	if strings.TrimSpace(root) != "" {
+		policy.AllowedFileReadPaths = append(policy.AllowedFileReadPaths, root)
+	}
+	if renderAllowURLs {
+		policy.AllowedCapabilities = append(policy.AllowedCapabilities, security.CapabilityNetwork)
+		policy.AllowedNetworkHosts = append(policy.AllowedNetworkHosts, renderURLHosts...)
+	}
+	return policy
 }
 
 func builtinCodeExamples() map[string]string {
@@ -74,6 +98,107 @@ print fibScores;`,
 		"formatting": `let payload = {"name": "spl", "ok": true, "count": 3};
 print sprintf("name=%s type=%T val=%v", payload.name, payload, payload);
 print interpolate("Hello {name}, items={count}", {"name": "Playground", "count": 3});`,
+		"artifacts": `// Renderable artifact commands
+// The playground collects these values and opens them in Preview/Artifacts.
+
+// Load a repository file as a previewable artifact.
+print file("docs/README.md", {
+	"name": "README.md",
+	"mime": "text/markdown",
+	"max_bytes": 200000
+});
+
+// Load an inline image artifact.
+let logo = "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyNDAiIGhlaWdodD0iMTIwIj48cmVjdCB3aWR0aD0iMjQwIiBoZWlnaHQ9IjEyMCIgZmlsbD0iIzA4OTFiMiIvPjx0ZXh0IHg9IjI0IiB5PSI3MCIgZm9udC1zaXplPSIzMCIgZmlsbD0id2hpdGUiPlNQTCBhcnRpZmFjdDwvdGV4dD48L3N2Zz4=";
+print image(logo, {
+	"name": "spl-artifact.svg",
+	"alt": "SPL artifact badge",
+	"width": 240,
+	"height": 120
+});
+
+// Render inline HTML directly into the browser preview.
+print render("<!doctype html><html><body style=\"font-family:system-ui;padding:2rem\"><h1>SPL artifact</h1><p>Loaded with render(...).</p></body></html>", {
+	"name": "artifact.html",
+	"mime": "text/html"
+});
+
+// URL artifacts are intentionally disabled by default in the playground.
+// Enable PLAYGROUND_RENDER_ALLOW_URLS and PLAYGROUND_RENDER_ALLOW_URL_HOSTS
+// before loading remote artifacts such as:
+// print image("https://example.com/image.png", {"name": "remote.png"});`,
+		"file-values": `// File values load content into variables so you can inspect and transform it.
+// This example stays read-only, so it runs cleanly inside the browser playground.
+
+let note = file_load("testdata/test_io.txt");
+print sprintf("name=%s mime=%s size=%d", file_name(note), file_mime(note), file_size(note));
+print sprintf("base64-prefix=%s", substring(file_bytes(note), 0, 20));
+
+let readme = file_load(file("docs/README.md", {
+	"name": "README.md",
+	"mime": "text/markdown"
+}));
+
+print file_text(note);
+print render(readme, {
+	"name": "README.preview.md",
+	"mime": "text/markdown"
+});`,
+		"image-values": `// Image values can be stored, transformed, inspected, and rendered again.
+// This uses an inline PNG so it works without extra files or URL access.
+
+let tiny = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO5W2MsAAAAASUVORK5CYII=";
+let original = image_load(file(tiny, {"mime": "image/png", "name": "tiny.png"}));
+let resized = image_resize(original, 48, 48);
+let cropped = image_crop(resized, 0, 0, 24, 24);
+let rotated = image_rotate(cropped, 90);
+let converted = image_convert(rotated, "jpeg");
+let rendered = image_render(converted, {"name": "tiny-ops.jpg", "alt": "Transformed playground image"});
+let binary = file_load(rendered);
+
+print image_info(converted);
+print sprintf("rendered mime=%s size=%d", file_mime(binary), file_size(binary));
+print rendered;`,
+		"json-csv-values": `// Structured data helpers work with JSON files, CSV files, and in-memory tables.
+
+let profile = read_json("testdata/data/profile.json");
+let roster = read_csv("testdata/data/people.csv");
+let engineers = table_filter(roster, function(row) {
+	return row.role == "engineer";
+});
+let labels = table_map(engineers, function(row) {
+	return {
+		"name": row.name,
+		"label": row.name + " (" + row.role + ")",
+		"location": row.location
+	};
+});
+let compact = table_select(labels, ["name", "label"]);
+let adhoc = csv_decode("name,score\nAda,9\nLinus,8");
+
+print sprintf("team=%s columns=%v", profile.team, table_columns(compact));
+print table_rows(compact);
+print csv_encode(compact);
+print render(compact, {"name": "engineers.csv"});
+print render(adhoc, {"name": "scores.csv"});`,
+		"write-ops": `// Write-oriented helpers are available in SPL, but the browser playground runs with
+// ProtectHost enabled, so filesystem writes are intentionally blocked here.
+// Use this script in the CLI or REPL when filesystem write access is allowed.
+
+let payload = file_load("testdata/test_io.txt");
+let tiny = image_load("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO5W2MsAAAAASUVORK5CYII=");
+
+// file_save(payload, "tmp/test_io_copy.txt");
+// file_copy("testdata/test_io.txt", "tmp/test_io_copy_2.txt");
+// file_move("tmp/test_io_copy_2.txt", "tmp/test_io_moved.txt");
+// file_rename("tmp/test_io_moved.txt", "test_io_renamed.txt");
+// write_json("tmp/profile.json", {"team": "playground", "ok": true}, {"pretty": true});
+// write_csv("tmp/people.csv", [{"name": "Ada", "role": "engineer"}]);
+// image_save(tiny, "tmp/tiny.png");
+// image_resize_file("tmp/tiny.png", "tmp/tiny-large.png", 48, 48);
+// image_convert_file("tmp/tiny-large.png", "tmp/tiny-large.jpg", "jpeg");
+
+print "Write helpers are documented here for CLI/REPL workflows.";`,
 		"modules": `import "testdata/modules/math.spl" as math;
 import {label} from "testdata/modules/math.spl";
 
@@ -813,44 +938,52 @@ print "=== Tour Complete ===";`,
 }
 
 type playgroundConfig struct {
-	Addr            string
-	AuthSecret      string
-	ReadTimeout     time.Duration
-	WriteTimeout    time.Duration
-	IdleTimeout     time.Duration
-	ShutdownTimeout time.Duration
-	MaxBodyBytes    int64
-	RateLimit       int
-	RateWindow      time.Duration
-	RateCleanup     time.Duration
-	TrustProxy      bool
-	CookieSecure    bool
-	SessionTTL      time.Duration
-	EvalMaxDepth    int
-	EvalMaxSteps    int64
-	EvalMaxHeapMB   int64
-	EvalTimeoutMS   int64
+	Addr                string
+	AuthSecret          string
+	ReadTimeout         time.Duration
+	WriteTimeout        time.Duration
+	IdleTimeout         time.Duration
+	ShutdownTimeout     time.Duration
+	MaxBodyBytes        int64
+	RateLimit           int
+	RateWindow          time.Duration
+	RateCleanup         time.Duration
+	TrustProxy          bool
+	CookieSecure        bool
+	SessionTTL          time.Duration
+	EvalMaxDepth        int
+	EvalMaxSteps        int64
+	EvalMaxHeapMB       int64
+	EvalTimeoutMS       int64
+	RenderAllowURLs     bool
+	RenderAllowURLHosts []string
+	RenderMode          string
+	RenderMaxBytes      int64
 }
 
 func loadConfig() (playgroundConfig, error) {
 	cfg := playgroundConfig{
-		Addr:            envString("PLAYGROUND_ADDR", ":8080"),
-		AuthSecret:      envString("PLAYGROUND_AUTH_SECRET", envString("PLAYGROUND_API_KEY", "")),
-		ReadTimeout:     envDurationMS("PLAYGROUND_READ_TIMEOUT_MS", 15000),
-		WriteTimeout:    envDurationMS("PLAYGROUND_WRITE_TIMEOUT_MS", 15000),
-		IdleTimeout:     envDurationMS("PLAYGROUND_IDLE_TIMEOUT_MS", 30000),
-		ShutdownTimeout: envDurationMS("PLAYGROUND_SHUTDOWN_TIMEOUT_MS", 10000),
-		MaxBodyBytes:    envInt64("PLAYGROUND_MAX_BODY_BYTES", 1<<20),
-		RateLimit:       envInt("PLAYGROUND_RATE_LIMIT", 60),
-		RateWindow:      envDurationMS("PLAYGROUND_RATE_WINDOW_MS", 60000),
-		RateCleanup:     envDurationMS("PLAYGROUND_RATE_CLEANUP_MS", 120000),
-		TrustProxy:      envBool("PLAYGROUND_TRUST_PROXY_HEADERS", false),
-		CookieSecure:    envBool("PLAYGROUND_COOKIE_SECURE", false),
-		SessionTTL:      envDurationMS("PLAYGROUND_SESSION_TTL_MS", 12*60*60*1000),
-		EvalMaxDepth:    envInt("PLAYGROUND_EVAL_MAX_DEPTH", 200),
-		EvalMaxSteps:    envInt64("PLAYGROUND_EVAL_MAX_STEPS", 2_000_000),
-		EvalMaxHeapMB:   envInt64("PLAYGROUND_EVAL_MAX_HEAP_MB", 256),
-		EvalTimeoutMS:   envInt64("PLAYGROUND_EVAL_TIMEOUT_MS", 8_000),
+		Addr:                envString("PLAYGROUND_ADDR", ":8080"),
+		AuthSecret:          envString("PLAYGROUND_AUTH_SECRET", envString("PLAYGROUND_API_KEY", "")),
+		ReadTimeout:         envDurationMS("PLAYGROUND_READ_TIMEOUT_MS", 15000),
+		WriteTimeout:        envDurationMS("PLAYGROUND_WRITE_TIMEOUT_MS", 15000),
+		IdleTimeout:         envDurationMS("PLAYGROUND_IDLE_TIMEOUT_MS", 30000),
+		ShutdownTimeout:     envDurationMS("PLAYGROUND_SHUTDOWN_TIMEOUT_MS", 10000),
+		MaxBodyBytes:        envInt64("PLAYGROUND_MAX_BODY_BYTES", 1<<20),
+		RateLimit:           envInt("PLAYGROUND_RATE_LIMIT", 60),
+		RateWindow:          envDurationMS("PLAYGROUND_RATE_WINDOW_MS", 60000),
+		RateCleanup:         envDurationMS("PLAYGROUND_RATE_CLEANUP_MS", 120000),
+		TrustProxy:          envBool("PLAYGROUND_TRUST_PROXY_HEADERS", false),
+		CookieSecure:        envBool("PLAYGROUND_COOKIE_SECURE", false),
+		SessionTTL:          envDurationMS("PLAYGROUND_SESSION_TTL_MS", 12*60*60*1000),
+		EvalMaxDepth:        envInt("PLAYGROUND_EVAL_MAX_DEPTH", 200),
+		EvalMaxSteps:        envInt64("PLAYGROUND_EVAL_MAX_STEPS", 2_000_000),
+		EvalMaxHeapMB:       envInt64("PLAYGROUND_EVAL_MAX_HEAP_MB", 256),
+		EvalTimeoutMS:       envInt64("PLAYGROUND_EVAL_TIMEOUT_MS", 8_000),
+		RenderAllowURLs:     envBool("PLAYGROUND_RENDER_ALLOW_URLS", false),
+		RenderAllowURLHosts: envCSV("PLAYGROUND_RENDER_ALLOW_URL_HOSTS"),
+		RenderMode:          envString("PLAYGROUND_RENDER_MODE", "auto"),
+		RenderMaxBytes:      envInt64("PLAYGROUND_RENDER_MAX_BYTES", 1<<20),
 	}
 
 	if cfg.MaxBodyBytes <= 0 {
@@ -871,11 +1004,43 @@ func loadConfig() (playgroundConfig, error) {
 	if cfg.EvalMaxDepth <= 0 || cfg.EvalMaxSteps <= 0 || cfg.EvalMaxHeapMB <= 0 || cfg.EvalTimeoutMS <= 0 {
 		return playgroundConfig{}, errors.New("playground eval limits must be > 0")
 	}
+	if cfg.RenderMaxBytes <= 0 {
+		return playgroundConfig{}, errors.New("PLAYGROUND_RENDER_MAX_BYTES must be > 0")
+	}
 	// AuthSecret is optional – when unset the playground runs without authentication.
 	if cfg.SessionTTL <= 0 {
 		return playgroundConfig{}, errors.New("PLAYGROUND_SESSION_TTL_MS must be > 0")
 	}
 	return cfg, nil
+}
+
+func applyCLIFlags(cfg *playgroundConfig, args []string) error {
+	if cfg == nil {
+		return nil
+	}
+	fs := flag.NewFlagSet("playground", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	renderAllowURLs := fs.Bool("render-allow-urls", cfg.RenderAllowURLs, "allow URL artifacts to be fetched by the playground server")
+	renderURLHosts := fs.String("render-url-hosts", strings.Join(cfg.RenderAllowURLHosts, ","), "comma-separated URL artifact host allowlist")
+	renderMode := fs.String("render-mode", cfg.RenderMode, "render mode: auto, inline, metadata, or off")
+	renderMaxBytes := fs.Int64("render-max-bytes", cfg.RenderMaxBytes, "maximum render artifact bytes")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	mode := strings.ToLower(strings.TrimSpace(*renderMode))
+	switch mode {
+	case "auto", "inline", "metadata", "off":
+		cfg.RenderMode = mode
+	default:
+		return fmt.Errorf("invalid --render-mode %q", *renderMode)
+	}
+	if *renderMaxBytes <= 0 {
+		return fmt.Errorf("--render-max-bytes must be > 0")
+	}
+	cfg.RenderMaxBytes = *renderMaxBytes
+	cfg.RenderAllowURLs = *renderAllowURLs
+	cfg.RenderAllowURLHosts = parseCSV(*renderURLHosts)
+	return nil
 }
 
 func envString(name, fallback string) string {
@@ -931,6 +1096,49 @@ func envBool(name string, fallback bool) bool {
 	default:
 		return fallback
 	}
+}
+
+func envCSV(name string) []string {
+	return parseCSV(os.Getenv(name))
+}
+
+func parseCSV(raw string) []string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil
+	}
+	parts := strings.Split(raw, ",")
+	out := make([]string, 0, len(parts))
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part != "" {
+			out = append(out, part)
+		}
+	}
+	return out
+}
+
+func intersectHostPatterns(serverAllowed, requested []string) []string {
+	if len(requested) == 0 {
+		return nil
+	}
+	if len(serverAllowed) == 0 {
+		return append([]string(nil), requested...)
+	}
+	out := make([]string, 0, len(requested))
+	for _, req := range requested {
+		req = strings.TrimSpace(req)
+		if req == "" {
+			continue
+		}
+		for _, allow := range serverAllowed {
+			if strings.EqualFold(strings.TrimSpace(allow), req) {
+				out = append(out, req)
+				break
+			}
+		}
+	}
+	return out
 }
 
 type rateLimiter struct {
@@ -992,6 +1200,10 @@ func main() {
 		logger.Error("invalid configuration", slog.String("error", err.Error()))
 		os.Exit(2)
 	}
+	if err := applyCLIFlags(&cfg, os.Args[1:]); err != nil {
+		logger.Error("invalid CLI flags", slog.String("error", err.Error()))
+		os.Exit(2)
+	}
 
 	rl := newRateLimiter(cfg.RateLimit, cfg.RateWindow)
 	var auth *authManager
@@ -1048,6 +1260,12 @@ func main() {
 				"authenticated":  true,
 				"auth_enabled":   false,
 				"session_ttl_ms": cfg.SessionTTL.Milliseconds(),
+				"render": map[string]any{
+					"mode":            cfg.RenderMode,
+					"max_bytes":       cfg.RenderMaxBytes,
+					"allow_urls":      cfg.RenderAllowURLs,
+					"allow_url_hosts": cfg.RenderAllowURLHosts,
+				},
 			})
 			return
 		}
@@ -1061,6 +1279,12 @@ func main() {
 			"authenticated":  authed,
 			"auth_enabled":   true,
 			"session_ttl_ms": cfg.SessionTTL.Milliseconds(),
+			"render": map[string]any{
+				"mode":            cfg.RenderMode,
+				"max_bytes":       cfg.RenderMaxBytes,
+				"allow_urls":      cfg.RenderAllowURLs,
+				"allow_url_hosts": cfg.RenderAllowURLHosts,
+			},
 		})
 	})
 
@@ -1238,6 +1462,26 @@ func main() {
 			return
 		}
 		execStart := time.Now()
+		renderMode := cfg.RenderMode
+		switch strings.ToLower(strings.TrimSpace(req.RenderMode)) {
+		case "auto", "off", "metadata", "inline":
+			renderMode = strings.ToLower(strings.TrimSpace(req.RenderMode))
+		}
+		renderMaxBytes := cfg.RenderMaxBytes
+		if req.RenderMaxBytes > 0 && req.RenderMaxBytes < renderMaxBytes {
+			renderMaxBytes = req.RenderMaxBytes
+		}
+		renderAllowURLs := cfg.RenderAllowURLs && req.RenderAllowURLs
+		renderURLHosts := append([]string(nil), cfg.RenderAllowURLHosts...)
+		if len(req.RenderURLHosts) > 0 {
+			renderURLHosts = intersectHostPatterns(cfg.RenderAllowURLHosts, req.RenderURLHosts)
+		}
+		if renderAllowURLs && len(req.RenderURLHosts) > 0 && len(cfg.RenderAllowURLHosts) > 0 && len(renderURLHosts) == 0 {
+			status = http.StatusBadRequest
+			writeJSON(w, status, map[string]any{"error": "requested render URL hosts are not allowed by server configuration"})
+			return
+		}
+		securityPolicy := playgroundSecurityPolicy(cwd, renderAllowURLs, renderURLHosts)
 		result := interpreter.EvalForPlayground(req.Code, interpreter.PlaygroundOptions{
 			Args:      []string{},
 			MaxDepth:  cfg.EvalMaxDepth,
@@ -1245,8 +1489,12 @@ func main() {
 			MaxHeapMB: cfg.EvalMaxHeapMB,
 			TimeoutMS: cfg.EvalTimeoutMS,
 			ModuleDir: cwd,
-			Security: &interpreter.SecurityPolicy{
-				ProtectHost: true,
+			Security:  securityPolicy,
+			RenderConfig: &interpreter.RenderConfig{
+				Mode:          renderMode,
+				MaxBytes:      renderMaxBytes,
+				AllowURLs:     renderAllowURLs,
+				AllowURLHosts: renderURLHosts,
 			},
 		})
 
@@ -1260,6 +1508,7 @@ func main() {
 			Error:       result.Error,
 			ErrorKind:   result.ErrorKind,
 			Diagnostics: result.Diagnostics,
+			Artifacts:   result.Artifacts,
 			DurationMS:  result.Duration,
 		})
 		metrics.recordExecution("execute", time.Since(execStart))

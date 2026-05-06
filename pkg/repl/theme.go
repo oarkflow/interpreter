@@ -8,6 +8,7 @@ import (
 	"unicode"
 
 	"github.com/oarkflow/interpreter/pkg/object"
+	renderpkg "github.com/oarkflow/interpreter/pkg/render"
 )
 
 // ---------------------------------------------------------------------------
@@ -240,12 +241,22 @@ func formatHashPlain(h *object.Hash, depth int) string {
 // FormatObjectForDisplay returns a colourised representation of an object
 // for interactive REPL display.
 func FormatObjectForDisplay(obj object.Object) string {
+	return FormatObjectForDisplayWithEnv(obj, nil)
+}
+
+func FormatObjectForDisplayWithEnv(obj object.Object, env *object.Environment) string {
 	if obj == nil {
 		return ""
 	}
 	switch v := obj.(type) {
 	case *object.Error:
 		return Paint("ERROR: "+v.Message, ColorBold+ColorRed)
+	case *object.RenderArtifact:
+		text, err := renderpkg.RenderObjectForTerminal(env, v)
+		if err != nil {
+			return Paint("render error: "+err.Error(), ColorBold+ColorRed)
+		}
+		return text
 	case *object.String:
 		if LooksLikeDateString(v.Inspect()) {
 			return Paint(v.Inspect(), ColorCyan)

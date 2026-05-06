@@ -52,3 +52,54 @@ func TestFormatSourceReturnsCanonicalText(t *testing.T) {
 		t.Fatalf("expected report to mark source as changed")
 	}
 }
+
+func TestCheckSourceStaticWarnings(t *testing.T) {
+	report := CheckSource("sample.spl", `
+let x = 1;
+let x = 2;
+print missingName;
+function f() { return 1; print "dead"; }
+match (x) { case n: integer => { n; } }
+`)
+	if !report.OK {
+		t.Fatalf("warnings should not fail check: %#v", report.Diagnostics)
+	}
+	joined := ""
+	for _, d := range report.Diagnostics {
+		joined += d.Code + " " + d.Message + "\n"
+	}
+	for _, want := range []string{"shadow", "undefined", "unreachable", "match-exhaustiveness"} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("expected %s warning in diagnostics:\n%s", want, joined)
+		}
+	}
+}
+
+func TestSymbolsCompletionHoverAndDocs(t *testing.T) {
+	src := `
+let add = function(a: integer, b: integer): integer { return a + b; };
+type Result = Ok(value) | Err(message);
+test "adds" { assert_eq(add(1, 2), 3); }
+`
+	symbols := SymbolsForSource("sample.spl", src)
+	names := []string{}
+	for _, sym := range symbols {
+		names = append(names, sym.Name+":"+sym.Kind)
+	}
+	joined := strings.Join(names, " ")
+	if !strings.Contains(joined, "add:function") || !strings.Contains(joined, "Result:type") || !strings.Contains(joined, "adds:test") {
+		t.Fatalf("unexpected symbols: %#v", symbols)
+	}
+	completions := CompletionItems("sample.spl", src, "ad")
+	if len(completions) == 0 || completions[0].Label != "add" {
+		t.Fatalf("expected add completion, got %#v", completions)
+	}
+	hover := HoverAt("sample.spl", src, 2, 6)
+	if hover.Name != "add" || hover.Kind != "function" {
+		t.Fatalf("unexpected hover: %#v", hover)
+	}
+	docs := DocsMarkdown("sample.spl", src)
+	if !strings.Contains(docs, "# sample.spl") || !strings.Contains(docs, "`add`") {
+		t.Fatalf("unexpected docs:\n%s", docs)
+	}
+}

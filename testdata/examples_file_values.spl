@@ -1,0 +1,17 @@
+// File values load content into variables so you can inspect and transform it.
+// This example stays read-only, so it runs cleanly inside the browser playground.
+
+let note = file_load("testdata/test_io.txt");
+print sprintf("name=%s mime=%s size=%d", file_name(note), file_mime(note), file_size(note));
+print sprintf("base64-prefix=%s", substring(file_bytes(note), 0, 20));
+
+let readme = file_load(file("docs/README.md", {
+	"name": "README.md",
+	"mime": "text/markdown"
+}));
+
+print file_text(note);
+print render(readme, {
+	"name": "README.preview.md",
+	"mime": "text/markdown"
+});

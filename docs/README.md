@@ -61,6 +61,21 @@ go run ./cmd/spltool mod tidy
 
 `check` reports machine-readable diagnostics, `fmt` emits a canonical formatted version of the source, and `mod` manages `spl.mod` / `spl.lock` files for reproducible package-style imports.
 
+Developer-experience helpers are also available for editors and CI:
+
+```bash
+go run ./cmd/spltool config init
+go run ./cmd/spltool config show
+go run ./cmd/spltool symbols --json testdata/hello.spl
+go run ./cmd/spltool complete --prefix pri testdata/hello.spl
+go run ./cmd/spltool hover --line 1 --col 1 testdata/hello.spl
+go run ./cmd/spltool docs testdata/hello.spl
+go run ./cmd/spltool test --json tests
+go run ./cmd/spltool lsp
+```
+
+`check` includes parser diagnostics plus conservative static warnings for undefined identifiers, suspicious shadowing, unreachable statements, missing imports, deprecated builtins, and non-exhaustive match fallbacks. `symbols`, `complete`, and `hover` provide stable JSON surfaces that can back IDE/LSP integrations.
+
 ### Run benchmarks
 
 ```bash

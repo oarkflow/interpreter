@@ -141,26 +141,31 @@ type ReplEditor struct {
 const replHistoryFileName = ".interpreter_repl_history"
 
 type ReplConfig struct {
-	ExecutionProfile      string
-	ModuleDir             string
-	StrictMode            bool
-	ProtectHost           bool
-	AllowEnvWrite         bool
-	AllowedCapabilities   []string
-	DeniedCapabilities    []string
-	AllowedExecCommands   []string
-	AllowedNetworkHosts   []string
-	AllowedDBDrivers      []string
-	AllowedDBDSNPatterns  []string
-	AllowedFileReadPaths  []string
-	AllowedFileWritePaths []string
-	MaxDepth              int
-	MaxSteps              int64
-	MaxHeapMB             int64
-	TimeoutMS             int64
-	MaxOutputBytes        int64
-	MaxHTTPBodyBytes      int64
-	MaxExecOutputBytes    int64
+	ExecutionProfile       string
+	ModuleDir              string
+	StrictMode             bool
+	ProtectHost            bool
+	AllowEnvWrite          bool
+	AllowedCapabilities    []string
+	DeniedCapabilities     []string
+	AllowedExecCommands    []string
+	AllowedNetworkHosts    []string
+	AllowedDBDrivers       []string
+	AllowedDBDSNPatterns   []string
+	AllowedFileReadPaths   []string
+	AllowedFileWritePaths  []string
+	MaxDepth               int
+	MaxSteps               int64
+	MaxHeapMB              int64
+	TimeoutMS              int64
+	MaxOutputBytes         int64
+	MaxHTTPBodyBytes       int64
+	MaxExecOutputBytes     int64
+	RenderMode             string
+	RenderTerminalProtocol string
+	RenderMaxBytes         int64
+	RenderAllowURLs        bool
+	RenderAllowURLHosts    []string
 }
 
 var replConfigs = struct {
@@ -411,7 +416,7 @@ func ReplEvalSource(input string, env *object.Environment, sourcePath string, pr
 			return
 		}
 		if printResult && evaluated.Type() != object.NULL_OBJ {
-			fmt.Println(FormatObjectForDisplay(evaluated))
+			fmt.Println(FormatObjectForDisplayWithEnv(evaluated, env))
 		}
 	}
 }
@@ -629,19 +634,22 @@ func defaultReplConfig(env *object.Environment) *ReplConfig {
 		moduleDir = env.ModuleDir
 	}
 	cfg := &ReplConfig{
-		ExecutionProfile:     "trusted",
-		ModuleDir:            moduleDir,
-		AllowEnvWrite:        true,
-		MaxDepth:             256,
-		MaxSteps:             2_000_000,
-		MaxHeapMB:            256,
-		TimeoutMS:            0,
-		MaxOutputBytes:       1 << 20,
-		MaxHTTPBodyBytes:     1 << 20,
-		MaxExecOutputBytes:   1 << 20,
-		AllowedCapabilities:  nil,
-		DeniedCapabilities:   nil,
-		AllowedFileReadPaths: nil,
+		ExecutionProfile:       "trusted",
+		ModuleDir:              moduleDir,
+		AllowEnvWrite:          true,
+		MaxDepth:               256,
+		MaxSteps:               2_000_000,
+		MaxHeapMB:              256,
+		TimeoutMS:              0,
+		MaxOutputBytes:         1 << 20,
+		MaxHTTPBodyBytes:       1 << 20,
+		MaxExecOutputBytes:     1 << 20,
+		RenderMode:             "auto",
+		RenderTerminalProtocol: "auto",
+		RenderMaxBytes:         1 << 20,
+		AllowedCapabilities:    nil,
+		DeniedCapabilities:     nil,
+		AllowedFileReadPaths:   nil,
 	}
 	if env != nil {
 		if p := env.SecurityPolicy; p != nil {
@@ -682,6 +690,19 @@ func defaultReplConfig(env *object.Environment) *ReplConfig {
 			if rl.MaxExecOutputBytes > 0 {
 				cfg.MaxExecOutputBytes = rl.MaxExecOutputBytes
 			}
+		}
+		if rc := env.RenderConfig; rc != nil {
+			if strings.TrimSpace(rc.Mode) != "" {
+				cfg.RenderMode = rc.Mode
+			}
+			if strings.TrimSpace(rc.TerminalProtocol) != "" {
+				cfg.RenderTerminalProtocol = rc.TerminalProtocol
+			}
+			if rc.MaxBytes > 0 {
+				cfg.RenderMaxBytes = rc.MaxBytes
+			}
+			cfg.RenderAllowURLs = rc.AllowURLs
+			cfg.RenderAllowURLHosts = append([]string(nil), rc.AllowURLHosts...)
 		}
 	}
 	return cfg
@@ -734,6 +755,13 @@ func applyReplConfig(env *object.Environment, cfg *ReplConfig) {
 	} else {
 		env.RuntimeLimits = rl
 	}
+	env.RenderConfig = &object.RenderConfig{
+		Mode:             cfg.RenderMode,
+		TerminalProtocol: cfg.RenderTerminalProtocol,
+		MaxBytes:         cfg.RenderMaxBytes,
+		AllowURLs:        cfg.RenderAllowURLs,
+		AllowURLHosts:    append([]string(nil), cfg.RenderAllowURLHosts...),
+	}
 }
 
 func applyReplProfile(cfg *ReplConfig, profile string) error {
@@ -745,6 +773,8 @@ func applyReplProfile(cfg *ReplConfig, profile string) error {
 		cfg.AllowEnvWrite = true
 		cfg.AllowedCapabilities = nil
 		cfg.DeniedCapabilities = nil
+		cfg.RenderMode = "auto"
+		cfg.RenderAllowURLs = false
 	case "untrusted":
 		cfg.ExecutionProfile = "untrusted"
 		cfg.StrictMode = true
@@ -777,6 +807,10 @@ func applyReplProfile(cfg *ReplConfig, profile string) error {
 		if cfg.MaxExecOutputBytes <= 0 || cfg.MaxExecOutputBytes > 64*1024 {
 			cfg.MaxExecOutputBytes = 64 * 1024
 		}
+		cfg.RenderAllowURLs = false
+		if cfg.RenderMaxBytes <= 0 || cfg.RenderMaxBytes > 64*1024 {
+			cfg.RenderMaxBytes = 64 * 1024
+		}
 	default:
 		return fmt.Errorf("unknown profile %q", profile)
 	}
@@ -806,6 +840,11 @@ func ReplConfigTable(env *object.Environment) string {
 		{"runtime.max_output_bytes", strconv.FormatInt(cfg.MaxOutputBytes, 10), "print/result output cap"},
 		{"runtime.max_http_body_bytes", strconv.FormatInt(cfg.MaxHTTPBodyBytes, 10), "HTTP response cap"},
 		{"runtime.max_exec_output_bytes", strconv.FormatInt(cfg.MaxExecOutputBytes, 10), "exec output cap"},
+		{"render.mode", cfg.RenderMode, "auto|off|metadata|inline"},
+		{"render.terminal_protocol", cfg.RenderTerminalProtocol, "auto|kitty|iterm|sixel|none"},
+		{"render.max_bytes", strconv.FormatInt(cfg.RenderMaxBytes, 10), "artifact byte cap"},
+		{"render.allow_urls", formatBool(cfg.RenderAllowURLs), "allow URL artifacts"},
+		{"render.allow_url_hosts", strings.Join(cfg.RenderAllowURLHosts, ","), "render URL allowlist"},
 	}
 	return formatTable([]string{"Key", "Value", "Description"}, rows)
 }
@@ -1006,6 +1045,16 @@ func replConfigValue(cfg *ReplConfig, key string) (string, error) {
 		return strconv.FormatInt(cfg.MaxHTTPBodyBytes, 10), nil
 	case "runtime.max_exec_output_bytes":
 		return strconv.FormatInt(cfg.MaxExecOutputBytes, 10), nil
+	case "render.mode":
+		return cfg.RenderMode, nil
+	case "render.terminal_protocol":
+		return cfg.RenderTerminalProtocol, nil
+	case "render.max_bytes":
+		return strconv.FormatInt(cfg.RenderMaxBytes, 10), nil
+	case "render.allow_urls":
+		return formatBool(cfg.RenderAllowURLs), nil
+	case "render.allow_url_hosts":
+		return strings.Join(cfg.RenderAllowURLHosts, ","), nil
 	default:
 		return "", fmt.Errorf("unknown config key %q", key)
 	}
@@ -1098,6 +1147,36 @@ func setReplConfigValue(cfg *ReplConfig, key, raw string) error {
 			return err
 		}
 		cfg.MaxExecOutputBytes = v
+	case "render.mode":
+		v := strings.ToLower(strings.TrimSpace(raw))
+		switch v {
+		case "auto", "off", "metadata", "inline":
+			cfg.RenderMode = v
+		default:
+			return fmt.Errorf("expected render mode auto|off|metadata|inline, got %q", raw)
+		}
+	case "render.terminal_protocol":
+		v := strings.ToLower(strings.TrimSpace(raw))
+		switch v {
+		case "auto", "kitty", "iterm", "sixel", "none":
+			cfg.RenderTerminalProtocol = v
+		default:
+			return fmt.Errorf("expected terminal protocol auto|kitty|iterm|sixel|none, got %q", raw)
+		}
+	case "render.max_bytes":
+		v, err := parseReplInt(raw)
+		if err != nil {
+			return err
+		}
+		cfg.RenderMaxBytes = v
+	case "render.allow_urls":
+		v, err := parseReplBool(raw)
+		if err != nil {
+			return err
+		}
+		cfg.RenderAllowURLs = v
+	case "render.allow_url_hosts":
+		cfg.RenderAllowURLHosts = parseReplCSV(raw)
 	default:
 		return fmt.Errorf("unknown config key %q", key)
 	}
@@ -1365,7 +1444,7 @@ func HandleReplMetaCommand(line string, editor *ReplEditor, env *object.Environm
 					}
 				}
 				if result != nil && !isErr && result.Type() != object.NULL_OBJ {
-					ReplPrintLine(FormatObjectForDisplay(result))
+					ReplPrintLine(FormatObjectForDisplayWithEnv(result, env))
 				}
 				ReplPrintLine(Paint(fmt.Sprintf("elapsed: %s", elapsed), ColorGray))
 			}
@@ -2220,7 +2299,7 @@ func replDebugExpression(input string, env *object.Environment) {
 					replPrintBlock(FormatRuntimeErrorForDisplay(obj, input))
 					return
 				}
-				ReplPrintLine(FormatObjectForDisplay(obj))
+				ReplPrintLine(FormatObjectForDisplayWithEnv(obj, env))
 			}
 			idx++
 		case cmd == "locals", cmd == "vars":

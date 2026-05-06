@@ -1,0 +1,15 @@
+// Image values can be stored, transformed, inspected, and rendered again.
+// This uses an inline PNG so it works without extra files or URL access.
+
+let tiny = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO5W2MsAAAAASUVORK5CYII=";
+let original = image_load(file(tiny, {"mime": "image/png", "name": "tiny.png"}));
+let resized = image_resize(original, 48, 48);
+let cropped = image_crop(resized, 0, 0, 24, 24);
+let rotated = image_rotate(cropped, 90);
+let converted = image_convert(rotated, "jpeg");
+let rendered = image_render(converted, {"name": "tiny-ops.jpg", "alt": "Transformed playground image"});
+let binary = file_load(rendered);
+
+print image_info(converted);
+print sprintf("rendered mime=%s size=%d", file_mime(binary), file_size(binary));
+print rendered;

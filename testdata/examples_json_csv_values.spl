@@ -1,0 +1,22 @@
+// Structured data helpers work with JSON files, CSV files, and in-memory tables.
+
+let profile = read_json("testdata/data/profile.json");
+let roster = read_csv("testdata/data/people.csv");
+let engineers = table_filter(roster, function(row) {
+	return row.role == "engineer";
+});
+let labels = table_map(engineers, function(row) {
+	return {
+		"name": row.name,
+		"label": row.name + " (" + row.role + ")",
+		"location": row.location
+	};
+});
+let compact = table_select(labels, ["name", "label"]);
+let adhoc = csv_decode("name,score\nAda,9\nLinus,8");
+
+print sprintf("team=%s columns=%v", profile.team, table_columns(compact));
+print table_rows(compact);
+print csv_encode(compact);
+print render(compact, {"name": "engineers.csv"});
+print render(adhoc, {"name": "scores.csv"});

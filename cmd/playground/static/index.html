@@ -97,8 +97,20 @@
               <span>Duration <span id="duration" class="ml-1 font-semibold text-slate-700 dark:text-slate-200">-</span></span>
               <span>Type <span id="resultType" class="ml-1 font-semibold text-slate-700 dark:text-slate-200">-</span></span>
               <span>Lines <span id="outputLines" class="ml-1 font-semibold text-slate-700 dark:text-slate-200">0</span></span>
+              <span>Render <span id="renderServerStatus" class="ml-1 font-semibold text-slate-700 dark:text-slate-200">local</span></span>
             </div>
             <div class="flex flex-wrap items-center gap-2">
+              <select id="renderMode" class="h-8 rounded-md border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 px-2 text-xs">
+                <option value="auto">Auto render</option>
+                <option value="inline">Inline</option>
+                <option value="metadata">Metadata</option>
+                <option value="off">Off</option>
+              </select>
+              <label class="inline-flex h-8 items-center gap-1.5 rounded-md border border-slate-300 dark:border-slate-700 px-2 text-xs">
+                <input id="renderAllowUrls" type="checkbox" class="h-3.5 w-3.5" />
+                URLs
+              </label>
+              <input id="renderUrlHosts" type="text" placeholder="URL hosts" class="h-8 w-36 rounded-md border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 px-2 text-xs" />
               <button id="formatBtn" class="px-3 py-1.5 text-sm rounded-md border border-slate-300 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800">Format</button>
               <button id="copyBtn" class="px-3 py-1.5 text-sm rounded-md border border-slate-300 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800">Copy</button>
               <button id="resetBtn" class="px-3 py-1.5 text-sm rounded-md border border-slate-300 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800">Reset</button>
@@ -117,6 +129,7 @@
             <button data-tab="output" class="tab-btn px-2.5 py-1 text-xs rounded-md hover:bg-slate-200 dark:hover:bg-slate-800">Output</button>
             <button data-tab="error" class="tab-btn px-2.5 py-1 text-xs rounded-md hover:bg-slate-200 dark:hover:bg-slate-800">Errors</button>
             <button data-tab="diagnostics" class="tab-btn px-2.5 py-1 text-xs rounded-md hover:bg-slate-200 dark:hover:bg-slate-800">Details</button>
+            <button data-tab="artifacts" class="tab-btn px-2.5 py-1 text-xs rounded-md hover:bg-slate-200 dark:hover:bg-slate-800">Artifacts</button>
             <button data-tab="preview" class="tab-btn px-2.5 py-1 text-xs rounded-md hover:bg-slate-200 dark:hover:bg-slate-800">Preview</button>
           </div>
           <div class="flex-1 min-h-0 relative">
@@ -124,6 +137,7 @@
             <pre id="output" data-panel="output" class="panel hidden p-4 text-sm code-font absolute inset-0 overflow-auto bg-slate-950 text-slate-100"></pre>
             <pre id="error" data-panel="error" class="panel hidden p-4 text-sm code-font absolute inset-0 overflow-auto whitespace-pre-wrap break-words bg-rose-50 dark:bg-rose-950/20 text-rose-700 dark:text-rose-300"></pre>
             <pre id="diagnostics" data-panel="diagnostics" class="panel hidden p-4 text-xs code-font absolute inset-0 overflow-auto whitespace-pre-wrap break-words bg-indigo-50 dark:bg-indigo-950/20 text-indigo-800 dark:text-indigo-300"></pre>
+            <div id="artifacts" data-panel="artifacts" class="panel hidden absolute inset-0 overflow-auto bg-slate-50 dark:bg-slate-950/60 p-4"></div>
             <iframe id="preview" data-panel="preview" class="panel hidden absolute inset-0 w-full h-full bg-white border-0" sandbox="allow-scripts"></iframe>
           </div>
         </div>

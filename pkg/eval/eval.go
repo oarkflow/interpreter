@@ -15,6 +15,7 @@ import (
 	"github.com/oarkflow/interpreter/pkg/lexer"
 	"github.com/oarkflow/interpreter/pkg/object"
 	"github.com/oarkflow/interpreter/pkg/parser"
+	renderpkg "github.com/oarkflow/interpreter/pkg/render"
 	"github.com/oarkflow/interpreter/pkg/security"
 )
 
@@ -109,6 +110,24 @@ func writeRuntimeOutput(env *object.Environment, out io.Writer, text string) obj
 	fmt.Fprint(out, text)
 	rl.OutputBytes += int64(len(text))
 	return nil
+}
+
+func writeRuntimeObject(env *object.Environment, out io.Writer, val object.Object) object.Object {
+	if art, ok := val.(*object.RenderArtifact); ok {
+		if env != nil && env.CollectRenderArtifacts {
+			env.AddRenderArtifact(art)
+			return nil
+		}
+		text, err := renderpkg.RenderObjectForTerminal(env, art)
+		if err != nil {
+			return object.NewError("render failed: %v", err)
+		}
+		return writeRuntimeOutput(env, out, text+"\n")
+	}
+	if val == nil {
+		return writeRuntimeOutput(env, out, "null\n")
+	}
+	return writeRuntimeOutput(env, out, val.Inspect()+"\n")
 }
 
 // ---------------------------------------------------------------------------
@@ -450,7 +469,7 @@ func Eval(node ast.Node, env *object.Environment) object.Object {
 		if env != nil && env.Output != nil {
 			out = env.Output
 		}
-		if errObj := writeRuntimeOutput(env, out, val.Inspect()+"\n"); errObj != nil {
+		if errObj := writeRuntimeObject(env, out, val); errObj != nil {
 			return errObj
 		}
 		return object.NULL

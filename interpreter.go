@@ -265,6 +265,9 @@ type (
 	Channel                = object.Channel
 	ImmutableValue         = object.ImmutableValue
 	GeneratorValue         = object.GeneratorValue
+	FileValue              = object.FileValue
+	ImageValue             = object.ImageValue
+	TableValue             = object.TableValue
 	RuntimeLimits          = object.RuntimeLimits
 	TestStats              = object.TestStats
 	ModuleContext          = object.ModuleContext
@@ -274,37 +277,41 @@ type (
 
 // ObjectType constants.
 const (
-	INTEGER_OBJ       = object.INTEGER_OBJ
-	FLOAT_OBJ         = object.FLOAT_OBJ
-	BOOLEAN_OBJ       = object.BOOLEAN_OBJ
-	STRING_OBJ        = object.STRING_OBJ
-	NULL_OBJ          = object.NULL_OBJ
-	ERROR_OBJ         = object.ERROR_OBJ
-	RETURN_VALUE_OBJ  = object.RETURN_VALUE_OBJ
-	BREAK_OBJ         = object.BREAK_OBJ
-	CONTINUE_OBJ      = object.CONTINUE_OBJ
-	FUNCTION_OBJ      = object.FUNCTION_OBJ
-	BUILTIN_OBJ       = object.BUILTIN_OBJ
-	ARRAY_OBJ         = object.ARRAY_OBJ
-	HASH_OBJ          = object.HASH_OBJ
-	DB_OBJ            = object.DB_OBJ
-	DB_TX_OBJ         = object.DB_TX_OBJ
-	FUTURE_OBJ        = object.FUTURE_OBJ
-	INTERFACE_OBJ     = object.INTERFACE_OBJ
-	ADT_TYPE_OBJ      = object.ADT_TYPE_OBJ
-	ADT_VALUE_OBJ     = object.ADT_VALUE_OBJ
-	LAZY_OBJ          = object.LAZY_OBJ
-	OWNED_OBJ         = object.OWNED_OBJ
-	SECRET_OBJ        = object.SECRET_OBJ
-	SERVER_OBJ        = object.SERVER_OBJ
-	REQUEST_OBJ       = object.REQUEST_OBJ
-	RESPONSE_OBJ      = object.RESPONSE_OBJ
-	SSE_WRITER_OBJ    = object.SSE_WRITER_OBJ
-	QUERY_BUILDER_OBJ = object.QUERY_BUILDER_OBJ
-	LAZY_DB_QUERY_OBJ = object.LAZY_DB_QUERY_OBJ
-	SIGNAL_OBJ        = object.SIGNAL_OBJ
-	COMPUTED_OBJ      = object.COMPUTED_OBJ
-	EFFECT_OBJ        = object.EFFECT_OBJ
+	INTEGER_OBJ         = object.INTEGER_OBJ
+	FLOAT_OBJ           = object.FLOAT_OBJ
+	BOOLEAN_OBJ         = object.BOOLEAN_OBJ
+	STRING_OBJ          = object.STRING_OBJ
+	NULL_OBJ            = object.NULL_OBJ
+	ERROR_OBJ           = object.ERROR_OBJ
+	RETURN_VALUE_OBJ    = object.RETURN_VALUE_OBJ
+	BREAK_OBJ           = object.BREAK_OBJ
+	CONTINUE_OBJ        = object.CONTINUE_OBJ
+	FUNCTION_OBJ        = object.FUNCTION_OBJ
+	BUILTIN_OBJ         = object.BUILTIN_OBJ
+	ARRAY_OBJ           = object.ARRAY_OBJ
+	HASH_OBJ            = object.HASH_OBJ
+	DB_OBJ              = object.DB_OBJ
+	DB_TX_OBJ           = object.DB_TX_OBJ
+	FUTURE_OBJ          = object.FUTURE_OBJ
+	INTERFACE_OBJ       = object.INTERFACE_OBJ
+	ADT_TYPE_OBJ        = object.ADT_TYPE_OBJ
+	ADT_VALUE_OBJ       = object.ADT_VALUE_OBJ
+	LAZY_OBJ            = object.LAZY_OBJ
+	OWNED_OBJ           = object.OWNED_OBJ
+	SECRET_OBJ          = object.SECRET_OBJ
+	RENDER_ARTIFACT_OBJ = object.RENDER_ARTIFACT_OBJ
+	FILE_VALUE_OBJ      = object.FILE_VALUE_OBJ
+	IMAGE_VALUE_OBJ     = object.IMAGE_VALUE_OBJ
+	TABLE_VALUE_OBJ     = object.TABLE_VALUE_OBJ
+	SERVER_OBJ          = object.SERVER_OBJ
+	REQUEST_OBJ         = object.REQUEST_OBJ
+	RESPONSE_OBJ        = object.RESPONSE_OBJ
+	SSE_WRITER_OBJ      = object.SSE_WRITER_OBJ
+	QUERY_BUILDER_OBJ   = object.QUERY_BUILDER_OBJ
+	LAZY_DB_QUERY_OBJ   = object.LAZY_DB_QUERY_OBJ
+	SIGNAL_OBJ          = object.SIGNAL_OBJ
+	COMPUTED_OBJ        = object.COMPUTED_OBJ
+	EFFECT_OBJ          = object.EFFECT_OBJ
 )
 
 // Singleton values.
@@ -337,6 +344,8 @@ type SandboxVM = sandbox.SandboxVM
 
 type PlaygroundOptions = playground.PlaygroundOptions
 type PlaygroundResult = playground.PlaygroundResult
+type RenderConfig = object.RenderConfig
+type RenderArtifact = object.RenderArtifact
 
 // =========================================================================
 // Exported function re-exports (var = func)

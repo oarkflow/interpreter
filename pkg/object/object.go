@@ -3,6 +3,7 @@ package object
 import (
 	"context"
 	"fmt"
+	"image"
 	"io"
 	"os"
 	"strconv"
@@ -70,6 +71,10 @@ const (
 	LAZY_OBJ
 	OWNED_OBJ
 	SECRET_OBJ
+	RENDER_ARTIFACT_OBJ
+	FILE_VALUE_OBJ
+	IMAGE_VALUE_OBJ
+	TABLE_VALUE_OBJ
 )
 
 // Extended ObjectType constants defined by other subsystems.
@@ -131,6 +136,14 @@ func (ot ObjectType) String() string {
 		return "OWNED"
 	case SECRET_OBJ:
 		return "SECRET"
+	case RENDER_ARTIFACT_OBJ:
+		return "RENDER_ARTIFACT"
+	case FILE_VALUE_OBJ:
+		return "FILE_VALUE"
+	case IMAGE_VALUE_OBJ:
+		return "IMAGE_VALUE"
+	case TABLE_VALUE_OBJ:
+		return "TABLE_VALUE"
 	case SERVER_OBJ:
 		return "SERVER"
 	case REQUEST_OBJ:
@@ -192,6 +205,123 @@ type Secret struct {
 
 func (s *Secret) Type() ObjectType { return SECRET_OBJ }
 func (s *Secret) Inspect() string  { return "***" }
+
+type RenderArtifact struct {
+	Kind      string
+	Source    string
+	SourceTyp string
+	MIME      string
+	Name      string
+	Alt       string
+	Width     int64
+	Height    int64
+	MaxBytes  int64
+	Mode      string
+}
+
+func (r *RenderArtifact) Type() ObjectType { return RENDER_ARTIFACT_OBJ }
+func (r *RenderArtifact) Inspect() string {
+	if r == nil {
+		return "<render-artifact>"
+	}
+	kind := strings.TrimSpace(r.Kind)
+	if kind == "" {
+		kind = "artifact"
+	}
+	name := strings.TrimSpace(r.Name)
+	if name == "" {
+		name = strings.TrimSpace(r.Source)
+	}
+	if name == "" {
+		return fmt.Sprintf("<%s>", kind)
+	}
+	mime := strings.TrimSpace(r.MIME)
+	if mime == "" {
+		return fmt.Sprintf("<%s %s>", kind, name)
+	}
+	return fmt.Sprintf("<%s %s %s>", kind, name, mime)
+}
+
+type FileValue struct {
+	Name       string
+	Path       string
+	MIME       string
+	Encoding   string
+	SourceType string
+	Size       int64
+	Data       []byte
+}
+
+func (f *FileValue) Type() ObjectType { return FILE_VALUE_OBJ }
+func (f *FileValue) Inspect() string {
+	if f == nil {
+		return "<file>"
+	}
+	name := strings.TrimSpace(f.Name)
+	if name == "" {
+		name = strings.TrimSpace(f.Path)
+	}
+	if name == "" {
+		name = "file"
+	}
+	mime := strings.TrimSpace(f.MIME)
+	if mime == "" {
+		mime = "unknown"
+	}
+	size := f.Size
+	if size <= 0 && len(f.Data) > 0 {
+		size = int64(len(f.Data))
+	}
+	return fmt.Sprintf("<file %s %s %d bytes>", name, mime, size)
+}
+
+type ImageValue struct {
+	Name       string
+	Path       string
+	MIME       string
+	Format     string
+	SourceType string
+	Width      int64
+	Height     int64
+	Data       []byte
+	Image      image.Image
+}
+
+func (i *ImageValue) Type() ObjectType { return IMAGE_VALUE_OBJ }
+func (i *ImageValue) Inspect() string {
+	if i == nil {
+		return "<image>"
+	}
+	name := strings.TrimSpace(i.Name)
+	if name == "" {
+		name = strings.TrimSpace(i.Path)
+	}
+	if name == "" {
+		name = "image"
+	}
+	format := strings.TrimSpace(i.Format)
+	if format == "" {
+		format = "unknown"
+	}
+	return fmt.Sprintf("<image %s %s %dx%d>", name, format, i.Width, i.Height)
+}
+
+type TableValue struct {
+	Name       string
+	Path       string
+	MIME       string
+	SourceType string
+	Columns    []string
+	Rows       []map[string]Object
+}
+
+func (t *TableValue) Type() ObjectType { return TABLE_VALUE_OBJ }
+func (t *TableValue) Inspect() string {
+	if t == nil {
+		return "<table>"
+	}
+	return fmt.Sprintf("<table columns=%d rows=%d>", len(t.Columns), len(t.Rows))
+}
 
 type Null struct{}
 
@@ -685,6 +815,22 @@ type RuntimeLimits struct {
 	MaxExecOutputBytes int64
 }
 
+type RenderConfig struct {
+	Mode             string
+	TerminalProtocol string
+	MaxBytes         int64
+	AllowURLs        bool
+	AllowURLHosts    []string
+}
+
+func DefaultRenderConfig() *RenderConfig {
+	return &RenderConfig{
+		Mode:             "auto",
+		TerminalProtocol: "auto",
+		MaxBytes:         1 << 20,
+	}
+}
+
 // ---------------------------------------------------------------------------
 // TestStats
 // ---------------------------------------------------------------------------
@@ -778,20 +924,24 @@ type SecurityPolicy struct {
 // ---------------------------------------------------------------------------
 
 type Environment struct {
-	Mu             sync.RWMutex
-	Store          map[string]Object
-	Outer          *Environment
-	ModuleContext  *ModuleContext
-	ModuleDir      string
-	SourcePath     string
-	ModuleCache    map[string]ModuleCacheEntry
-	ModuleLoading  map[string]bool
-	RuntimeLimits  *RuntimeLimits
-	SecurityPolicy *SecurityPolicy
-	Output         io.Writer
-	CallStack      []CallFrame
-	OwnerID        string
-	Cleanup        []func()
+	Mu                     sync.RWMutex
+	Store                  map[string]Object
+	Outer                  *Environment
+	ModuleContext          *ModuleContext
+	ModuleDir              string
+	SourcePath             string
+	ModuleCache            map[string]ModuleCacheEntry
+	ModuleLoading          map[string]bool
+	RuntimeLimits          *RuntimeLimits
+	SecurityPolicy         *SecurityPolicy
+	Output                 io.Writer
+	RenderConfig           *RenderConfig
+	RenderArtifacts        []*RenderArtifact
+	RenderArtifactSink     *[]*RenderArtifact
+	CollectRenderArtifacts bool
+	CallStack              []CallFrame
+	OwnerID                string
+	Cleanup                []func()
 }
 
 var environmentOwnerIDCounter atomic.Uint64
@@ -810,25 +960,44 @@ func NewGlobalEnvironment(args []string) *Environment {
 	}
 	env.Set("ARGS", argsArray)
 	env.RuntimeLimits = LoadRuntimeLimitsFromEnv()
+	env.RenderConfig = LoadRenderConfigFromEnv()
 	env.SourcePath = "<memory>"
 	return env
 }
 
 func NewEnclosedEnvironment(outer *Environment) *Environment {
 	return &Environment{
-		Store:          make(map[string]Object),
-		Outer:          outer,
-		ModuleContext:  outer.ModuleContext,
-		ModuleDir:      outer.ModuleDir,
-		SourcePath:     outer.SourcePath,
-		ModuleCache:    outer.ModuleCache,
-		ModuleLoading:  outer.ModuleLoading,
-		RuntimeLimits:  outer.RuntimeLimits,
-		SecurityPolicy: outer.SecurityPolicy,
-		Output:         outer.Output,
-		CallStack:      append([]CallFrame(nil), outer.CallStack...),
-		Cleanup:        outer.Cleanup,
+		Store:                  make(map[string]Object),
+		Outer:                  outer,
+		ModuleContext:          outer.ModuleContext,
+		ModuleDir:              outer.ModuleDir,
+		SourcePath:             outer.SourcePath,
+		ModuleCache:            outer.ModuleCache,
+		ModuleLoading:          outer.ModuleLoading,
+		RuntimeLimits:          outer.RuntimeLimits,
+		SecurityPolicy:         outer.SecurityPolicy,
+		Output:                 outer.Output,
+		RenderConfig:           outer.RenderConfig,
+		RenderArtifacts:        outer.RenderArtifacts,
+		RenderArtifactSink:     outer.RenderArtifactSink,
+		CollectRenderArtifacts: outer.CollectRenderArtifacts,
+		CallStack:              append([]CallFrame(nil), outer.CallStack...),
+		Cleanup:                outer.Cleanup,
 	}
+}
+
+func (e *Environment) AddRenderArtifact(art *RenderArtifact) {
+	if e == nil || art == nil {
+		return
+	}
+	e.Mu.Lock()
+	defer e.Mu.Unlock()
+	if e.RenderArtifactSink != nil {
+		*e.RenderArtifactSink = append(*e.RenderArtifactSink, art)
+		e.RenderArtifacts = *e.RenderArtifactSink
+		return
+	}
+	e.RenderArtifacts = append(e.RenderArtifacts, art)
 }
 
 func (e *Environment) RegisterCleanup(fn func()) {
@@ -997,6 +1166,37 @@ func ParsePositiveInt64Env(name string) int64 {
 	return n
 }
 
+func ParseBoolEnvDefault(name string, def bool) bool {
+	v := strings.TrimSpace(strings.ToLower(os.Getenv(name)))
+	if v == "" {
+		return def
+	}
+	switch v {
+	case "1", "true", "yes", "on":
+		return true
+	case "0", "false", "no", "off":
+		return false
+	default:
+		return def
+	}
+}
+
+func ParseCSVEnv(name string) []string {
+	raw := strings.TrimSpace(os.Getenv(name))
+	if raw == "" {
+		return nil
+	}
+	parts := strings.Split(raw, ",")
+	out := make([]string, 0, len(parts))
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part != "" {
+			out = append(out, part)
+		}
+	}
+	return out
+}
+
 // LoadRuntimeLimitsFromEnv builds a RuntimeLimits from SPL_MAX_RECURSION,
 // SPL_MAX_STEPS, SPL_EVAL_TIMEOUT_MS, and SPL_MAX_HEAP_MB env vars.
 // Returns nil when none are set.
@@ -1020,6 +1220,22 @@ func LoadRuntimeLimitsFromEnv() *RuntimeLimits {
 		rl.Deadline = time.Now().Add(time.Duration(timeoutMs) * time.Millisecond)
 	}
 	return rl
+}
+
+func LoadRenderConfigFromEnv() *RenderConfig {
+	cfg := DefaultRenderConfig()
+	if mode := strings.TrimSpace(os.Getenv("SPL_RENDER_MODE")); mode != "" {
+		cfg.Mode = strings.ToLower(mode)
+	}
+	if protocol := strings.TrimSpace(os.Getenv("SPL_RENDER_TERMINAL_PROTOCOL")); protocol != "" {
+		cfg.TerminalProtocol = strings.ToLower(protocol)
+	}
+	if maxBytes := ParsePositiveInt64Env("SPL_RENDER_MAX_BYTES"); maxBytes > 0 {
+		cfg.MaxBytes = maxBytes
+	}
+	cfg.AllowURLs = ParseBoolEnvDefault("SPL_RENDER_ALLOW_URLS", false)
+	cfg.AllowURLHosts = ParseCSVEnv("SPL_RENDER_ALLOW_URL_HOSTS")
+	return cfg
 }
 
 // ---------------------------------------------------------------------------

@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/oarkflow/interpreter"
 )
@@ -25,12 +26,73 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return runCheck(args[1:], stdin, stdout, stderr)
 	case "mod":
 		return runMod(args[1:], stdout, stderr)
+	case "config":
+		return runConfig(args[1:], stdout, stderr)
+	case "symbols":
+		return runSymbols(args[1:], stdin, stdout, stderr)
+	case "complete":
+		return runComplete(args[1:], stdin, stdout, stderr)
+	case "hover":
+		return runHover(args[1:], stdin, stdout, stderr)
+	case "docs":
+		return runDocs(args[1:], stdin, stdout, stderr)
+	case "test":
+		return runTest(args[1:], stdout, stderr)
+	case "lsp":
+		return runLSPInfo(stdout)
 	case "-h", "--help", "help":
 		printUsage(stdout)
 		return 0
 	default:
 		fmt.Fprintf(stderr, "unknown command %q\n", args[0])
 		printUsage(stderr)
+		return 2
+	}
+}
+
+func runConfig(args []string, stdout, stderr io.Writer) int {
+	if len(args) == 0 || args[0] == "show" {
+		cfg, path, err := LoadProjectConfig("")
+		if err != nil {
+			fmt.Fprintf(stderr, "config error: %v\n", err)
+			return 1
+		}
+		if path == "" {
+			cfg = DefaultProjectConfig()
+		}
+		enc := json.NewEncoder(stdout)
+		enc.SetIndent("", "  ")
+		if err := enc.Encode(map[string]any{"path": path, "config": cfg}); err != nil {
+			fmt.Fprintf(stderr, "failed to encode JSON: %v\n", err)
+			return 1
+		}
+		return 0
+	}
+	switch args[0] {
+	case "init":
+		path := "spl.config.json"
+		if len(args) > 1 {
+			path = args[1]
+		}
+		if _, err := os.Stat(path); err == nil {
+			fmt.Fprintf(stderr, "%s already exists\n", path)
+			return 1
+		}
+		cfg := DefaultProjectConfig()
+		data, err := json.MarshalIndent(cfg, "", "  ")
+		if err != nil {
+			fmt.Fprintf(stderr, "failed to encode config: %v\n", err)
+			return 1
+		}
+		data = append(data, '\n')
+		if err := os.WriteFile(path, data, 0o644); err != nil {
+			fmt.Fprintf(stderr, "failed to write %s: %v\n", path, err)
+			return 1
+		}
+		fmt.Fprintf(stdout, "created %s\n", path)
+		return 0
+	default:
+		fmt.Fprintln(stderr, "usage: spltool config <init|show> [path]")
 		return 2
 	}
 }
@@ -163,6 +225,167 @@ func runCheck(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	return code
 }
 
+func runSymbols(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
+	targets := args
+	if len(targets) == 0 {
+		targets = []string{"-"}
+	}
+	all := []Symbol{}
+	for _, target := range targets {
+		path, src, err := readTarget(target, stdin)
+		if err != nil {
+			fmt.Fprintf(stderr, "symbols error: %v\n", err)
+			return 1
+		}
+		all = append(all, SymbolsForSource(path, src)...)
+	}
+	return encodeJSON(stdout, stderr, all)
+}
+
+func runComplete(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("complete", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	prefix := fs.String("prefix", "", "completion prefix")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	target := "-"
+	if len(fs.Args()) > 0 {
+		target = fs.Args()[0]
+	}
+	path, src, err := readTarget(target, stdin)
+	if err != nil {
+		fmt.Fprintf(stderr, "complete error: %v\n", err)
+		return 1
+	}
+	return encodeJSON(stdout, stderr, CompletionItems(path, src, *prefix))
+}
+
+func runHover(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("hover", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	line := fs.Int("line", 1, "1-based line")
+	col := fs.Int("col", 1, "1-based column")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	target := "-"
+	if len(fs.Args()) > 0 {
+		target = fs.Args()[0]
+	}
+	path, src, err := readTarget(target, stdin)
+	if err != nil {
+		fmt.Fprintf(stderr, "hover error: %v\n", err)
+		return 1
+	}
+	return encodeJSON(stdout, stderr, HoverAt(path, src, *line, *col))
+}
+
+func runDocs(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
+	targets := args
+	if len(targets) == 0 {
+		targets = []string{"-"}
+	}
+	for i, target := range targets {
+		path, src, err := readTarget(target, stdin)
+		if err != nil {
+			fmt.Fprintf(stderr, "docs error: %v\n", err)
+			return 1
+		}
+		if i > 0 {
+			fmt.Fprintln(stdout)
+		}
+		fmt.Fprint(stdout, DocsMarkdown(path, src))
+	}
+	return 0
+}
+
+type TestReport struct {
+	OK       bool             `json:"ok"`
+	Total    int              `json:"total"`
+	Passed   int              `json:"passed"`
+	Failed   int              `json:"failed"`
+	Duration int64            `json:"duration_ms"`
+	Results  []TestFileResult `json:"results"`
+}
+
+type TestFileResult struct {
+	Path       string `json:"path"`
+	OK         bool   `json:"ok"`
+	Error      string `json:"error,omitempty"`
+	DurationMS int64  `json:"duration_ms"`
+}
+
+func runTest(args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("test", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	jsonOut := fs.Bool("json", false, "emit machine-readable JSON")
+	filter := fs.String("filter", "", "substring filter for discovered test files")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	targets := fs.Args()
+	if len(targets) == 0 {
+		targets = []string{"."}
+	}
+	files, err := discoverTestFiles(targets, *filter)
+	if err != nil {
+		fmt.Fprintf(stderr, "test discovery error: %v\n", err)
+		return 1
+	}
+	report := TestReport{OK: true, Total: len(files)}
+	start := time.Now()
+	for _, file := range files {
+		itemStart := time.Now()
+		_, err := interpreter.ExecFileWithOptions(file, nil, interpreter.ExecOptions{
+			ModuleDir: filepath.Dir(file),
+			MaxSteps:  2_000_000,
+			MaxDepth:  256,
+			Timeout:   10 * time.Second,
+		})
+		item := TestFileResult{Path: file, OK: err == nil, DurationMS: time.Since(itemStart).Milliseconds()}
+		if err != nil {
+			item.Error = err.Error()
+			report.OK = false
+			report.Failed++
+		} else {
+			report.Passed++
+		}
+		report.Results = append(report.Results, item)
+	}
+	report.Duration = time.Since(start).Milliseconds()
+	if *jsonOut {
+		return encodeJSON(stdout, stderr, report)
+	}
+	for _, result := range report.Results {
+		if result.OK {
+			fmt.Fprintf(stdout, "PASS %s (%dms)\n", result.Path, result.DurationMS)
+		} else {
+			fmt.Fprintf(stdout, "FAIL %s (%dms)\n%s\n", result.Path, result.DurationMS, result.Error)
+		}
+	}
+	fmt.Fprintf(stdout, "\n%d passed, %d failed, %d total\n", report.Passed, report.Failed, report.Total)
+	if !report.OK {
+		return 1
+	}
+	return 0
+}
+
+func runLSPInfo(stdout io.Writer) int {
+	_ = json.NewEncoder(stdout).Encode(map[string]any{
+		"status": "helpers",
+		"commands": []string{
+			"spltool check --json",
+			"spltool symbols",
+			"spltool complete --prefix <text>",
+			"spltool hover --line <n> --col <n>",
+			"spltool fmt",
+		},
+		"note": "These JSON surfaces are stable building blocks for an editor language server.",
+	})
+	return 0
+}
+
 func processTargets(targets []string, stdin io.Reader, write bool, format bool) ([]Report, int) {
 	reports := make([]Report, 0, len(targets))
 	exitCode := 0
@@ -248,6 +471,62 @@ func formatDiagnostic(d Diagnostic) string {
 }
 
 func printUsage(w io.Writer) {
-	fmt.Fprintln(w, "Usage: spltool <fmt|check|mod> [flags] [files...]")
+	fmt.Fprintln(w, "Usage: spltool <fmt|check|symbols|complete|hover|docs|test|config|mod|lsp> [flags] [files...]")
 	fmt.Fprintln(w, "Use '-' to read from stdin.")
+}
+
+func encodeJSON(stdout, stderr io.Writer, v any) int {
+	enc := json.NewEncoder(stdout)
+	enc.SetIndent("", "  ")
+	if err := enc.Encode(v); err != nil {
+		fmt.Fprintf(stderr, "failed to encode JSON: %v\n", err)
+		return 1
+	}
+	return 0
+}
+
+func discoverTestFiles(targets []string, filter string) ([]string, error) {
+	seen := map[string]struct{}{}
+	files := []string{}
+	add := func(path string) {
+		path = filepath.Clean(path)
+		if filter != "" && !strings.Contains(path, filter) {
+			return
+		}
+		if _, ok := seen[path]; ok {
+			return
+		}
+		seen[path] = struct{}{}
+		files = append(files, path)
+	}
+	for _, target := range targets {
+		info, err := os.Stat(target)
+		if err != nil {
+			return nil, err
+		}
+		if !info.IsDir() {
+			if strings.HasSuffix(target, ".spl") {
+				add(target)
+			}
+			continue
+		}
+		if err := filepath.WalkDir(target, func(path string, d os.DirEntry, err error) error {
+			if err != nil {
+				return err
+			}
+			if d.IsDir() {
+				if d.Name() == ".git" || d.Name() == "node_modules" {
+					return filepath.SkipDir
+				}
+				return nil
+			}
+			if strings.HasSuffix(d.Name(), "_test.spl") || strings.Contains(filepath.ToSlash(path), "/tests/") && strings.HasSuffix(d.Name(), ".spl") {
+				add(path)
+			}
+			return nil
+		}); err != nil {
+			return nil, err
+		}
+	}
+	return files, nil
 }
