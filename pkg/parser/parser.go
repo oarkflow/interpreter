@@ -780,6 +780,8 @@ var precedences = map[token.TokenType]int{
 	token.PIPELINE:        ASSIGN_PREC,
 	token.OR:              LOGICAL_OR,
 	token.AND:             LOGICAL_AND,
+	token.IN:              EQUALS,
+	token.NOT:             EQUALS,
 	token.BITOR:           BIT_OR,
 	token.BITXOR:          BIT_XOR,
 	token.BITAND:          BIT_AND,
@@ -871,11 +873,14 @@ func (p *Parser) parseExpression(precedence int) ast.Expression {
 		switch p.peekToken.Type {
 		case token.PLUS, token.MINUS, token.MULTIPLY, token.DIVIDE, token.MODULO,
 			token.EQ, token.NEQ, token.LT, token.GT, token.LTE, token.GTE,
-			token.AND, token.OR,
+			token.AND, token.OR, token.IN,
 			token.BITAND, token.BITOR, token.BITXOR, token.LSHIFT, token.RSHIFT,
 			token.NULLISH:
 			p.nextToken()
 			leftExp = p.parseInfixExpression(leftExp)
+		case token.NOT:
+			p.nextToken()
+			leftExp = p.parseNotInExpression(leftExp)
 		case token.RANGE:
 			p.nextToken()
 			leftExp = p.parseRangeExpression(leftExp)
@@ -1540,7 +1545,7 @@ func (p *Parser) infixParseFn() func(ast.Expression) ast.Expression {
 	switch p.peekToken.Type {
 	case token.PLUS, token.MINUS, token.MULTIPLY, token.DIVIDE, token.MODULO,
 		token.EQ, token.NEQ, token.LT, token.GT, token.LTE, token.GTE,
-		token.AND, token.OR,
+		token.AND, token.OR, token.IN,
 		token.BITAND, token.BITOR, token.BITXOR, token.LSHIFT, token.RSHIFT,
 		token.POWER:
 		return p.parseInfixExpression
@@ -1826,7 +1831,7 @@ func (p *Parser) parseHashLiteral() ast.Expression {
 
 func (p *Parser) parsePrefixExpression() ast.Expression {
 	expression := &ast.PrefixExpression{
-		Operator: p.curToken.Literal,
+		Operator: canonicalOperator(p.curToken),
 	}
 
 	p.nextToken()
@@ -1838,7 +1843,7 @@ func (p *Parser) parsePrefixExpression() ast.Expression {
 
 func (p *Parser) parseInfixExpression(left ast.Expression) ast.Expression {
 	expression := &ast.InfixExpression{
-		Operator: p.curToken.Literal,
+		Operator: canonicalOperator(p.curToken),
 		Left:     left,
 	}
 
@@ -1847,6 +1852,37 @@ func (p *Parser) parseInfixExpression(left ast.Expression) ast.Expression {
 	expression.Right = p.parseExpression(precedence)
 
 	return expression
+}
+
+func (p *Parser) parseNotInExpression(left ast.Expression) ast.Expression {
+	expression := &ast.InfixExpression{
+		Operator: "not in",
+		Left:     left,
+	}
+
+	precedence := p.curPrecedence()
+	if !p.expectPeek(token.IN) {
+		return nil
+	}
+	p.nextToken()
+	expression.Right = p.parseExpression(precedence)
+
+	return expression
+}
+
+func canonicalOperator(tok token.Token) string {
+	switch tok.Type {
+	case token.AND:
+		return "&&"
+	case token.OR:
+		return "||"
+	case token.NOT:
+		return "!"
+	case token.IN:
+		return "in"
+	default:
+		return tok.Literal
+	}
 }
 
 func (p *Parser) parseRangeExpression(left ast.Expression) ast.Expression {

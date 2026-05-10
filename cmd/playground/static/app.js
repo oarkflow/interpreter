@@ -651,7 +651,7 @@ function initMonaco() {
       monaco.languages.setMonarchTokensProvider('spl', {
         tokenizer: {
           root: [
-            [/(let|const|if|else|while|for|break|continue|function|return|import|export|try|catch|throw|print|true|false|null)\b/, 'keyword'],
+            [/\b(let|const|if|else|while|for|in|and|or|not|break|continue|function|return|import|export|try|catch|throw|print|true|false|null)\b/i, 'keyword'],
             [/\b[0-9]+\b/, 'number'],
             [/"([^"\\]|\\.)*"/, 'string'],
             [/\/\/.*$/, 'comment'],

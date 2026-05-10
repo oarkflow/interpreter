@@ -126,6 +126,19 @@ add10(5);
 - hashes (object-like maps), dot property access (`obj.key`)
 - string and number method forms (`"x".upper()`, `(10).is_even()`)
 
+### Operators
+
+SPL supports arithmetic, comparison, logical, membership, bitwise, nullish,
+ternary, range, pipeline, and access operators. Rule-style logical and
+membership aliases are available case-insensitively:
+
+```spl
+amount > 100000 and department in ["finance", "procurement"] and risk_score >= 70
+status not in ["closed", "archived"] or not reviewed
+```
+
+See [OPERATOR_AUDIT.md](OPERATOR_AUDIT.md) for the full operator support table.
+
 ### Module system
 
 Supported import forms:

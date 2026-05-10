@@ -17,6 +17,12 @@ func TestEvalShortCircuitAndOr(t *testing.T) {
 
 	result = testEval(`let x = 0; true || (x = 1); x;`)
 	testIntegerObject(t, result, 0)
+
+	result = testEval(`let x = 0; false and (x = 1); x;`)
+	testIntegerObject(t, result, 0)
+
+	result = testEval(`let x = 0; true or (x = 1); x;`)
+	testIntegerObject(t, result, 0)
 }
 
 func TestEvalUnsupportedNodeReturnsError(t *testing.T) {

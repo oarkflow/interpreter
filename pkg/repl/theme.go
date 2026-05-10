@@ -72,7 +72,7 @@ func ColorizeInputLine(line string) string {
 	}
 
 	kw := map[string]struct{}{
-		"let": {}, "if": {}, "else": {}, "while": {}, "for": {}, "in": {}, "break": {}, "continue": {},
+		"let": {}, "if": {}, "else": {}, "while": {}, "for": {}, "in": {}, "and": {}, "or": {}, "not": {}, "break": {}, "continue": {},
 		"function": {}, "return": {}, "print": {}, "const": {}, "import": {}, "export": {},
 		"true": {}, "false": {}, "null": {}, "do": {},
 		"try": {}, "catch": {}, "throw": {},

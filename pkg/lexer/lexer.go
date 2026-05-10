@@ -548,6 +548,16 @@ var KeywordTokens = map[string]token.TokenType{
 // LookupIdent checks if the given identifier is a keyword and returns
 // the corresponding token type. Returns token.IDENT for non-keywords.
 func LookupIdent(ident string) token.TokenType {
+	switch strings.ToLower(ident) {
+	case "and":
+		return token.AND
+	case "or":
+		return token.OR
+	case "not":
+		return token.NOT
+	case "in":
+		return token.IN
+	}
 	if tok, ok := KeywordTokens[ident]; ok {
 		return tok
 	}

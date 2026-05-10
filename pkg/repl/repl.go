@@ -436,7 +436,7 @@ func replPrintBlock(s string) {
 // and environment variables.
 func ReplCandidatesForEnv(env *object.Environment) []string {
 	kw := []string{
-		"let", "if", "else", "while", "for", "in", "break", "continue", "function", "return",
+		"let", "if", "else", "while", "for", "in", "and", "or", "not", "break", "continue", "function", "return",
 		"print", "const", "import", "export", "true", "false", "null", "do", "typeof",
 		"try", "catch", "throw", "switch", "case", "default",
 		"exit", ":help", ":builtins", ":search", ":history", ":clear",

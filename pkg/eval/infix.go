@@ -127,6 +127,13 @@ func evalInfixExpression(operator string, left, right object.Object) object.Obje
 		}
 		return left
 	}
+	if operator == "in" || operator == "not in" {
+		result := evalMembershipExpression(left, right)
+		if object.IsError(result) || operator == "in" {
+			return result
+		}
+		return object.NativeBoolToBooleanObject(!result.(*object.Boolean).Value)
+	}
 
 	switch {
 	case left.Type() == object.INTEGER_OBJ && right.Type() == object.INTEGER_OBJ:
@@ -150,6 +157,65 @@ func evalInfixExpression(operator string, left, right object.Object) object.Obje
 	default:
 		return object.NewError("unknown operator: %s %s %s", left.Type(), operator, right.Type())
 	}
+}
+
+func evalMembershipExpression(left, right object.Object) object.Object {
+	left = unwrapComparable(left)
+	right = unwrapComparable(right)
+
+	switch container := right.(type) {
+	case *object.Array:
+		for _, el := range container.Elements {
+			if membershipEqual(left, unwrapComparable(el)) {
+				return object.TRUE
+			}
+		}
+		return object.FALSE
+	case *object.Hash:
+		key, ok := left.(object.Hashable)
+		if !ok {
+			return object.NewError("membership hash key must be hashable, got %s", left.Type())
+		}
+		_, ok = container.Pairs[key.HashKey()]
+		return object.NativeBoolToBooleanObject(ok)
+	case *object.String:
+		needle, ok := left.(*object.String)
+		if !ok {
+			return object.NewError("membership string needle must be STRING, got %s", left.Type())
+		}
+		return object.NativeBoolToBooleanObject(strings.Contains(container.Value, needle.Value))
+	default:
+		if right == nil {
+			return object.NewError("membership not supported for NULL")
+		}
+		return object.NewError("membership not supported for %s", right.Type())
+	}
+}
+
+func unwrapComparable(obj object.Object) object.Object {
+	for {
+		switch v := obj.(type) {
+		case *object.LazyValue:
+			obj = v.Force()
+		case *object.OwnedValue:
+			obj = v.Inner
+		case *object.ImmutableValue:
+			obj = v.Inner
+		case *object.GeneratorValue:
+			obj = &object.Array{Elements: v.Elements}
+		default:
+			return obj
+		}
+	}
+}
+
+func membershipEqual(a, b object.Object) bool {
+	if af, aOk := toFloat(a); aOk {
+		if bf, bOk := toFloat(b); bOk {
+			return af == bf
+		}
+	}
+	return objectsEqual(a, b)
 }
 
 func evalFloatInfixExpression(operator string, left, right object.Object) object.Object {

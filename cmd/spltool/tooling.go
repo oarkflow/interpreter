@@ -626,7 +626,7 @@ func builtinNameSet() map[string]struct{} {
 
 func isLanguageWord(name string) bool {
 	switch name {
-	case "let", "const", "function", "return", "if", "else", "for", "while", "do", "in", "break", "continue", "true", "false", "null", "import", "export", "try", "catch", "throw", "switch", "case", "default", "match", "type", "class", "interface", "test", "init", "async", "await", "lazy":
+	case "let", "const", "function", "return", "if", "else", "for", "while", "do", "in", "and", "or", "not", "break", "continue", "true", "false", "null", "import", "export", "try", "catch", "throw", "switch", "case", "default", "match", "type", "class", "interface", "test", "init", "async", "await", "lazy":
 		return true
 	default:
 		return false

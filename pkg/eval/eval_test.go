@@ -1,8 +1,10 @@
 package eval_test
 
 import (
+	"strings"
 	"testing"
 
+	"github.com/oarkflow/interpreter/pkg/eval"
 	"github.com/oarkflow/interpreter/pkg/lexer"
 	"github.com/oarkflow/interpreter/pkg/object"
 	"github.com/oarkflow/interpreter/pkg/parser"
@@ -83,6 +85,39 @@ func TestLexerSingleQuotedString(t *testing.T) {
 		if tok.Literal != tt.expectedLiteral {
 			t.Fatalf("tests[%d] - literal wrong. expected=%q, got=%q",
 				i, tt.expectedLiteral, tok.Literal)
+		}
+	}
+}
+
+func TestLexerWordOperatorAliases(t *testing.T) {
+	input := `amount > 100000 and department IN ["finance"] Or not archived`
+	tests := []struct {
+		expectedType    token.TokenType
+		expectedLiteral string
+	}{
+		{token.IDENT, "amount"},
+		{token.GT, ">"},
+		{token.INT, "100000"},
+		{token.AND, "and"},
+		{token.IDENT, "department"},
+		{token.IN, "IN"},
+		{token.LBRACKET, "["},
+		{token.STRING, "finance"},
+		{token.RBRACKET, "]"},
+		{token.OR, "Or"},
+		{token.NOT, "not"},
+		{token.IDENT, "archived"},
+		{token.EOF, ""},
+	}
+
+	l := lexer.NewLexer(input)
+	for i, tt := range tests {
+		tok := l.NextToken()
+		if tok.Type != tt.expectedType {
+			t.Fatalf("tests[%d] - tokentype wrong. expected=%q, got=%q", i, tt.expectedType, tok.Type)
+		}
+		if tok.Literal != tt.expectedLiteral {
+			t.Fatalf("tests[%d] - literal wrong. expected=%q, got=%q", i, tt.expectedLiteral, tok.Literal)
 		}
 	}
 }
@@ -189,6 +224,71 @@ func TestBangOperator(t *testing.T) {
 		evaluated := testEval(tt.input)
 		testBooleanObject(t, evaluated, tt.expected)
 	}
+}
+
+func TestRuleStyleWordOperatorsWithInjectedData(t *testing.T) {
+	input := `amount > 100000 and department in ["finance", "procurement"] and risk_score >= 70`
+	env := object.NewEnvironment()
+	eval.InjectData(env, map[string]interface{}{
+		"amount":     125000,
+		"department": "finance",
+		"risk_score": 72,
+	})
+
+	evaluated := evalWithParserCheck(t, input, env)
+	testBooleanObject(t, evaluated, true)
+}
+
+func TestUppercaseWordOperators(t *testing.T) {
+	evaluated := testEval(`NOT false AND "finance" IN ["finance"] OR false`)
+	testBooleanObject(t, evaluated, true)
+}
+
+func TestMembershipOperator(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected bool
+	}{
+		{`"finance" in ["finance", "procurement"]`, true},
+		{`"legal" in ["finance", "procurement"]`, false},
+		{`true in [false, true]`, true},
+		{`2 in [1, 2.0, 3]`, true},
+		{`"a" in {"a": 1}`, true},
+		{`2 in {2: "two"}`, true},
+		{`false in {false: "no"}`, true},
+		{`"needle" in "haystack needle haystack"`, true},
+		{`"missing" in "haystack"`, false},
+		{`3 in 1..5`, true},
+		{`6 not in 1..5`, true},
+		{`not (3 in 1..5)`, false},
+	}
+
+	for _, tt := range tests {
+		evaluated := testEval(tt.input)
+		testBooleanObject(t, evaluated, tt.expected)
+	}
+}
+
+func TestMembershipOperatorErrors(t *testing.T) {
+	tests := []string{
+		`1 in 10`,
+		`1 in "123"`,
+		`[1] in {"a": 1}`,
+	}
+	for _, input := range tests {
+		evaluated := testEval(input)
+		if !object.IsError(evaluated) {
+			t.Fatalf("%q expected error, got %T (%s)", input, evaluated, evaluated.Inspect())
+		}
+		if !strings.Contains(evaluated.Inspect(), "membership") {
+			t.Fatalf("%q expected membership error, got %q", input, evaluated.Inspect())
+		}
+	}
+}
+
+func TestForInLoopStillParsesAndEvaluates(t *testing.T) {
+	evaluated := testEval(`let total = 0; for (x in [1, 2, 3]) { total = total + x; } total;`)
+	testIntegerObject(t, evaluated, 6)
 }
 
 func TestIfElseExpressions(t *testing.T) {
