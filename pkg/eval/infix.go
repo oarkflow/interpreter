@@ -109,6 +109,16 @@ func evalInfixExpression(operator string, left, right object.Object) object.Obje
 	if owned, ok := right.(*object.OwnedValue); ok {
 		right = owned.Inner
 	}
+	if operator == "in" {
+		return evalMembershipExpression(left, right)
+	}
+	if operator == "not in" {
+		result := evalMembershipExpression(left, right)
+		if object.IsError(result) {
+			return result
+		}
+		return object.NativeBoolToBooleanObject(!result.(*object.Boolean).Value)
+	}
 	if operator == "&&" {
 		if !object.IsTruthy(left) {
 			return object.FALSE
@@ -126,13 +136,6 @@ func evalInfixExpression(operator string, left, right object.Object) object.Obje
 			return right
 		}
 		return left
-	}
-	if operator == "in" || operator == "not in" {
-		result := evalMembershipExpression(left, right)
-		if object.IsError(result) || operator == "in" {
-			return result
-		}
-		return object.NativeBoolToBooleanObject(!result.(*object.Boolean).Value)
 	}
 
 	switch {
@@ -210,6 +213,17 @@ func unwrapComparable(obj object.Object) object.Object {
 }
 
 func membershipEqual(a, b object.Object) bool {
+	switch av := a.(type) {
+	case *object.String:
+		bv, ok := b.(*object.String)
+		return ok && av.Value == bv.Value
+	case *object.Boolean:
+		bv, ok := b.(*object.Boolean)
+		return ok && av.Value == bv.Value
+	case *object.Null:
+		_, ok := b.(*object.Null)
+		return ok
+	}
 	if af, aOk := toFloat(a); aOk {
 		if bf, bOk := toFloat(b); bOk {
 			return af == bf

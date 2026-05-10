@@ -10,3 +10,8 @@ dist
 tmp
 *.log
 module-*-test-*
+.codex
+*.lock
+.claude
+.gocache
+.gomodcache

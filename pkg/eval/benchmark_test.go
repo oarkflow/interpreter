@@ -14,6 +14,8 @@ import (
 	"github.com/oarkflow/interpreter/pkg/token"
 )
 
+var benchmarkObjectSink object.Object
+
 func benchmarkParse(input string, b *testing.B) *ast.Program {
 	b.Helper()
 	l := lexer.NewLexer(input)
@@ -227,5 +229,80 @@ sum;
 	for i := 0; i < b.N; i++ {
 		env := object.NewEnvironment()
 		_ = eval.Eval(program, env)
+	}
+}
+
+func BenchmarkEvalRuleOperatorsPreparsed(b *testing.B) {
+	script := `amount > 100000 and department in ["finance", "procurement"] and risk_score >= 70`
+	program := benchmarkParse(script, b)
+
+	b.ReportAllocs()
+	b.ResetTimer()
+
+	for i := 0; i < b.N; i++ {
+		env := object.NewEnvironment()
+		eval.InjectData(env, map[string]interface{}{
+			"amount":     125000,
+			"department": "finance",
+			"risk_score": 72,
+		})
+		benchmarkObjectSink = eval.Eval(program, env)
+	}
+}
+
+func BenchmarkEvalMembershipInfixArrayFirstHit(b *testing.B) {
+	needle := &object.String{Value: "finance"}
+	container := &object.Array{Elements: []object.Object{
+		needle,
+		&object.String{Value: "procurement"},
+	}}
+
+	b.ReportAllocs()
+	b.ResetTimer()
+
+	for i := 0; i < b.N; i++ {
+		benchmarkObjectSink = eval.EvalInfixExpression("in", needle, container)
+	}
+}
+
+func BenchmarkEvalMembershipInfixArrayNumericHit(b *testing.B) {
+	needle := object.IntegerObj(2)
+	container := &object.Array{Elements: []object.Object{
+		object.IntegerObj(1),
+		&object.Float{Value: 2},
+		object.IntegerObj(3),
+	}}
+
+	b.ReportAllocs()
+	b.ResetTimer()
+
+	for i := 0; i < b.N; i++ {
+		benchmarkObjectSink = eval.EvalInfixExpression("in", needle, container)
+	}
+}
+
+func BenchmarkEvalMembershipInfixHashHit(b *testing.B) {
+	needle := &object.String{Value: "department"}
+	container := &object.Hash{Pairs: map[object.HashKey]object.HashPair{
+		needle.HashKey(): {Key: needle, Value: &object.String{Value: "finance"}},
+	}}
+
+	b.ReportAllocs()
+	b.ResetTimer()
+
+	for i := 0; i < b.N; i++ {
+		benchmarkObjectSink = eval.EvalInfixExpression("in", needle, container)
+	}
+}
+
+func BenchmarkEvalMembershipInfixStringHit(b *testing.B) {
+	needle := &object.String{Value: "finance"}
+	container := &object.String{Value: "finance procurement"}
+
+	b.ReportAllocs()
+	b.ResetTimer()
+
+	for i := 0; i < b.N; i++ {
+		benchmarkObjectSink = eval.EvalInfixExpression("in", needle, container)
 	}
 }
