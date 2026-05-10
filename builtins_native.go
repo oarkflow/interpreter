@@ -2,7 +2,4 @@
 
 package interpreter
 
-import (
-	_ "github.com/oarkflow/interpreter/pkg/builtins/database"
-	_ "github.com/oarkflow/interpreter/pkg/builtins/server"
-)
+// Optional native builtins are registered by importing their packages directly.

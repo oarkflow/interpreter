@@ -8,8 +8,6 @@ import (
 	"strings"
 
 	"github.com/oarkflow/interpreter/pkg/object"
-
-	"gopkg.in/yaml.v3"
 )
 
 // ---------------------------------------------------------------------------
@@ -37,6 +35,19 @@ var ToObjectFn func(v interface{}) object.Object
 // ObjectToNativeFn converts an object.Object back to a Go native value. Must
 // be set by the host package.
 var ObjectToNativeFn func(obj object.Object) interface{}
+
+// FormatParsers contains opt-in parsers for non-core config formats such as
+// YAML. Core supports JSON and .env without third-party dependencies.
+var FormatParsers = map[string]func([]byte) (interface{}, error){}
+
+// RegisterFormatParser registers a config parser for a detected format.
+func RegisterFormatParser(format string, parser func([]byte) (interface{}, error)) {
+	format = strings.ToLower(strings.TrimSpace(format))
+	if format == "" || parser == nil {
+		return
+	}
+	FormatParsers[format] = parser
+}
 
 // ---------------------------------------------------------------------------
 // Format detection
@@ -185,8 +196,15 @@ func LoadConfigObjectFromPath(path, format string) (object.Object, error) {
 			return nil, err
 		}
 	case "yaml", "yml":
-		var v interface{}
-		if err := yaml.Unmarshal(data, &v); err != nil {
+		parser := FormatParsers[f]
+		if parser == nil && f == "yml" {
+			parser = FormatParsers["yaml"]
+		}
+		if parser == nil {
+			return nil, fmt.Errorf("unsupported config format %q; import an optional parser package", f)
+		}
+		v, err := parser(data)
+		if err != nil {
 			return nil, err
 		}
 		if ToObjectFn == nil {
@@ -223,8 +241,15 @@ func LoadConfigObjectFromRaw(raw, format string) (object.Object, error) {
 			return nil, err
 		}
 	case "yaml", "yml":
-		var v interface{}
-		if err := yaml.Unmarshal([]byte(raw), &v); err != nil {
+		parser := FormatParsers[f]
+		if parser == nil && f == "yml" {
+			parser = FormatParsers["yaml"]
+		}
+		if parser == nil {
+			return nil, fmt.Errorf("unsupported config format %q; import an optional parser package", f)
+		}
+		v, err := parser([]byte(raw))
+		if err != nil {
 			return nil, err
 		}
 		if ToObjectFn == nil {

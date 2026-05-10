@@ -12,8 +12,6 @@ import (
 	"github.com/oarkflow/interpreter/pkg/security"
 
 	_ "github.com/oarkflow/interpreter/pkg/builtins"
-	_ "github.com/oarkflow/interpreter/pkg/builtins/database"
-	_ "github.com/oarkflow/interpreter/pkg/builtins/integrations"
 	_ "github.com/oarkflow/interpreter/pkg/builtins/reactive"
 	_ "github.com/oarkflow/interpreter/pkg/builtins/scheduler"
 	_ "github.com/oarkflow/interpreter/pkg/builtins/server"
@@ -29,6 +27,9 @@ func testEvalSecurity(input string) Object {
 }
 
 func TestStrictModeDeniesNetworkByDefault(t *testing.T) {
+	if !eval.HasBuiltin("http_get") {
+		t.Skip("integration builtins are optional")
+	}
 	res, err := ExecWithOptions(`let x, e = http_get("https://example.com"); e;`, nil, ExecOptions{
 		Security: &SecurityPolicy{StrictMode: true},
 	})

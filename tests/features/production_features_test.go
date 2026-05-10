@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	. "github.com/oarkflow/interpreter"
+	"github.com/oarkflow/interpreter/pkg/eval"
 )
 
 func TestExecWithOptionsRuntimeErrorIncludesStack(t *testing.T) {
@@ -59,6 +60,9 @@ func TestExecBuiltinRespectsContextCancellation(t *testing.T) {
 }
 
 func TestDatabaseBuiltinsSupportParamsAndTransactions(t *testing.T) {
+	if !eval.HasBuiltin("db_connect") {
+		t.Skip("database builtins are optional")
+	}
 	res, err := ExecWithOptions(`
 let db, err = db_connect("sqlite", ":memory:");
 if (err != null) { throw err; }

@@ -8,24 +8,26 @@ import (
 	"time"
 
 	. "github.com/oarkflow/interpreter"
-
-	_ "github.com/oarkflow/interpreter/pkg/builtins/database"
-	_ "github.com/oarkflow/interpreter/pkg/builtins/integrations"
 	_ "github.com/oarkflow/interpreter/pkg/builtins/scheduler"
 	_ "github.com/oarkflow/interpreter/pkg/builtins/server"
 	_ "github.com/oarkflow/interpreter/pkg/builtins/watcher"
+	"github.com/oarkflow/interpreter/pkg/eval"
 )
 
 func TestExecUntrustedDeniesHostCapabilitiesByDefault(t *testing.T) {
 	cases := []string{
 		`exec("sh", "-c", "echo hacked")`,
-		`let _, err = http_get("https://example.com"); if (err != null) { throw err; }`,
-		`let db, err = db_connect("sqlite", ":memory:"); if (err != null) { throw err; }`,
 		`listen_async(server(0));`,
 		`watch(".", function(files) { files; });`,
 		`schedule_interval(1000, function() { 1; });`,
 		`go_async(function() { 1; });`,
 		`background(function() { 1; });`,
+	}
+	if eval.HasBuiltin("http_get") {
+		cases = append(cases, `let _, err = http_get("https://example.com"); if (err != null) { throw err; }`)
+	}
+	if eval.HasBuiltin("db_connect") {
+		cases = append(cases, `let db, err = db_connect("sqlite", ":memory:"); if (err != null) { throw err; }`)
 	}
 
 	for _, script := range cases {

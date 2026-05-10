@@ -130,20 +130,32 @@ func dbTupleBool(ok bool, errMsg string) object.Object {
 func dbTarget(obj object.Object) (dbQueryable, object.Object) {
 	switch v := obj.(type) {
 	case *object.DB:
-		return v, nil
+		target, ok := v.Handle.(dbQueryable)
+		if !ok {
+			return nil, object.NewError("database connection handle is unavailable")
+		}
+		return target, nil
 	case *object.DBTx:
-		return v, nil
+		target, ok := v.Handle.(dbQueryable)
+		if !ok {
+			return nil, object.NewError("database transaction handle is unavailable")
+		}
+		return target, nil
 	default:
 		return nil, object.NewError("first argument must be a database connection or transaction")
 	}
 }
 
-func dbTxTarget(obj object.Object) (*object.DBTx, object.Object) {
+func dbTxTarget(obj object.Object) (*squealx.Tx, object.Object) {
 	tx, ok := obj.(*object.DBTx)
 	if !ok {
 		return nil, object.NewError("argument must be a database transaction (use db_begin)")
 	}
-	return tx, nil
+	handle, ok := tx.Handle.(*squealx.Tx)
+	if !ok {
+		return nil, object.NewError("database transaction handle is unavailable")
+	}
+	return handle, nil
 }
 
 func objectToDBNamedArgs(obj object.Object) (map[string]any, object.Object) {
@@ -339,10 +351,10 @@ func builtinDBConnect(env *object.Environment, args ...object.Object) object.Obj
 	if err := db.PingContext(runtimeContext(env)); err != nil {
 		return dbTupleResult(nil, fmt.Sprintf("failed to ping database: %v", err))
 	}
-	dbObj := &object.DB{DB: db}
+	dbObj := &object.DB{Handle: db}
 	if env != nil {
 		env.RegisterCleanup(func() {
-			_ = dbObj.Close()
+			_ = db.Close()
 		})
 	}
 	return dbTupleResult(dbObj, "")
@@ -434,11 +446,15 @@ func builtinDBBegin(env *object.Environment, args ...object.Object) object.Objec
 	if !ok {
 		return dbTupleResult(nil, "argument must be a database connection (use db_connect)")
 	}
-	tx, err := dbObj.BeginTxx(runtimeContext(env), nil)
+	db, ok := dbObj.Handle.(*squealx.DB)
+	if !ok {
+		return dbTupleResult(nil, "database connection handle is unavailable")
+	}
+	tx, err := db.BeginTxx(runtimeContext(env), nil)
 	if err != nil {
 		return dbTupleResult(nil, fmt.Sprintf("failed to begin transaction: %v", err))
 	}
-	return dbTupleResult(&object.DBTx{Tx: tx}, "")
+	return dbTupleResult(&object.DBTx{Handle: tx}, "")
 }
 
 func builtinDBCommit(args ...object.Object) object.Object {
@@ -477,7 +493,11 @@ func builtinDBClose(args ...object.Object) object.Object {
 	if !ok {
 		return dbTupleBool(false, "argument must be a database connection (use db_connect)")
 	}
-	if err := dbObj.Close(); err != nil {
+	db, ok := dbObj.Handle.(*squealx.DB)
+	if !ok {
+		return dbTupleBool(false, "database connection handle is unavailable")
+	}
+	if err := db.Close(); err != nil {
 		return dbTupleBool(false, fmt.Sprintf("failed to close connection: %v", err))
 	}
 	return dbTupleBool(true, "")

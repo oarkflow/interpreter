@@ -15,8 +15,6 @@ import (
 	"time"
 	"unicode"
 
-	"golang.org/x/term"
-
 	"github.com/oarkflow/interpreter/pkg/object"
 	"github.com/oarkflow/interpreter/pkg/pkgmgr"
 )
@@ -129,7 +127,6 @@ type ReplEditor struct {
 	In          *os.File
 	Out         *os.File
 	Fd          int
-	OldState    *term.State
 	Env         *object.Environment
 	History     []string
 	HistoryPos  int
@@ -1525,16 +1522,10 @@ func ReplCandidates() []string {
 
 func newReplEditor(in, out *os.File, candidates []string, env *object.Environment) (*ReplEditor, error) {
 	fd := int(in.Fd())
-	state, err := term.MakeRaw(fd)
-	if err != nil {
-		return nil, err
-	}
-
 	editor := &ReplEditor{
 		In:         in,
 		Out:        out,
 		Fd:         fd,
-		OldState:   state,
 		Env:        env,
 		History:    make([]string, 0, 256),
 		HistoryPos: 0,
@@ -1555,9 +1546,6 @@ func newReplEditor(in, out *os.File, candidates []string, env *object.Environmen
 func (e *ReplEditor) close() {
 	if e.HistoryFile != "" {
 		_ = AppendHistoryEntries(e.HistoryFile, HistoryEntriesToPersist(e.History, e.HistoryBase))
-	}
-	if e.OldState != nil {
-		_ = term.Restore(e.Fd, e.OldState)
 	}
 }
 
@@ -2112,14 +2100,7 @@ func ReplHintLines(text string, width int) []string {
 }
 
 func replEditorWidth(e *ReplEditor) int {
-	if e == nil || e.Fd <= 0 {
-		return 100
-	}
-	width, _, err := term.GetSize(e.Fd)
-	if err != nil || width <= 0 {
-		return 100
-	}
-	return width
+	return 100
 }
 
 func CurrentToken(buf []rune, cursor int) (prefix string, start int, end int, ok bool) {

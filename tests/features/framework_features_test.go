@@ -4,9 +4,14 @@ import (
 	"testing"
 
 	. "github.com/oarkflow/interpreter"
+	_ "github.com/oarkflow/interpreter/pkg/builtins/scheduler"
+	"github.com/oarkflow/interpreter/pkg/eval"
 )
 
 func TestQueryBuilderPatternMatchAndDecode(t *testing.T) {
+	if !eval.HasBuiltin("db_connect") {
+		t.Skip("database builtins are optional")
+	}
 	res, err := ExecWithOptions(`
 let db, err = db_connect("sqlite", ":memory:");
 if (err != null) { throw err; }

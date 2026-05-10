@@ -2,7 +2,5 @@
 
 package interpreter
 
-import "github.com/oarkflow/interpreter/pkg/builtins/scheduler"
-
-type Scheduler = scheduler.Scheduler
-type ScheduledJob = scheduler.ScheduledJob
+type Scheduler struct{}
+type ScheduledJob struct{}

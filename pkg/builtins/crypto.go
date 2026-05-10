@@ -9,61 +9,10 @@ import (
 
 	"github.com/oarkflow/interpreter/pkg/eval"
 	"github.com/oarkflow/interpreter/pkg/object"
-	"golang.org/x/crypto/bcrypt"
 )
 
 func init() {
 	eval.RegisterBuiltins(map[string]*object.Builtin{
-		// bcrypt_hash(password) or bcrypt_hash(password, cost)
-		// Returns the bcrypt hash of the given password string.
-		"bcrypt_hash": {
-			Fn: func(args ...object.Object) object.Object {
-				if len(args) < 1 || len(args) > 2 {
-					return object.NewError("bcrypt_hash() takes 1 or 2 arguments (password[, cost]), got %d", len(args))
-				}
-				password, errObj := asString(args[0], "password")
-				if errObj != nil {
-					return errObj
-				}
-				cost := bcrypt.DefaultCost
-				if len(args) == 2 {
-					c, errObj := asInt(args[1], "cost")
-					if errObj != nil {
-						return errObj
-					}
-					cost = int(c)
-				}
-				hash, err := bcrypt.GenerateFromPassword([]byte(password), cost)
-				if err != nil {
-					return object.NewError("bcrypt_hash: %s", err)
-				}
-				return &object.String{Value: string(hash)}
-			},
-		},
-
-		// bcrypt_verify(password, hash)
-		// Returns true if the password matches the bcrypt hash.
-		"bcrypt_verify": {
-			Fn: func(args ...object.Object) object.Object {
-				if len(args) != 2 {
-					return object.NewError("bcrypt_verify() takes 2 arguments (password, hash), got %d", len(args))
-				}
-				password, errObj := asString(args[0], "password")
-				if errObj != nil {
-					return errObj
-				}
-				hash, errObj := asString(args[1], "hash")
-				if errObj != nil {
-					return errObj
-				}
-				err := bcrypt.CompareHashAndPassword([]byte(hash), []byte(password))
-				if err != nil {
-					return &object.Boolean{Value: false}
-				}
-				return &object.Boolean{Value: true}
-			},
-		},
-
 		// md5(input)
 		// Returns the MD5 hex digest of the input string.
 		"md5": {

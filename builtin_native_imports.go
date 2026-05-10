@@ -2,6 +2,4 @@
 
 package interpreter
 
-import (
-	_ "github.com/oarkflow/interpreter/pkg/builtins/watcher"
-)
+// Optional native builtins are registered by importing their packages directly.

@@ -17,11 +17,9 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/disintegration/imaging"
 	"github.com/oarkflow/interpreter/pkg/object"
 	renderpkg "github.com/oarkflow/interpreter/pkg/render"
 	"github.com/oarkflow/interpreter/pkg/security"
-	_ "golang.org/x/image/webp"
 )
 
 func parseOptionalHash(arg object.Object, name string) (map[string]object.Object, object.Object) {
@@ -596,21 +594,6 @@ func convertToRenderArtifact(value object.Object, opts map[string]object.Object)
 	cloned := *art
 	applyRenderOpts(&cloned, opts)
 	return &cloned, nil
-}
-
-func imageFilterFromOpts(opts map[string]object.Object) imaging.ResampleFilter {
-	switch strings.ToLower(optString(opts, "filter")) {
-	case "nearest":
-		return imaging.NearestNeighbor
-	case "linear":
-		return imaging.Linear
-	case "box":
-		return imaging.Box
-	case "mitchell":
-		return imaging.MitchellNetravali
-	default:
-		return imaging.Lanczos
-	}
 }
 
 func setImageMetadataFromImageValue(img *object.ImageValue, data []byte, format, mimeType string, src image.Image) {

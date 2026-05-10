@@ -32,8 +32,6 @@ import (
 
 	// Blank imports for side-effect registration.
 	builtinspkg "github.com/oarkflow/interpreter/pkg/builtins"
-	_ "github.com/oarkflow/interpreter/pkg/builtins/integrations"
-	_ "github.com/oarkflow/interpreter/pkg/builtins/reactive"
 	"github.com/oarkflow/interpreter/pkg/bytecode"
 	"github.com/oarkflow/interpreter/pkg/config"
 )

@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/oarkflow/interpreter/pkg/eval"
 	"github.com/oarkflow/interpreter/pkg/object"
 )
 
@@ -50,6 +51,9 @@ func TestFileValueRoundTripBuiltins(t *testing.T) {
 }
 
 func TestImageValueResizeAndRenderBuiltins(t *testing.T) {
+	if !eval.HasBuiltin("image_load") {
+		t.Skip("image builtins are optional")
+	}
 	dir := makeWorkspaceTempDir(t)
 	imagePath := filepath.Join(dir, "sample.png")
 	writePNGFixture(t, imagePath, 4, 3)

@@ -8,8 +8,6 @@ import (
 	"github.com/oarkflow/interpreter/pkg/repl"
 
 	_ "github.com/oarkflow/interpreter/pkg/builtins"
-	_ "github.com/oarkflow/interpreter/pkg/builtins/database"
-	_ "github.com/oarkflow/interpreter/pkg/builtins/integrations"
 	_ "github.com/oarkflow/interpreter/pkg/builtins/reactive"
 	_ "github.com/oarkflow/interpreter/pkg/builtins/scheduler"
 	_ "github.com/oarkflow/interpreter/pkg/builtins/server"
