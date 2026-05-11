@@ -3,6 +3,7 @@ package interpreter
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -18,6 +19,12 @@ import (
 const (
 	defaultUntrustedMaxSourceBytes = 1 << 20
 	defaultUntrustedMaxOutputBytes = 64 << 10
+
+	untrustedJSONTypeKey        = "__spl_type"
+	untrustedJSONRenderArtifact = "render_artifact"
+	untrustedJSONFileValue      = "file_value"
+	untrustedJSONImageValue     = "image_value"
+	untrustedJSONTableValue     = "table_value"
 )
 
 type UntrustedExecOptions struct {
@@ -251,7 +258,7 @@ func execUntrustedWorker(script string, data map[string]interface{}, opts Untrus
 		}
 		return nil, &ExecError{Kind: kind, Message: resp.Error}
 	}
-	return toObject(resp.Result), nil
+	return objectFromWorkerJSONValue(resp.Result), nil
 }
 
 func untrustedWorkerCommand(opts UntrustedExecOptions) (string, []string, error) {
@@ -392,6 +399,61 @@ func RunUntrustedWorker(r io.Reader, w io.Writer) int {
 
 func objectToJSONValue(obj Object) interface{} {
 	switch v := obj.(type) {
+	case *RenderArtifact:
+		return map[string]interface{}{
+			untrustedJSONTypeKey: untrustedJSONRenderArtifact,
+			"kind":               v.Kind,
+			"source":             v.Source,
+			"source_type":        v.SourceTyp,
+			"mime":               v.MIME,
+			"name":               v.Name,
+			"alt":                v.Alt,
+			"width":              v.Width,
+			"height":             v.Height,
+			"max_bytes":          v.MaxBytes,
+			"mode":               v.Mode,
+		}
+	case *FileValue:
+		return map[string]interface{}{
+			untrustedJSONTypeKey: untrustedJSONFileValue,
+			"name":               v.Name,
+			"path":               v.Path,
+			"mime":               v.MIME,
+			"encoding":           v.Encoding,
+			"source_type":        v.SourceType,
+			"size":               v.Size,
+			"data":               base64.StdEncoding.EncodeToString(v.Data),
+		}
+	case *ImageValue:
+		return map[string]interface{}{
+			untrustedJSONTypeKey: untrustedJSONImageValue,
+			"name":               v.Name,
+			"path":               v.Path,
+			"mime":               v.MIME,
+			"format":             v.Format,
+			"source_type":        v.SourceType,
+			"width":              v.Width,
+			"height":             v.Height,
+			"data":               base64.StdEncoding.EncodeToString(v.Data),
+		}
+	case *TableValue:
+		rows := make([]interface{}, len(v.Rows))
+		for i, row := range v.Rows {
+			out := make(map[string]interface{}, len(row))
+			for k, cell := range row {
+				out[k] = objectToJSONValue(cell)
+			}
+			rows[i] = out
+		}
+		return map[string]interface{}{
+			untrustedJSONTypeKey: untrustedJSONTableValue,
+			"name":               v.Name,
+			"path":               v.Path,
+			"mime":               v.MIME,
+			"source_type":        v.SourceType,
+			"columns":            append([]string(nil), v.Columns...),
+			"rows":               rows,
+		}
 	case *Integer:
 		return v.Value
 	case *Float:
@@ -416,5 +478,163 @@ func objectToJSONValue(obj Object) interface{} {
 		return out
 	default:
 		return obj.Inspect()
+	}
+}
+
+func objectFromWorkerJSONValue(val interface{}) Object {
+	switch v := val.(type) {
+	case map[string]interface{}:
+		switch typ, _ := v[untrustedJSONTypeKey].(string); typ {
+		case untrustedJSONRenderArtifact:
+			return renderArtifactFromWorkerJSON(v)
+		case untrustedJSONFileValue:
+			return fileValueFromWorkerJSON(v)
+		case untrustedJSONImageValue:
+			return imageValueFromWorkerJSON(v)
+		case untrustedJSONTableValue:
+			return tableValueFromWorkerJSON(v)
+		}
+		pairs := make(map[HashKey]HashPair, len(v))
+		for k, vv := range v {
+			key := &String{Value: k}
+			pairs[key.HashKey()] = HashPair{Key: key, Value: objectFromWorkerJSONValue(vv)}
+		}
+		return &Hash{Pairs: pairs}
+	case []interface{}:
+		elements := make([]Object, len(v))
+		for i, el := range v {
+			elements[i] = objectFromWorkerJSONValue(el)
+		}
+		return &Array{Elements: elements}
+	default:
+		return toObject(v)
+	}
+}
+
+func renderArtifactFromWorkerJSON(values map[string]interface{}) *RenderArtifact {
+	return &RenderArtifact{
+		Kind:      workerJSONString(values, "kind"),
+		Source:    workerJSONString(values, "source"),
+		SourceTyp: workerJSONString(values, "source_type"),
+		MIME:      workerJSONString(values, "mime"),
+		Name:      workerJSONString(values, "name"),
+		Alt:       workerJSONString(values, "alt"),
+		Width:     workerJSONInt64(values, "width"),
+		Height:    workerJSONInt64(values, "height"),
+		MaxBytes:  workerJSONInt64(values, "max_bytes"),
+		Mode:      workerJSONString(values, "mode"),
+	}
+}
+
+func fileValueFromWorkerJSON(values map[string]interface{}) *FileValue {
+	data := workerJSONBase64(values, "data")
+	size := workerJSONInt64(values, "size")
+	if size <= 0 && len(data) > 0 {
+		size = int64(len(data))
+	}
+	return &FileValue{
+		Name:       workerJSONString(values, "name"),
+		Path:       workerJSONString(values, "path"),
+		MIME:       workerJSONString(values, "mime"),
+		Encoding:   workerJSONString(values, "encoding"),
+		SourceType: workerJSONString(values, "source_type"),
+		Size:       size,
+		Data:       data,
+	}
+}
+
+func imageValueFromWorkerJSON(values map[string]interface{}) *ImageValue {
+	return &ImageValue{
+		Name:       workerJSONString(values, "name"),
+		Path:       workerJSONString(values, "path"),
+		MIME:       workerJSONString(values, "mime"),
+		Format:     workerJSONString(values, "format"),
+		SourceType: workerJSONString(values, "source_type"),
+		Width:      workerJSONInt64(values, "width"),
+		Height:     workerJSONInt64(values, "height"),
+		Data:       workerJSONBase64(values, "data"),
+	}
+}
+
+func tableValueFromWorkerJSON(values map[string]interface{}) *TableValue {
+	table := &TableValue{
+		Name:       workerJSONString(values, "name"),
+		Path:       workerJSONString(values, "path"),
+		MIME:       workerJSONString(values, "mime"),
+		SourceType: workerJSONString(values, "source_type"),
+		Columns:    workerJSONStringSlice(values, "columns"),
+	}
+	if rows, ok := values["rows"].([]interface{}); ok {
+		table.Rows = make([]map[string]Object, 0, len(rows))
+		for _, row := range rows {
+			raw, ok := row.(map[string]interface{})
+			if !ok {
+				continue
+			}
+			cells := make(map[string]Object, len(raw))
+			for k, cell := range raw {
+				cells[k] = objectFromWorkerJSONValue(cell)
+			}
+			table.Rows = append(table.Rows, cells)
+		}
+	}
+	return table
+}
+
+func workerJSONString(values map[string]interface{}, key string) string {
+	if values == nil {
+		return ""
+	}
+	if v, ok := values[key].(string); ok {
+		return v
+	}
+	return ""
+}
+
+func workerJSONStringSlice(values map[string]interface{}, key string) []string {
+	if values == nil {
+		return nil
+	}
+	switch v := values[key].(type) {
+	case []string:
+		return append([]string(nil), v...)
+	case []interface{}:
+		out := make([]string, 0, len(v))
+		for _, item := range v {
+			if s, ok := item.(string); ok {
+				out = append(out, s)
+			}
+		}
+		return out
+	default:
+		return nil
+	}
+}
+
+func workerJSONBase64(values map[string]interface{}, key string) []byte {
+	raw := workerJSONString(values, key)
+	if raw == "" {
+		return nil
+	}
+	data, err := base64.StdEncoding.DecodeString(raw)
+	if err != nil {
+		return nil
+	}
+	return data
+}
+
+func workerJSONInt64(values map[string]interface{}, key string) int64 {
+	if values == nil {
+		return 0
+	}
+	switch v := values[key].(type) {
+	case float64:
+		return int64(v)
+	case int64:
+		return v
+	case int:
+		return int64(v)
+	default:
+		return 0
 	}
 }

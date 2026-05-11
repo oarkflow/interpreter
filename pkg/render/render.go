@@ -262,24 +262,8 @@ func resolveURL(ctx context.Context, env *object.Environment, cfg *object.Render
 	if cfg == nil || !cfg.AllowURLs {
 		return nil, explicitMIME, fmt.Errorf("URL rendering is disabled")
 	}
-	if err := security.CheckNetworkAllowed(target); err != nil {
+	if err := checkRenderURLAllowed(cfg, target); err != nil {
 		return nil, explicitMIME, err
-	}
-	if len(cfg.AllowURLHosts) > 0 {
-		host, err := security.HostFromTarget(target)
-		if err != nil {
-			return nil, explicitMIME, err
-		}
-		ok := false
-		for _, allow := range cfg.AllowURLHosts {
-			if security.MatchHostPattern(host, allow) {
-				ok = true
-				break
-			}
-		}
-		if !ok {
-			return nil, explicitMIME, fmt.Errorf("render URL host not allowed: %s", host)
-		}
 	}
 	timeout := 5 * time.Second
 	if env != nil && env.RuntimeLimits != nil && !env.RuntimeLimits.Deadline.IsZero() {
@@ -292,7 +276,7 @@ func resolveURL(ctx context.Context, env *object.Environment, cfg *object.Render
 		if len(via) >= 5 {
 			return fmt.Errorf("too many redirects")
 		}
-		return security.CheckNetworkAllowed(req.URL.String())
+		return checkRenderURLAllowed(cfg, req.URL.String())
 	}
 	if ctx == nil {
 		ctx = context.Background()
@@ -322,6 +306,32 @@ func resolveURL(ctx context.Context, env *object.Environment, cfg *object.Render
 		mimeType = strings.Split(resp.Header.Get("Content-Type"), ";")[0]
 	}
 	return data, detectMIME(mimeType, resp.Request.URL.Path, data), nil
+}
+
+func checkRenderURLAllowed(cfg *object.RenderConfig, target string) error {
+	u, err := url.Parse(strings.TrimSpace(target))
+	if err != nil {
+		return err
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return fmt.Errorf("URL rendering only supports http and https schemes")
+	}
+	host := strings.TrimSpace(u.Hostname())
+	if host == "" {
+		return fmt.Errorf("render URL missing host")
+	}
+	if err := security.CheckNetworkAllowed(target); err != nil {
+		return err
+	}
+	if cfg == nil || len(cfg.AllowURLHosts) == 0 {
+		return nil
+	}
+	for _, allow := range cfg.AllowURLHosts {
+		if security.MatchHostPattern(host, allow) {
+			return nil
+		}
+	}
+	return fmt.Errorf("render URL host not allowed: %s", host)
 }
 
 func detectMIME(explicit, path string, data []byte) string {

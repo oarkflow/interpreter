@@ -95,6 +95,99 @@ func TestResolveURLAllowedHost(t *testing.T) {
 	}
 }
 
+func TestResolveURLRedirectDeniedByRenderAllowlist(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "http://example.invalid/asset.txt", http.StatusFound)
+	}))
+	defer server.Close()
+	host, err := security.HostFromTarget(server.URL)
+	if err != nil {
+		t.Fatalf("host: %v", err)
+	}
+
+	_, err = security.WithSecurityPolicyOverride(&object.SecurityPolicy{
+		AllowedCapabilities: []string{security.CapabilityNetwork},
+		AllowedNetworkHosts: []string{"*"},
+	}, func() (any, error) {
+		return Resolve(context.Background(), &object.Environment{RenderConfig: &object.RenderConfig{
+			Mode:          "auto",
+			MaxBytes:      1024,
+			AllowURLs:     true,
+			AllowURLHosts: []string{host},
+		}}, &object.RenderArtifact{
+			Kind:      "text",
+			SourceTyp: "url",
+			Source:    server.URL,
+		})
+	})
+	if err == nil || !strings.Contains(err.Error(), "render URL host not allowed: example.invalid") {
+		t.Fatalf("expected render allowlist redirect denial, got %v", err)
+	}
+}
+
+func TestResolveURLRedirectAllowedHost(t *testing.T) {
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/plain")
+		_, _ = w.Write([]byte("redirect ok"))
+	}))
+	defer target.Close()
+	source := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, target.URL, http.StatusFound)
+	}))
+	defer source.Close()
+	sourceHost, err := security.HostFromTarget(source.URL)
+	if err != nil {
+		t.Fatalf("source host: %v", err)
+	}
+	targetHost, err := security.HostFromTarget(target.URL)
+	if err != nil {
+		t.Fatalf("target host: %v", err)
+	}
+
+	result, err := security.WithSecurityPolicyOverride(&object.SecurityPolicy{
+		AllowedCapabilities: []string{security.CapabilityNetwork},
+		AllowedNetworkHosts: []string{"*"},
+	}, func() (any, error) {
+		return Resolve(context.Background(), &object.Environment{RenderConfig: &object.RenderConfig{
+			Mode:          "auto",
+			MaxBytes:      1024,
+			AllowURLs:     true,
+			AllowURLHosts: []string{sourceHost, targetHost},
+		}}, &object.RenderArtifact{
+			Kind:      "text",
+			SourceTyp: "url",
+			Source:    source.URL,
+		})
+	})
+	if err != nil {
+		t.Fatalf("resolve redirected URL: %v", err)
+	}
+	res := result.(*ResolvedArtifact)
+	if res.Content != "redirect ok" || res.MIME != "text/plain" {
+		t.Fatalf("unexpected redirected artifact: %#v", res)
+	}
+}
+
+func TestResolveURLRejectsNonHTTPScheme(t *testing.T) {
+	_, err := security.WithSecurityPolicyOverride(&object.SecurityPolicy{
+		AllowedCapabilities: []string{security.CapabilityNetwork},
+		AllowedNetworkHosts: []string{"*"},
+	}, func() (any, error) {
+		return Resolve(context.Background(), &object.Environment{RenderConfig: &object.RenderConfig{
+			Mode:      "auto",
+			MaxBytes:  1024,
+			AllowURLs: true,
+		}}, &object.RenderArtifact{
+			Kind:      "text",
+			SourceTyp: "url",
+			Source:    "file:///etc/passwd",
+		})
+	})
+	if err == nil || !strings.Contains(err.Error(), "only supports http and https") {
+		t.Fatalf("expected non-http scheme denial, got %v", err)
+	}
+}
+
 func TestRenderResolvedForTerminalMetadataFallback(t *testing.T) {
 	out := RenderResolvedForTerminal(&ResolvedArtifact{
 		Kind: "image",

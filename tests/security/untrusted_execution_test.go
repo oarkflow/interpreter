@@ -97,3 +97,35 @@ func TestRunUntrustedWorkerProtocol(t *testing.T) {
 		t.Fatalf("unexpected worker result: %#v", resp)
 	}
 }
+
+func TestRunUntrustedWorkerPreservesRenderArtifactProtocol(t *testing.T) {
+	req := map[string]any{
+		"script": `render("<html><body>Hello</body></html>", {"name": "hello.html", "alt": "Greeting"});`,
+		"options": map[string]any{
+			"inprocess": true,
+		},
+	}
+	payload, err := json.Marshal(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+	code := RunUntrustedWorker(bytes.NewReader(payload), &out)
+	if code != 0 {
+		t.Fatalf("worker returned %d: %s", code, out.String())
+	}
+	var resp map[string]any
+	if err := json.Unmarshal(out.Bytes(), &resp); err != nil {
+		t.Fatalf("invalid worker json: %v\n%s", err, out.String())
+	}
+	result, ok := resp["result"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected structured render artifact, got %#v", resp["result"])
+	}
+	if result["__spl_type"] != "render_artifact" || result["kind"] != "html" || result["source_type"] != "data" || result["mime"] != "text/html" {
+		t.Fatalf("unexpected render artifact protocol result: %#v", result)
+	}
+	if result["name"] != "hello.html" || result["alt"] != "Greeting" {
+		t.Fatalf("missing render artifact metadata: %#v", result)
+	}
+}
