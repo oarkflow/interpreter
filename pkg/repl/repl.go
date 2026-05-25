@@ -1417,6 +1417,7 @@ func HandleReplMetaCommand(line string, editor *ReplEditor, env *object.Environm
 		ReplPrintLine("- Alt+Left/Alt+Right, Ctrl+Left/Ctrl+Right, Alt+B/Alt+F: move by word")
 		ReplPrintLine("- Ctrl+U/Ctrl+K/Ctrl+W: clear before cursor, clear after cursor, delete previous word")
 		ReplPrintLine("- Tab: semantic completion for names/methods/fields")
+		ReplPrintLine("- Suggestions appear while typing; Tab accepts or expands the best match")
 		ReplPrintLine("- Inline suggestion: gray suffix preview")
 		ReplPrintLine("- Call tips: signatures/docs shown while typing calls")
 		ReplPrintLine("- Ctrl+R: reverse history search")
@@ -2319,13 +2320,15 @@ func (e *ReplEditor) readLine(prompt string) (string, error) {
 		if cursor == len(buf) {
 			ctx := CompletionContext(buf, cursor)
 			if ctx.Ok && ctx.Prefix != "" {
-				if suggestion, ok := firstCompletion(ctx.Prefix, e.CompletionsForContext(ctx)); ok && suggestion != ctx.Prefix {
+				completions := e.CompletionsForContext(ctx)
+				if suggestion, ok := firstCompletion(ctx.Prefix, completions); ok && suggestion != ctx.Prefix && strings.HasPrefix(suggestion, ctx.Prefix) {
 					suffix := suggestion[len(ctx.Prefix):]
 					_, _ = fmt.Fprint(e.Out, Paint(suffix, ColorGray))
 				}
+				helperLines = append(helperLines, e.SuggestionLines(ctx, completions, replEditorWidth(e))...)
 			}
 			if tip := e.InlineHint(line, cursor); tip != "" {
-				helperLines = ReplHintLines(tip, replEditorWidth(e))
+				helperLines = append(helperLines, ReplHintLines(tip, replEditorWidth(e))...)
 			}
 		}
 		if len(helperLines) > 0 {
@@ -2716,6 +2719,44 @@ func (e *ReplEditor) completionDetails(ctx ReplCompletionContext) map[string]str
 		details[item.Label] = ReplCompactHint(markdownToPlain(detail), 96)
 	}
 	return details
+}
+
+func (e *ReplEditor) SuggestionLines(ctx ReplCompletionContext, candidates []string, width int) []string {
+	if !ctx.Ok || strings.TrimSpace(ctx.Prefix) == "" {
+		return nil
+	}
+	matches := FindCompletions(ctx.Prefix, candidates)
+	if len(matches) == 0 {
+		return nil
+	}
+	if len(matches) > 5 {
+		matches = matches[:5]
+	}
+	details := e.completionDetails(ctx)
+	lines := make([]string, 0, len(matches)+1)
+	lines = append(lines, "suggestions: "+strings.Join(matches, "  "))
+	for _, match := range matches {
+		if detail := strings.TrimSpace(details[match]); detail != "" {
+			lines = append(lines, "  "+match+" - "+ReplCompactHint(detail, suggestionDetailWidth(width)))
+			if len(lines) >= 3 {
+				break
+			}
+		}
+	}
+	return lines
+}
+
+func suggestionDetailWidth(width int) int {
+	if width <= 0 {
+		return 90
+	}
+	if width < 60 {
+		return 50
+	}
+	if width > 140 {
+		return 120
+	}
+	return width - 20
 }
 
 func (e *ReplEditor) InlineHint(line string, cursor int) string {

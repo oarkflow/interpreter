@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -90,5 +91,18 @@ func TestFuzzyCompletionsFindCommands(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("expected :palette completion, got %#v", got)
+	}
+}
+
+func TestSuggestionLinesShowVisibleMenu(t *testing.T) {
+	editor := &ReplEditor{}
+	ctx := ReplCompletionContext{Prefix: ":pa", Ok: true}
+	lines := editor.SuggestionLines(ctx, ReplCandidates(), 100)
+	if len(lines) == 0 {
+		t.Fatalf("expected visible suggestion lines")
+	}
+	joined := strings.Join(lines, "\n")
+	if !strings.Contains(joined, "suggestions:") || !strings.Contains(joined, ":palette") {
+		t.Fatalf("unexpected suggestion lines: %#v", lines)
 	}
 }
