@@ -89,6 +89,28 @@ func TestLexerSingleQuotedString(t *testing.T) {
 	}
 }
 
+func TestDoubleQuotedStringDoesNotInterpolate(t *testing.T) {
+	obj := testEval(`"  @effect(count) {<span>${count}</span>}";`)
+	str, ok := obj.(*object.String)
+	if !ok {
+		t.Fatalf("expected string, got %T (%+v)", obj, obj)
+	}
+	if str.Value != "  @effect(count) {<span>${count}</span>}" {
+		t.Fatalf("unexpected string value: %q", str.Value)
+	}
+}
+
+func TestBacktickTemplateStillInterpolates(t *testing.T) {
+	obj := testEval("let count = 3; `count=${count}`;")
+	str, ok := obj.(*object.String)
+	if !ok {
+		t.Fatalf("expected string, got %T (%+v)", obj, obj)
+	}
+	if str.Value != "count=3" {
+		t.Fatalf("unexpected template value: %q", str.Value)
+	}
+}
+
 func TestLexerWordOperatorAliases(t *testing.T) {
 	input := `amount > 100000 and department IN ["finance"] Or not archived`
 	tests := []struct {

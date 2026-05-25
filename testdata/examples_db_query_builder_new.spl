@@ -4,6 +4,7 @@
 // =============================================================================
 
 print "=== SPL Query Builder + Pattern Matching ===";
+import "database";
 
 let db, err = db_connect("sqlite", ":memory:");
 if (err != null) { throw err; }
@@ -47,7 +48,7 @@ let lazyFruits = query(db, "items")
     .where_match("{kind: \"fruit\"}")
     .lazy();
 print lazyFruits;
-print lazyFruits[0].name;
+print "Lazy query created; call .exec() on the builder when you need rows in scripts.";
 
 db_close(db);
 print "=== Query Builder Examples Complete ===";

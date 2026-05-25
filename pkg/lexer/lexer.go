@@ -570,7 +570,7 @@ func (l *Lexer) NextToken() token.Token {
 			tok = token.Token{Type: token.QUESTION, Literal: "?"}
 		}
 	case '`':
-		tok.Type = token.STRING
+		tok.Type = token.TEMPLATE
 		tok.Literal = l.readTemplateLiteral()
 	case '"', '\'':
 		tok.Type = token.STRING

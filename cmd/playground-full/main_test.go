@@ -290,8 +290,8 @@ func TestBuiltinCodeExamplesContainCompleteExamples(t *testing.T) {
 	if !strings.Contains(examples["file-values"], `file_load("testdata/test_io.txt")`) {
 		t.Fatalf("expected file-values example to demonstrate file_load, got %q", examples["file-values"])
 	}
-	if !strings.Contains(examples["image-values"], `image(`) || !strings.Contains(examples["image-values"], `file_load(rendered)`) {
-		t.Fatalf("expected image-values example to demonstrate core image artifacts, got %q", examples["image-values"])
+	if !strings.Contains(examples["image-values"], `image_resize(`) || !strings.Contains(examples["image-values"], `image_render(`) {
+		t.Fatalf("expected image-values example to demonstrate image transforms, got %q", examples["image-values"])
 	}
 	if !strings.Contains(examples["json-csv-values"], `table_filter(`) || !strings.Contains(examples["json-csv-values"], `csv_decode(`) {
 		t.Fatalf("expected json-csv-values example to demonstrate table helpers, got %q", examples["json-csv-values"])

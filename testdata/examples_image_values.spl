@@ -1,7 +1,7 @@
 // Image values can be stored, transformed, inspected, and rendered again.
 // This uses an inline PNG so it works without extra files or URL access.
 
-let tiny = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO5W2MsAAAAASUVORK5CYII=";
+let tiny = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAAEElEQVR4nGL6z8AACAAA//8DCQECWLbVUAAAAABJRU5ErkJggg==";
 let original = image_load(file(tiny, {"mime": "image/png", "name": "tiny.png"}));
 let resized = image_resize(original, 48, 48);
 let cropped = image_crop(resized, 0, 0, 24, 24);

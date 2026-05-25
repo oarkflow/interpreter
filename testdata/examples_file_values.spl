@@ -5,13 +5,13 @@ let note = file_load("testdata/test_io.txt");
 print sprintf("name=%s mime=%s size=%d", file_name(note), file_mime(note), file_size(note));
 print sprintf("base64-prefix=%s", substring(file_bytes(note), 0, 20));
 
-let readme = file_load(file("docs/README.md", {
-	"name": "README.md",
-	"mime": "text/markdown"
+let profile = file_load(file("testdata/data/profile.json", {
+	"name": "profile.json",
+	"mime": "application/json"
 }));
 
 print file_text(note);
-print render(readme, {
-	"name": "README.preview.md",
-	"mime": "text/markdown"
+print render(profile, {
+	"name": "profile.preview.json",
+	"mime": "application/json"
 });

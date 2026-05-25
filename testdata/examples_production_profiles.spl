@@ -11,7 +11,7 @@ import "std/fs" as fs;
 
 print "=== production profile smoke ===";
 
-let content, err = fs.read_file("test_io.txt");
+let content, err = fs.read_file("testdata/test_io.txt");
 if (err != null) {
   throw err;
 }

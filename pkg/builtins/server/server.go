@@ -1018,6 +1018,9 @@ func builtinListen(env *object.Environment, args ...object.Object) object.Object
 	if err := security.CheckCapabilityAllowed(security.CapabilityServer); err != nil {
 		return object.NewError("%s", err)
 	}
+	if err := security.CheckCapabilityAllowed(security.CapabilityNetwork); err != nil {
+		return object.NewError("%s", err)
+	}
 	if len(args) < 1 {
 		return object.NewError("listen() requires a server argument")
 	}
@@ -1063,6 +1066,9 @@ func builtinListen(env *object.Environment, args ...object.Object) object.Object
 
 func builtinListenAsync(env *object.Environment, args ...object.Object) object.Object {
 	if err := security.CheckCapabilityAllowed(security.CapabilityServer); err != nil {
+		return object.NewError("%s", err)
+	}
+	if err := security.CheckCapabilityAllowed(security.CapabilityNetwork); err != nil {
 		return object.NewError("%s", err)
 	}
 	if len(args) < 1 {

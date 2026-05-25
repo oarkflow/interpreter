@@ -3,7 +3,10 @@
 // Use this script in the CLI or REPL when filesystem write access is allowed.
 
 let payload = file_load("testdata/test_io.txt");
-let tiny = image_load("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO5W2MsAAAAASUVORK5CYII=");
+let tiny = image_load(file("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAAEElEQVR4nGL6z8AACAAA//8DCQECWLbVUAAAAABJRU5ErkJggg==", {
+	"mime": "image/png",
+	"name": "tiny.png"
+}));
 
 // file_save(payload, "tmp/test_io_copy.txt");
 // file_copy("testdata/test_io.txt", "tmp/test_io_copy_2.txt");

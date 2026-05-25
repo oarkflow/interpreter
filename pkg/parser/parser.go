@@ -838,6 +838,8 @@ func (p *Parser) parseExpression(precedence int) ast.Expression {
 		leftExp = p.parseFloatLiteral()
 	case token.STRING:
 		leftExp = p.parseStringLiteral()
+	case token.TEMPLATE:
+		leftExp = p.parseTemplateLiteral()
 	case token.TRUE, token.FALSE:
 		leftExp = p.parseBooleanLiteral()
 	case token.NULL:
@@ -971,6 +973,8 @@ func (p *Parser) prefixParseFn() func() ast.Expression {
 		return p.parseFloatLiteral
 	case token.STRING:
 		return p.parseStringLiteral
+	case token.TEMPLATE:
+		return p.parseTemplateLiteral
 	case token.TRUE, token.FALSE:
 		return p.parseBooleanLiteral
 	case token.NULL:
@@ -1679,6 +1683,10 @@ func (p *Parser) parseFloatLiteral() ast.Expression {
 }
 
 func (p *Parser) parseStringLiteral() ast.Expression {
+	return &ast.StringLiteral{Value: p.curToken.Literal}
+}
+
+func (p *Parser) parseTemplateLiteral() ast.Expression {
 	raw := p.curToken.Literal
 	if !strings.Contains(raw, "${") {
 		return &ast.StringLiteral{Value: raw}

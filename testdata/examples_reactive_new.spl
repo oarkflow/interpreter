@@ -40,6 +40,77 @@ print "@signal(counter = 5)";
 print "<h1>Counter: @bind(counter)</h1>";
 print "@effect(counter) {<strong>${counter}</strong>}";
 
+print "\n--- Renderable preview artifact ---";
+let reactivePreview = """
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SPL reactive preview</title>
+  <style>
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: #f8fafc;
+      color: #172033;
+    }
+    main {
+      width: min(92vw, 520px);
+      border: 1px solid #dbe3ef;
+      border-radius: 8px;
+      background: white;
+      padding: 24px;
+      box-shadow: 0 18px 40px rgba(15, 23, 42, 0.12);
+    }
+    h1 {
+      margin: 0 0 12px;
+      font-size: 24px;
+      line-height: 1.2;
+    }
+    .value {
+      display: inline-flex;
+      min-width: 44px;
+      justify-content: center;
+      border-radius: 6px;
+      background: #0f766e;
+      color: white;
+      padding: 2px 8px;
+      font-weight: 700;
+    }
+    code {
+      display: block;
+      margin-top: 16px;
+      border-radius: 6px;
+      background: #101827;
+      color: #d7e1ee;
+      padding: 14px;
+      white-space: pre-wrap;
+      font-size: 13px;
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Counter: <span class="value">5</span></h1>
+    <p>This is the shape that the reactive template directives should produce after SSR and hydration.</p>
+    <code>@signal(counter = 5)
+<h1>Counter: @bind(counter)</h1>
+@effect(counter) {<strong>${counter}</strong>}</code>
+  </main>
+</body>
+</html>
+""";
+
+print render(reactivePreview, {
+    "name": "reactive-preview.html",
+    "mime": "text/html",
+    "mode": "metadata"
+});
+
 print "\nHydration behavior:";
 print "  - signals are serialized into the page";
 print "  - @bind wires DOM updates and input[value] two-way sync";

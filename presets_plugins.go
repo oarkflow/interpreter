@@ -70,6 +70,16 @@ func LookupStdModule(name string) (map[string]Object, bool) {
 	exports, ok := stdModules.items[name]
 	builtinNames, builtinOK := stdModules.builtinItems[name]
 	stdModules.mu.RUnlock()
+	if name == "builtins" {
+		names := eval.BuiltinNames()
+		out := make(map[string]Object, len(names))
+		for _, builtinName := range names {
+			if fn, ok := eval.BuiltinByName(builtinName); ok {
+				out[builtinName] = fn
+			}
+		}
+		return out, true
+	}
 	if ok {
 		out := make(map[string]Object, len(exports))
 		for k, v := range exports {
@@ -82,11 +92,31 @@ func LookupStdModule(name string) (map[string]Object, bool) {
 		for _, builtinName := range builtinNames {
 			if fn, ok := eval.BuiltinByName(builtinName); ok {
 				out[builtinName] = fn
+			} else if optionalBuiltinModule(name) {
+				out[builtinName] = unavailableBuiltin(name, builtinName)
 			}
+		}
+		if len(out) == 0 {
+			return nil, false
 		}
 		return out, true
 	}
 	return nil, false
+}
+
+func optionalBuiltinModule(name string) bool {
+	switch name {
+	case "database", "images", "integrations", "cryptoextra", "yaml", "config/yaml":
+		return true
+	default:
+		return false
+	}
+}
+
+func unavailableBuiltin(moduleName, builtinName string) *object.Builtin {
+	return &object.Builtin{Fn: func(args ...object.Object) object.Object {
+		return object.NewError("optional builtin %q from module %q is not linked into this interpreter; use cmd/interpreter-full, import the optional Go package in your embedding host, or build a custom preset", builtinName, moduleName)
+	}}
 }
 
 var stdModules = struct {
@@ -97,10 +127,21 @@ var stdModules = struct {
 
 func init() {
 	_ = RegisterStdBuiltinModule("std/core", "help", "sprintf", "printf", "interpolate", "len", "type")
+	_ = RegisterStdBuiltinModule("core", "help", "sprintf", "printf", "interpolate", "len", "type")
 	_ = RegisterStdBuiltinModule("std/fs", "read_file", "write_file", "file_exists", "remove_file", "readdir", "glob", "mkdir", "rmdir", "stat")
+	_ = RegisterStdBuiltinModule("fs", "read_file", "write_file", "file_exists", "remove_file", "readdir", "glob", "mkdir", "rmdir", "stat")
 	_ = RegisterStdBuiltinModule("std/render", "file", "image", "render")
+	_ = RegisterStdBuiltinModule("render", "file", "image", "render")
 	_ = RegisterStdBuiltinModule("std/test", "assert_true", "assert_eq", "assert_neq", "assert_contains", "assert_throws", "test_summary", "run_tests")
+	_ = RegisterStdBuiltinModule("test", "assert_true", "assert_eq", "assert_neq", "assert_contains", "assert_throws", "test_summary", "run_tests")
 	_ = RegisterStdBuiltinModule("std/config", "config_load", "config_parse", "secret", "secret_reveal", "secret_mask")
+	_ = RegisterStdBuiltinModule("config", "config_load", "config_parse", "secret", "secret_reveal", "secret_mask")
+	_ = RegisterStdBuiltinModule("database", "db_connect", "db_query", "db_exec", "db_begin", "db_commit", "db_rollback", "db_tables", "db_close", "query", "lazy_query")
+	_ = RegisterStdBuiltinModule("images", "image_load", "image_resize", "image_crop", "image_rotate", "image_convert", "image_save", "image_info", "image_render", "image_resize_file", "image_convert_file")
+	_ = RegisterStdBuiltinModule("integrations", "http_request", "http_get", "http_post", "webhook", "smtp_send", "ftp_list", "ftp_get", "ftp_put", "sftp_list", "sftp_get", "sftp_put")
+	_ = RegisterStdBuiltinModule("cryptoextra", "bcrypt_hash", "bcrypt_verify")
+	_ = RegisterStdBuiltinModule("yaml", "config_load", "config_parse")
+	_ = RegisterStdBuiltinModule("config/yaml", "config_load", "config_parse")
 }
 
 func CapabilityPreset(name string, moduleDir string) (*SecurityPolicy, SandboxConfig, error) {

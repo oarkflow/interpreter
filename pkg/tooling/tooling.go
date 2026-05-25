@@ -120,13 +120,33 @@ type PartialParseResult struct {
 
 var parserLineColRe = regexp.MustCompile(`^Line (\d+)(?::(\d+))?`)
 
-var knownStdModules = map[string]struct{}{
-	"std/core":   {},
-	"std/fs":     {},
-	"std/render": {},
-	"std/test":   {},
-	"std/config": {},
+var knownStdModuleExports = map[string][]string{
+	"std/core":     {"help", "sprintf", "printf", "interpolate", "len", "type"},
+	"core":         {"help", "sprintf", "printf", "interpolate", "len", "type"},
+	"std/fs":       {"read_file", "write_file", "file_exists", "remove_file", "readdir", "glob", "mkdir", "rmdir", "stat"},
+	"fs":           {"read_file", "write_file", "file_exists", "remove_file", "readdir", "glob", "mkdir", "rmdir", "stat"},
+	"std/render":   {"file", "image", "render"},
+	"render":       {"file", "image", "render"},
+	"std/test":     {"assert_true", "assert_eq", "assert_neq", "assert_contains", "assert_throws", "test_summary", "run_tests"},
+	"test":         {"assert_true", "assert_eq", "assert_neq", "assert_contains", "assert_throws", "test_summary", "run_tests"},
+	"std/config":   {"config_load", "config_parse", "secret", "secret_reveal", "secret_mask"},
+	"config":       {"config_load", "config_parse", "secret", "secret_reveal", "secret_mask"},
+	"database":     {"db_connect", "db_query", "db_exec", "db_begin", "db_commit", "db_rollback", "db_tables", "db_close", "query", "lazy_query"},
+	"images":       {"image_load", "image_resize", "image_crop", "image_rotate", "image_convert", "image_save", "image_info", "image_render", "image_resize_file", "image_convert_file"},
+	"integrations": {"http_request", "http_get", "http_post", "webhook", "smtp_send", "ftp_list", "ftp_get", "ftp_put", "sftp_list", "sftp_get", "sftp_put"},
+	"cryptoextra":  {"bcrypt_hash", "bcrypt_verify"},
+	"yaml":         {"config_load", "config_parse"},
+	"config/yaml":  {"config_load", "config_parse"},
+	"builtins":     {},
 }
+
+var knownStdModules = func() map[string]struct{} {
+	out := make(map[string]struct{}, len(knownStdModuleExports))
+	for name := range knownStdModuleExports {
+		out[name] = struct{}{}
+	}
+	return out
+}()
 
 func CheckSource(path, src string) Report {
 	return analyzeSource(path, src, false)
@@ -782,7 +802,13 @@ func (c *staticChecker) checkImport(s *ast.ImportStatement) {
 		c.declare(s.Alias.Name, "module")
 	}
 	exports := map[string]Symbol{}
-	if !isStd && resolved != "" {
+	if isStd {
+		if stdExports, ok := knownStdModuleExports[sl.Value]; ok {
+			for _, name := range stdExports {
+				exports[name] = Symbol{Name: name, Kind: "function"}
+			}
+		}
+	} else if resolved != "" {
 		exports = exportedSymbolsFromFile(resolved, map[string]struct{}{c.path: {}})
 	}
 	if len(s.Names) > 0 {
@@ -791,7 +817,7 @@ func (c *staticChecker) checkImport(s *ast.ImportStatement) {
 				continue
 			}
 			c.declare(n.Name, "import")
-			if !isStd && len(exports) > 0 {
+			if len(exports) > 0 {
 				if _, ok := exports[n.Name]; !ok {
 					line, col := c.nextNamePosition(n.Name)
 					c.warn("missing-import", n.Name, line, col, fmt.Sprintf("module %q does not export %q", sl.Value, n.Name), "export it from the module or fix the imported name")

@@ -10,6 +10,7 @@ const (
 	INT TokenType = iota
 	FLOAT
 	STRING
+	TEMPLATE
 	IDENT
 	TRUE
 	FALSE
@@ -125,6 +126,8 @@ func TypeName(t TokenType) string {
 		return "float"
 	case STRING:
 		return "string"
+	case TEMPLATE:
+		return "template"
 	case IDENT:
 		return "identifier"
 	case TRUE:

@@ -235,6 +235,23 @@ func TestCheckSourceAcceptsStdManifestAndModulePathImports(t *testing.T) {
 	}
 }
 
+func TestCheckSourceAcceptsBuiltinModuleImports(t *testing.T) {
+	src := strings.Join([]string{
+		`import "database";`,
+		`import "database" as database;`,
+		`let db_fn = db_connect;`,
+		`let namespaced = database.db_connect;`,
+		`import {db_query} from "database";`,
+		`print type(db_fn) + type(namespaced) + type(db_query);`,
+	}, "\n")
+	report := CheckSource("sample.spl", src)
+	for _, diag := range report.Diagnostics {
+		if diag.Code == "missing-import" || diag.Code == "undefined" {
+			t.Fatalf("builtin module import should be recognized: %#v", diag)
+		}
+	}
+}
+
 func TestCheckSourceResolvesBareImportExports(t *testing.T) {
 	dir := t.TempDir()
 	commonPath := filepath.Join(dir, "common.spl")

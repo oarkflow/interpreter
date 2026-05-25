@@ -21,6 +21,11 @@ import (
 	"time"
 
 	"github.com/oarkflow/interpreter"
+	_ "github.com/oarkflow/interpreter/builtins/cryptoextra"
+	_ "github.com/oarkflow/interpreter/builtins/database"
+	_ "github.com/oarkflow/interpreter/builtins/images"
+	_ "github.com/oarkflow/interpreter/builtins/integrations"
+	_ "github.com/oarkflow/interpreter/config/yaml"
 	_ "github.com/oarkflow/interpreter/pkg/builtins/reactive"
 	_ "github.com/oarkflow/interpreter/pkg/builtins/scheduler"
 	_ "github.com/oarkflow/interpreter/pkg/builtins/server"
@@ -65,7 +70,7 @@ func playgroundSecurityPolicyForProfile(root string, profile string, renderAllow
 	}
 	policy := &interpreter.SecurityPolicy{
 		ProtectHost:         true,
-		AllowedCapabilities: []string{security.CapabilityFilesystemRead, security.CapabilityAsync, security.CapabilityScheduler, security.CapabilityServer},
+		AllowedCapabilities: []string{security.CapabilityFilesystemRead, security.CapabilityAsync, security.CapabilityScheduler, security.CapabilityServer, security.CapabilityDB, security.CapabilityNetwork},
 	}
 	if strings.TrimSpace(root) != "" {
 		policy.AllowedFileReadPaths = append(policy.AllowedFileReadPaths, root)
@@ -159,13 +164,20 @@ print render(profile, {
 	"name": "profile.preview.json",
 	"mime": "application/json"
 });`,
-		"image-values": `// Core image artifacts work without optional image-codec plugins.
-// Use cmd/interpreter-full or import builtins/images in an embedded host for image_load/image_resize.
+		"image-values": `// Full playground image values can be decoded, transformed, inspected, and rendered.
+// This uses an inline PNG so it works without extra files or URL access.
 
 let tiny = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAAEElEQVR4nGL6z8AACAAA//8DCQECWLbVUAAAAABJRU5ErkJggg==";
-let rendered = image(tiny, {"mime": "image/png", "name": "tiny.png", "alt": "Inline playground image", "width": 48, "height": 48});
+import "images";
+let original = image_load(file(tiny, {"mime": "image/png", "name": "tiny.png"}));
+let resized = image_resize(original, 48, 48);
+let cropped = image_crop(resized, 0, 0, 24, 24);
+let rotated = image_rotate(cropped, 90);
+let converted = image_convert(rotated, "jpeg");
+let rendered = image_render(converted, {"name": "tiny-ops.jpg", "alt": "Transformed playground image"});
 let binary = file_load(rendered);
 
+print image_info(converted);
 print sprintf("rendered mime=%s size=%d", file_mime(binary), file_size(binary));
 print rendered;`,
 		"json-csv-values": `// Structured data helpers work with JSON files, CSV files, and in-memory tables.
@@ -830,24 +842,33 @@ print core.sprintf("string helpers still work: %s", trim("  production  ").upper
 
 print "untrusted profile smoke complete";`,
 
-		"query-builder": `// Query builder and lazy query templates.
-// These require a configured database connection, so this playground version
-// prints the SPL you would use in CLI, REPL, or an embedded host.
+		"query-builder": `// Full playground query builder with an in-memory SQLite database.
 
-let template = "let db, err = db_connect(\"sqlite\", \":memory:\");\n" +
-"let ok, _ = db_exec(db, \"CREATE TABLE users (id INTEGER, name TEXT, active BOOLEAN)\");\n" +
-"let _, _ = db_exec(db, \"INSERT INTO users(id, name, active) VALUES(?, ?, ?)\", [1, \"Ada\", true]);\n" +
-"let rows, qerr = query(db, \"users\")\n" +
-"  .select(\"id\", \"name\")\n" +
-"  .where(\"active\", true)\n" +
-"  .order_by(\"name ASC\")\n" +
-"  .limit(20)\n" +
-"  .exec();\n" +
-"print rows;";
+import "database" as database;
 
-print "=== query builder template ===";
-print template;
-print "Use lazy_query(db, \"users\") or query(db, \"users\").lazy() to defer execution.";`,
+let db, err = database.db_connect("sqlite", ":memory:");
+if (err != null) { throw err; }
+
+let _, createErr = database.db_exec(db, "CREATE TABLE users (id INTEGER, name TEXT, active BOOLEAN)");
+if (createErr != null) { throw createErr; }
+
+let _, insertErr = database.db_exec(db, "INSERT INTO users(id, name, active) VALUES(?, ?, ?)", [1, "Ada", true]);
+if (insertErr != null) { throw insertErr; }
+let _, insertErr2 = database.db_exec(db, "INSERT INTO users(id, name, active) VALUES(?, ?, ?)", [2, "Linus", true]);
+if (insertErr2 != null) { throw insertErr2; }
+
+let rows, qerr = database.query(db, "users")
+	.select("id", "name")
+	.where("active", true)
+	.order_by("name ASC")
+	.limit(20)
+	.exec();
+if (qerr != null) { throw qerr; }
+
+print rows;
+
+let lazyRows = database.lazy_query(db, "users").where("active", true);
+print lazyRows;`,
 
 		"server-sse": `// Server-Sent Events (SSE)
 // The server pushes events to the client over a long-lived connection.
