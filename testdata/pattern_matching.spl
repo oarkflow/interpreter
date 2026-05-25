@@ -10,7 +10,7 @@ let r1 = match (x) {
     case 42 => "forty-two"
     case 100 => "hundred"
 }
-print(r1) // forty-two
+print(r1)
 
 let r2 = match ("hello") {
     case "world" => "world"

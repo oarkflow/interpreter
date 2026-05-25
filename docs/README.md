@@ -30,6 +30,22 @@ go run ./cmd/interpreter
 go run ./cmd/interpreter testdata/complete_feature_showcase.spl
 ```
 
+### Run untrusted code
+
+Use the untrusted profile for user-submitted scripts. It keeps compatibility by
+remaining opt-in, but applies strict host protection, bounded runtime limits,
+worker-process execution, and a default read-only filesystem capability rooted
+at the script directory.
+
+```bash
+go run ./cmd/interpreter --profile untrusted testdata/hello.spl
+go run ./cmd/interpreter-full --profile untrusted --allow-network example.com script.spl
+```
+
+For Linux deployments that require an OS-level boundary, add
+`--require-os-isolation`. This fails closed if bubblewrap (`bwrap`) is not
+available.
+
 ### Common showcase output (expected)
 
 The following lines are expected in the showcase because they intentionally
@@ -57,6 +73,7 @@ go run ./cmd/spltool check --json testdata/hello.spl
 go run ./cmd/spltool fmt testdata/hello.spl
 go run ./cmd/spltool mod init example/app
 go run ./cmd/spltool mod tidy
+go run ./cmd/spltool test --profile untrusted tests
 ```
 
 `check` reports machine-readable diagnostics, `fmt` emits a canonical formatted version of the source, and `mod` manages `spl.mod` / `spl.lock` files for reproducible package-style imports.
@@ -71,6 +88,7 @@ go run ./cmd/spltool complete --prefix pri testdata/hello.spl
 go run ./cmd/spltool hover --line 1 --col 1 testdata/hello.spl
 go run ./cmd/spltool docs testdata/hello.spl
 go run ./cmd/spltool test --json tests
+go run ./cmd/spltool conformance
 go run ./cmd/spltool lsp
 ```
 
@@ -483,6 +501,77 @@ result, err := interpreter.ExecFileWithOptions(
 
 `ExecFile` resolves module-relative imports using the directory of the input file.
 
+### Runtime API
+
+For applications that execute many scripts, prefer a `Runtime`. It groups
+profile, limits, policy, output, plugins, and observability in one reusable
+object.
+
+```go
+rt, err := interpreter.NewRuntime(interpreter.RuntimeOptions{
+  Profile:  "readonly",
+  ModuleDir: "./scripts",
+  MaxSteps: 500_000,
+  Observability: &interpreter.ObservabilityHooks{
+    OnFinish: func(m interpreter.ExecutionMetrics) {
+      log.Printf("script=%s profile=%s duration=%s err=%s", m.Path, m.Profile, m.Duration, m.Error)
+    },
+  },
+})
+if err != nil {
+  return err
+}
+result, err := rt.ExecFile("scripts/job.spl", nil)
+```
+
+Available capability presets are `trusted`, `untrusted`, `readonly`,
+`networked`, `data-processing`, `automation`, and `server`.
+
+### Extensions
+
+Hosts can register plugins, custom builtins, and virtual standard modules at
+startup.
+
+```go
+plugin := interpreter.PluginFunc{
+  PluginName: "example",
+  Fn: func(rt *interpreter.Runtime) error {
+    interpreter.RegisterRuntimeBuiltins(map[string]*object.Builtin{
+      "answer": {Fn: func(args ...object.Object) object.Object {
+        return &object.Integer{Value: 42}
+      }},
+    })
+    return interpreter.RegisterStdModule("std/example", map[string]interpreter.Object{
+      "name": &interpreter.String{Value: "example"},
+    })
+  },
+}
+_, err := interpreter.NewRuntime(interpreter.RuntimeOptions{Plugins: []interpreter.Plugin{plugin}})
+```
+
+Built-in virtual modules are also available for clearer imports:
+
+```spl
+import "std/core" as core;
+core.sprintf("value=%d", 42);
+```
+
+Current built-in aliases include `std/core`, `std/fs`, `std/render`,
+`std/test`, and `std/config`.
+
+## Conformance
+
+The conformance command runs the canonical language smoke corpus in
+`testdata/conformance`:
+
+```bash
+go run ./cmd/spltool conformance
+go run ./cmd/spltool conformance --profile untrusted
+```
+
+Add focused language compatibility cases there when changing parser, evaluator,
+module, or builtin behavior.
+
 ## Runtime Safety Controls
 
 ### CLI flags
@@ -491,6 +580,19 @@ result, err := interpreter.ExecFileWithOptions(
 - `--max-depth`
 - `--max-steps`
 - `--max-heap-mb`
+- `--max-source-bytes`
+- `--max-string-bytes`
+- `--max-array-length`
+- `--max-hash-entries`
+- `--max-import-depth`
+- `--max-import-count`
+- `--allow-import-path`, `--deny-import-path`
+- `--allow-import-package`, `--deny-import-package`
+- `--deny-dynamic-imports`
+
+Embedding callers can set the same object/import limits with
+`MaxStringBytes`, `MaxArrayLength`, `MaxHashEntries`, `MaxImportDepth`, and
+`MaxImportCount`.
 
 ### Environment variables
 
@@ -561,6 +663,10 @@ Security behavior for playground:
 
 The interpreter supports optional policy-based controls for sensitive capabilities.
 
+- Execution profiles:
+  - `trusted` is the default and preserves existing CLI / embedding behavior.
+  - `untrusted` routes `ExecWithOptions` / `ExecFileWithOptions` and CLI runs through the untrusted worker policy.
+- CLI profile flags: `--profile trusted|untrusted`, `--require-os-isolation`, `--allow-in-process-fallback`, `--allow-cap`, `--allow-exec`, `--allow-network`, `--allow-db-driver`, `--allow-db-dsn`, `--allow-read`, and `--allow-write`.
 - `SPL_SECURITY_MODE=strict` enables default-deny for file/network/db/exec unless explicitly allowed.
 - `SPL_PROTECT_HOST=1` disables host-mutating capabilities such as `exec`, `write_file`, `remove_file`, `os_env(key, value)`, and `exit()`.
 - `SPL_ALLOW_ENV_WRITE` controls whether `os_env(key, value)` can mutate env vars.
@@ -568,8 +674,18 @@ The interpreter supports optional policy-based controls for sensitive capabiliti
 - `SPL_NETWORK_ALLOW`, `SPL_NETWORK_DENY` control network targets for HTTP/SMTP/FTP/SFTP.
 - `SPL_DB_ALLOW_DRIVERS`, `SPL_DB_DENY_DRIVERS`, `SPL_DB_DSN_ALLOW`, `SPL_DB_DSN_DENY` control `db_connect`.
 - `SPL_FILE_READ_ALLOW`, `SPL_FILE_READ_DENY`, `SPL_FILE_WRITE_ALLOW`, `SPL_FILE_WRITE_DENY` control file and import access.
+- `SPL_IMPORT_PATH_ALLOW`, `SPL_IMPORT_PATH_DENY`, `SPL_IMPORT_PACKAGE_ALLOW`, `SPL_IMPORT_PACKAGE_DENY`, and `SPL_IMPORT_DENY_DYNAMIC` control imports.
 
 Embedding callers can also pass policy via `ExecOptions.Security`.
+
+Embedding callers can opt into hardened execution with:
+
+```go
+result, err := interpreter.ExecFileWithOptions("script.spl", nil, interpreter.ExecOptions{
+    Profile:            "untrusted",
+    RequireOSIsolation: true,
+})
+```
 
 ### Sandbox VM defaults
 
@@ -577,15 +693,23 @@ All execution paths now create a sandbox VM first:
 
 - REPL runs with sandbox defaults: strict policy + host protection + bounded runtime limits.
 - `Exec`/`ExecFile` run inside a bounded sandbox VM by default, with host mutation allowed unless explicitly restricted by policy.
+- `ExecWithOptions(Profile: "untrusted")` and `ExecFileWithOptions(Profile: "untrusted")` use stricter untrusted defaults: max source size, output caps, lower runtime limits, host protection, and worker execution.
 - Module/file access is rooted to the sandbox base directory (`ModuleDir` for embedding, file directory for `ExecFile`).
 
 Embedding callers can customize sandbox behavior via `ExecOptions.Sandbox`.
+
+### Module Lock Verification
+
+`spltool mod tidy` writes `spl.lock` with checksums for local dependencies.
+Use `spltool mod verify` in CI/deployments to ensure locked dependency content
+has not changed.
 
 ## Security Notes
 
 - file operations use path sanitization to keep access inside project root
 - `exec` is command-whitelisted and can be disabled globally (`SPL_DISABLE_EXEC=1`)
 - playground evaluation enables host protection by default so browser-submitted code cannot mutate the host process or filesystem
+- playground deployments can set `PLAYGROUND_EXECUTION_PROFILE=trusted|untrusted`; the default is `untrusted`
 
 ## Performance Notes
 

@@ -144,6 +144,13 @@ func BuiltinNames() []string {
 	return names
 }
 
+func BuiltinByName(name string) (*object.Builtin, bool) {
+	builtinsMu.Lock()
+	defer builtinsMu.Unlock()
+	fn, ok := Builtins[name]
+	return fn, ok
+}
+
 // HasBuiltin reports whether a builtin with the given name is registered.
 func HasBuiltin(name string) bool {
 	builtinsMu.Lock()

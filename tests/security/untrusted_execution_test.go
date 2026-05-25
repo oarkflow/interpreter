@@ -42,6 +42,52 @@ func TestExecUntrustedDeniesHostCapabilitiesByDefault(t *testing.T) {
 	}
 }
 
+func TestExecOptionsUntrustedProfileDeniesHostCapabilitiesByDefault(t *testing.T) {
+	cases := []string{
+		`exec("sh", "-c", "echo hacked")`,
+		`listen_async(server(0));`,
+		`watch(".", function(files) { files; });`,
+		`schedule_interval(1000, function() { 1; });`,
+		`go_async(function() { 1; });`,
+		`background(function() { 1; });`,
+	}
+	if eval.HasBuiltin("http_get") {
+		cases = append(cases, `let _, err = http_get("https://example.com"); if (err != null) { throw err; }`)
+	}
+	if eval.HasBuiltin("db_connect") {
+		cases = append(cases, `let db, err = db_connect("sqlite", ":memory:"); if (err != null) { throw err; }`)
+	}
+
+	for _, script := range cases {
+		_, err := ExecWithOptions(script, nil, ExecOptions{Profile: "untrusted", WorkerCommand: []string{"does-not-exist"}, AllowInProcessFallback: true})
+		if err == nil {
+			t.Fatalf("expected untrusted profile to deny: %s", script)
+		}
+		msg := strings.ToLower(err.Error())
+		if !strings.Contains(msg, "denied") && !strings.Contains(msg, "not allowed") {
+			t.Fatalf("expected policy denial for %s, got %v", script, err)
+		}
+	}
+}
+
+func TestExecUntrustedWritesCapturedOutput(t *testing.T) {
+	var out bytes.Buffer
+	res, err := ExecUntrustedWithOptions(`print "hello from worker"; 42;`, nil, UntrustedExecOptions{
+		InProcess: true,
+		Output:    &out,
+	})
+	if err != nil {
+		t.Fatalf("ExecUntrustedWithOptions failed: %v", err)
+	}
+	if got := strings.TrimSpace(out.String()); got != "hello from worker" {
+		t.Fatalf("unexpected captured output %q", out.String())
+	}
+	num, ok := res.(*Integer)
+	if !ok || num.Value != 42 {
+		t.Fatalf("unexpected result: %T %#v", res, res)
+	}
+}
+
 func TestExecUntrustedDeniesFilesystemEscapeAndGlobEnumeration(t *testing.T) {
 	res, err := ExecUntrustedWithOptions(`let _, err = read_file("/etc/passwd"); err;`, nil, UntrustedExecOptions{InProcess: true})
 	if err != nil {
@@ -94,6 +140,34 @@ func TestRunUntrustedWorkerProtocol(t *testing.T) {
 		t.Fatalf("invalid worker json: %v\n%s", err, out.String())
 	}
 	if got := resp["result"]; got != float64(42) {
+		t.Fatalf("unexpected worker result: %#v", resp)
+	}
+}
+
+func TestRunUntrustedWorkerIncludesOutput(t *testing.T) {
+	req := map[string]any{
+		"script": `print "worker says hi"; 7;`,
+		"options": map[string]any{
+			"inprocess": true,
+		},
+	}
+	payload, err := json.Marshal(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+	code := RunUntrustedWorker(bytes.NewReader(payload), &out)
+	if code != 0 {
+		t.Fatalf("worker returned %d: %s", code, out.String())
+	}
+	var resp map[string]any
+	if err := json.Unmarshal(out.Bytes(), &resp); err != nil {
+		t.Fatalf("invalid worker json: %v\n%s", err, out.String())
+	}
+	if got := strings.TrimSpace(resp["output"].(string)); got != "worker says hi" {
+		t.Fatalf("unexpected worker output: %#v", resp)
+	}
+	if got := resp["result"]; got != float64(7) {
 		t.Fatalf("unexpected worker result: %#v", resp)
 	}
 }

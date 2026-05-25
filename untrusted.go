@@ -30,6 +30,7 @@ const (
 type UntrustedExecOptions struct {
 	Args      []string
 	ModuleDir string
+	Output    io.Writer `json:"-"`
 
 	MaxSourceBytes     int64
 	MaxDepth           int
@@ -47,6 +48,11 @@ type UntrustedExecOptions struct {
 	AllowedDBDSNPatterns  []string
 	AllowedFileReadPaths  []string
 	AllowedFileWritePaths []string
+	AllowedImportPaths    []string
+	DeniedImportPaths     []string
+	AllowedImportPackages []string
+	DeniedImportPackages  []string
+	DenyDynamicImports    bool
 
 	WorkerCommand          []string
 	RequireOSIsolation     bool
@@ -157,6 +163,11 @@ func untrustedSecurityPolicy(opts UntrustedExecOptions) *SecurityPolicy {
 		AllowedDBDSNPatterns:  append([]string(nil), opts.AllowedDBDSNPatterns...),
 		AllowedFileReadPaths:  append([]string(nil), opts.AllowedFileReadPaths...),
 		AllowedFileWritePaths: append([]string(nil), opts.AllowedFileWritePaths...),
+		AllowedImportPaths:    append([]string(nil), opts.AllowedImportPaths...),
+		DeniedImportPaths:     append([]string(nil), opts.DeniedImportPaths...),
+		AllowedImportPackages: append([]string(nil), opts.AllowedImportPackages...),
+		DeniedImportPackages:  append([]string(nil), opts.DeniedImportPackages...),
+		DenyDynamicImports:    opts.DenyDynamicImports,
 	}
 }
 
@@ -181,12 +192,25 @@ func untrustedSandboxConfig(opts UntrustedExecOptions) SandboxConfig {
 		AllowedDBDSNPatterns:  append([]string(nil), opts.AllowedDBDSNPatterns...),
 		AllowedFileReadPaths:  append([]string(nil), opts.AllowedFileReadPaths...),
 		AllowedFileWritePaths: append([]string(nil), opts.AllowedFileWritePaths...),
+		AllowedImportPaths:    append([]string(nil), opts.AllowedImportPaths...),
+		DeniedImportPaths:     append([]string(nil), opts.DeniedImportPaths...),
+		AllowedImportPackages: append([]string(nil), opts.AllowedImportPackages...),
+		DeniedImportPackages:  append([]string(nil), opts.DeniedImportPackages...),
+		DenyDynamicImports:    opts.DenyDynamicImports,
 	}
 }
 
 func execUntrustedInProcess(script string, data map[string]interface{}, opts UntrustedExecOptions) (Object, error) {
+	obj, output, err := execUntrustedInProcessWithOutput(script, data, opts)
+	if opts.Output != nil && output != "" {
+		_, _ = io.WriteString(opts.Output, output)
+	}
+	return obj, err
+}
+
+func execUntrustedInProcessWithOutput(script string, data map[string]interface{}, opts UntrustedExecOptions) (Object, string, error) {
 	output := &limitWriter{limit: opts.MaxOutputBytes}
-	return ExecWithOptions(script, data, ExecOptions{
+	obj, err := ExecWithOptions(script, data, ExecOptions{
 		Args:               opts.Args,
 		ModuleDir:          opts.ModuleDir,
 		MaxDepth:           opts.MaxDepth,
@@ -200,9 +224,19 @@ func execUntrustedInProcess(script string, data map[string]interface{}, opts Unt
 		Security:           untrustedSecurityPolicy(opts),
 		Sandbox:            ptrSandboxConfig(untrustedSandboxConfig(opts)),
 	})
+	return obj, output.String(), err
 }
 
 func execUntrustedWorker(script string, data map[string]interface{}, opts UntrustedExecOptions) (Object, error) {
+	absModuleDir, err := filepath.Abs(opts.ModuleDir)
+	if err != nil {
+		return nil, &ExecError{Kind: ExecErrorValidation, Message: err.Error()}
+	}
+	opts.ModuleDir = absModuleDir
+	opts.AllowedFileReadPaths = absolutizePathList(opts.AllowedFileReadPaths)
+	opts.AllowedFileWritePaths = absolutizePathList(opts.AllowedFileWritePaths)
+	opts.AllowedImportPaths = absolutizePathList(opts.AllowedImportPaths)
+	opts.DeniedImportPaths = absolutizePathList(opts.DeniedImportPaths)
 	command, args, err := untrustedWorkerCommand(opts)
 	if err != nil {
 		return nil, err
@@ -258,7 +292,30 @@ func execUntrustedWorker(script string, data map[string]interface{}, opts Untrus
 		}
 		return nil, &ExecError{Kind: kind, Message: resp.Error}
 	}
+	if opts.Output != nil && resp.Output != "" {
+		_, _ = io.WriteString(opts.Output, resp.Output)
+	}
 	return objectFromWorkerJSONValue(resp.Result), nil
+}
+
+func absolutizePathList(paths []string) []string {
+	if len(paths) == 0 {
+		return paths
+	}
+	out := make([]string, 0, len(paths))
+	for _, path := range paths {
+		path = strings.TrimSpace(path)
+		if path == "" {
+			continue
+		}
+		abs, err := filepath.Abs(path)
+		if err != nil {
+			out = append(out, path)
+			continue
+		}
+		out = append(out, abs)
+	}
+	return out
 }
 
 func untrustedWorkerCommand(opts UntrustedExecOptions) (string, []string, error) {
@@ -377,8 +434,9 @@ func RunUntrustedWorker(r io.Reader, w io.Writer) int {
 	}
 	opts := normalizeUntrustedOptions(req.Options)
 	opts.InProcess = true
-	obj, err := execUntrustedInProcess(req.Script, req.Data, opts)
+	obj, output, err := execUntrustedInProcessWithOutput(req.Script, req.Data, opts)
 	resp := untrustedWorkerResponse{}
+	resp.Output = output
 	if err != nil {
 		resp.Error = err.Error()
 		if execErr, ok := err.(*ExecError); ok {

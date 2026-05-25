@@ -705,7 +705,7 @@ func defaultReplConfig(env *object.Environment) *ReplConfig {
 	return cfg
 }
 
-func applyReplConfig(env *object.Environment, cfg *ReplConfig) {
+func ApplyReplConfig(env *object.Environment, cfg *ReplConfig) {
 	if env == nil || cfg == nil {
 		return
 	}
@@ -761,7 +761,7 @@ func applyReplConfig(env *object.Environment, cfg *ReplConfig) {
 	}
 }
 
-func applyReplProfile(cfg *ReplConfig, profile string) error {
+func ApplyReplProfile(cfg *ReplConfig, profile string) error {
 	switch strings.ToLower(strings.TrimSpace(profile)) {
 	case "trusted", "":
 		cfg.ExecutionProfile = "trusted"
@@ -932,7 +932,7 @@ func handleReplConfigCommand(trimmed string, env *object.Environment) bool {
 			ReplPrintLine("config error: " + err.Error())
 			return true
 		}
-		applyReplConfig(env, cfg)
+		ApplyReplConfig(env, cfg)
 		ReplPrintLine(fmt.Sprintf("%s = %s", args[1], strings.Join(args[2:], " ")))
 		return true
 	case "profile":
@@ -941,11 +941,11 @@ func handleReplConfigCommand(trimmed string, env *object.Environment) bool {
 			return true
 		}
 		cfg := ReplConfigForEnv(env)
-		if err := applyReplProfile(cfg, args[1]); err != nil {
+		if err := ApplyReplProfile(cfg, args[1]); err != nil {
 			ReplPrintLine("config error: " + err.Error())
 			return true
 		}
-		applyReplConfig(env, cfg)
+		ApplyReplConfig(env, cfg)
 		ReplPrintLine("execution.profile = " + cfg.ExecutionProfile)
 		return true
 	case "reset":
@@ -957,7 +957,7 @@ func handleReplConfigCommand(trimmed string, env *object.Environment) bool {
 		delete(replConfigs.items, key)
 		replConfigs.mu.Unlock()
 		cfg := ReplConfigForEnv(env)
-		applyReplConfig(env, cfg)
+		ApplyReplConfig(env, cfg)
 		ReplPrintLine("configuration reset")
 		return true
 	case "load":
@@ -1062,7 +1062,7 @@ func setReplConfigValue(cfg *ReplConfig, key, raw string) error {
 	raw = strings.TrimSpace(raw)
 	switch key {
 	case "execution.profile":
-		return applyReplProfile(cfg, raw)
+		return ApplyReplProfile(cfg, raw)
 	case "module.dir":
 		if raw == "" {
 			return fmt.Errorf("module.dir cannot be empty")

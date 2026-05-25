@@ -30,6 +30,9 @@ func init() {
 // ResolveImportPathFn resolves a module import path. If nil, imports will fail.
 var ResolveImportPathFn func(importPath string, env *object.Environment) (string, error)
 
+// ResolveStdModuleFn resolves virtual standard-library modules.
+var ResolveStdModuleFn func(importPath string) (map[string]object.Object, bool)
+
 // DotExpressionHook is called for dot expressions on types not handled by
 // the built-in dispatch. Return non-nil to use the result.
 var DotExpressionHook func(left object.Object, name string) object.Object
@@ -156,6 +159,9 @@ func Eval(node ast.Node, env *object.Environment) object.Object {
 		return &object.Float{Value: node.Value}
 
 	case *ast.StringLiteral:
+		if env != nil && env.RuntimeLimits != nil && env.RuntimeLimits.MaxStringBytes > 0 && int64(len(node.Value)) > env.RuntimeLimits.MaxStringBytes {
+			return object.NewError("string literal size limit exceeded (%d bytes)", env.RuntimeLimits.MaxStringBytes)
+		}
 		return &object.String{Value: node.Value}
 
 	case *ast.BooleanLiteral:
@@ -165,6 +171,9 @@ func Eval(node ast.Node, env *object.Environment) object.Object {
 		return object.NULL
 
 	case *ast.ArrayLiteral:
+		if env != nil && env.RuntimeLimits != nil && env.RuntimeLimits.MaxArrayLength > 0 && len(node.Elements) > env.RuntimeLimits.MaxArrayLength {
+			return object.NewError("array length limit exceeded (%d)", env.RuntimeLimits.MaxArrayLength)
+		}
 		elements := evalExpressions(node.Elements, env)
 		if len(elements) == 1 && object.IsError(elements[0]) {
 			return elements[0]
@@ -1330,6 +1339,9 @@ func evalArrayIndexExpression(array, index object.Object) object.Object {
 }
 
 func evalHashLiteral(node *ast.HashLiteral, env *object.Environment) object.Object {
+	if env != nil && env.RuntimeLimits != nil && env.RuntimeLimits.MaxHashEntries > 0 && len(node.Entries) > env.RuntimeLimits.MaxHashEntries {
+		return object.NewError("hash entry limit exceeded (%d)", env.RuntimeLimits.MaxHashEntries)
+	}
 	pairs := make(map[object.HashKey]object.HashPair)
 	for _, entry := range node.Entries {
 		if entry.IsSpread {
@@ -1597,10 +1609,32 @@ func evalImportStatement(node *ast.ImportStatement, env *object.Environment) obj
 	if ResolveImportPathFn == nil {
 		return object.NewError("import not supported: no path resolver configured")
 	}
+	if env.SecurityPolicy != nil && env.SecurityPolicy.DenyDynamicImports {
+		if _, literal := node.Path.(*ast.StringLiteral); !literal {
+			return object.NewError("dynamic imports are denied by policy")
+		}
+	}
+	if ResolveStdModuleFn != nil {
+		if exports, ok := ResolveStdModuleFn(pathStr.Value); ok {
+			return bindImportedNames(node, exports, pathStr.Value, env)
+		}
+	}
 
 	resolvedPath, err := ResolveImportPathFn(pathStr.Value, env)
 	if err != nil {
 		return object.NewError("invalid import path %q: %s", pathStr.Value, err)
+	}
+	if env.RuntimeLimits != nil {
+		rl := env.RuntimeLimits
+		rl.ImportCount++
+		if rl.MaxImportCount > 0 && rl.ImportCount > rl.MaxImportCount {
+			return object.NewError("module import count limit exceeded (%d)", rl.MaxImportCount)
+		}
+		rl.CurrentImportDepth++
+		defer func() { rl.CurrentImportDepth-- }()
+		if rl.MaxImportDepth > 0 && rl.CurrentImportDepth > rl.MaxImportDepth {
+			return object.NewError("module import depth limit exceeded (%d)", rl.MaxImportDepth)
+		}
 	}
 
 	moduleLoading := env.ModuleLoadingMap()
@@ -1626,7 +1660,7 @@ func evalImportStatement(node *ast.ImportStatement, env *object.Environment) obj
 	moduleLoading[resolvedPath] = true
 	defer delete(moduleLoading, resolvedPath)
 
-	if err := security.CheckFileReadAllowed(resolvedPath); err != nil {
+	if err := security.CheckImportAllowed(pathStr.Value, resolvedPath); err != nil {
 		return object.NewError("module read denied for %q: %s", pathStr.Value, err)
 	}
 	content, err := os.ReadFile(resolvedPath)

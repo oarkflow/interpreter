@@ -25,6 +25,9 @@ func TestLoadConfigWithoutSecret(t *testing.T) {
 	if cfg.AuthSecret != "" {
 		t.Fatalf("expected empty auth secret, got %q", cfg.AuthSecret)
 	}
+	if cfg.ExecutionProfile != "untrusted" {
+		t.Fatalf("expected untrusted execution profile by default, got %q", cfg.ExecutionProfile)
+	}
 }
 
 func TestApplyCLIFlagsForRenderURLSettings(t *testing.T) {
@@ -37,6 +40,7 @@ func TestApplyCLIFlagsForRenderURLSettings(t *testing.T) {
 		"--render-url-hosts", "nikonrumors.com,cdn.example.com",
 		"--render-mode", "inline",
 		"--render-max-bytes", "2048",
+		"--profile", "trusted",
 	})
 	if err != nil {
 		t.Fatalf("applyCLIFlags: %v", err)
@@ -52,6 +56,9 @@ func TestApplyCLIFlagsForRenderURLSettings(t *testing.T) {
 	}
 	if got := strings.Join(cfg.RenderAllowURLHosts, ","); got != "nikonrumors.com,cdn.example.com" {
 		t.Fatalf("unexpected render URL hosts: %q", got)
+	}
+	if cfg.ExecutionProfile != "trusted" {
+		t.Fatalf("expected trusted profile, got %q", cfg.ExecutionProfile)
 	}
 }
 
@@ -71,6 +78,19 @@ func TestPlaygroundSecurityPolicyAllowsReadsButNotWrites(t *testing.T) {
 	}
 	if got := strings.Join(policy.AllowedFileReadPaths, ","); got != "/workspace/project" {
 		t.Fatalf("unexpected allowed read roots: %q", got)
+	}
+	if got := strings.Join(policy.AllowedNetworkHosts, ","); got != "example.com" {
+		t.Fatalf("unexpected network hosts: %q", got)
+	}
+}
+
+func TestPlaygroundTrustedProfileAllowsHostPolicy(t *testing.T) {
+	policy := playgroundSecurityPolicyForProfile("/workspace/project", "trusted", true, []string{"example.com"})
+	if policy.ProtectHost {
+		t.Fatalf("expected trusted profile to disable host protection")
+	}
+	if !policy.AllowEnvWrite {
+		t.Fatalf("expected trusted profile to allow env writes")
 	}
 	if got := strings.Join(policy.AllowedNetworkHosts, ","); got != "example.com" {
 		t.Fatalf("unexpected network hosts: %q", got)

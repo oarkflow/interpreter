@@ -6,6 +6,7 @@ import (
 	"image"
 	"io"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -813,6 +814,13 @@ type RuntimeLimits struct {
 	OutputBytes        int64
 	MaxHTTPBodyBytes   int64
 	MaxExecOutputBytes int64
+	MaxStringBytes     int64
+	MaxArrayLength     int
+	MaxHashEntries     int
+	MaxImportDepth     int
+	CurrentImportDepth int
+	MaxImportCount     int
+	ImportCount        int
 }
 
 type RenderConfig struct {
@@ -917,6 +925,11 @@ type SecurityPolicy struct {
 	DeniedFileWritePaths  []string
 	AllowedDBDSNPatterns  []string
 	DeniedDBDSNPatterns   []string
+	AllowedImportPaths    []string
+	DeniedImportPaths     []string
+	AllowedImportPackages []string
+	DeniedImportPackages  []string
+	DenyDynamicImports    bool
 }
 
 // ---------------------------------------------------------------------------
@@ -963,6 +976,29 @@ func NewGlobalEnvironment(args []string) *Environment {
 	env.RenderConfig = LoadRenderConfigFromEnv()
 	env.SourcePath = "<memory>"
 	return env
+}
+
+func (e *Environment) Snapshot() map[string]Object {
+	if e == nil {
+		return nil
+	}
+	e.Mu.RLock()
+	defer e.Mu.RUnlock()
+	out := make(map[string]Object, len(e.Store))
+	for k, v := range e.Store {
+		out[k] = v
+	}
+	return out
+}
+
+func (e *Environment) Names() []string {
+	snapshot := e.Snapshot()
+	names := make([]string, 0, len(snapshot))
+	for name := range snapshot {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
 }
 
 func NewEnclosedEnvironment(outer *Environment) *Environment {

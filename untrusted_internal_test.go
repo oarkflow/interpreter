@@ -2,6 +2,10 @@ package interpreter
 
 import (
 	"encoding/base64"
+	"os/exec"
+	"path/filepath"
+	"runtime"
+	"strings"
 	"testing"
 )
 
@@ -28,6 +32,38 @@ func TestObjectFromWorkerJSONValueRehydratesRenderArtifact(t *testing.T) {
 	}
 	if art.Width != 8 || art.Height != 9 || art.MaxBytes != 32 || art.Mode != "metadata" {
 		t.Fatalf("unexpected artifact numeric/mode fields: %#v", art)
+	}
+}
+
+func TestUntrustedWorkerCommandRequiresOSIsolationFailClosedWhenUnavailable(t *testing.T) {
+	if runtime.GOOS == "linux" {
+		if _, err := exec.LookPath("bwrap"); err == nil {
+			t.Skip("bubblewrap is available; unavailable isolation fail-closed path does not apply")
+		}
+	}
+	_, _, err := untrustedWorkerCommand(UntrustedExecOptions{
+		ModuleDir:          ".",
+		RequireOSIsolation: true,
+	})
+	if err == nil {
+		t.Fatalf("expected unavailable OS isolation to fail closed")
+	}
+	msg := strings.ToLower(err.Error())
+	if !strings.Contains(msg, "os isolation") && !strings.Contains(msg, "bubblewrap") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestAbsolutizePathList(t *testing.T) {
+	paths := absolutizePathList([]string{"testdata", "", "/tmp"})
+	if len(paths) != 2 {
+		t.Fatalf("unexpected paths: %#v", paths)
+	}
+	if !filepath.IsAbs(paths[0]) || !strings.HasSuffix(filepath.ToSlash(paths[0]), "/testdata") {
+		t.Fatalf("expected first path to be absolute testdata path, got %#v", paths)
+	}
+	if paths[1] != "/tmp" {
+		t.Fatalf("expected absolute path to be preserved, got %#v", paths)
 	}
 }
 

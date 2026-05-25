@@ -1,0 +1,114 @@
+{
+  "name": "spl-vscode",
+  "displayName": "SPL Language Support",
+  "description": "Syntax highlighting, language server features, and safe manual evaluation for SPL files.",
+  "version": "0.1.0",
+  "publisher": "oarkflow",
+  "engines": {
+    "vscode": "^1.86.0"
+  },
+  "categories": [
+    "Programming Languages"
+  ],
+  "activationEvents": [
+    "onLanguage:spl",
+    "onCommand:spl.runFile",
+    "onCommand:spl.evaluateSelection",
+    "onCommand:spl.restartLanguageServer",
+    "onCommand:spl.showOutput"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "languages": [
+      {
+        "id": "spl",
+        "aliases": [
+          "SPL",
+          "spl"
+        ],
+        "extensions": [
+          ".spl"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "spl",
+        "scopeName": "source.spl",
+        "path": "./syntaxes/spl.tmLanguage.json"
+      }
+    ],
+    "commands": [
+      {
+        "command": "spl.runFile",
+        "title": "SPL: Run Current File"
+      },
+      {
+        "command": "spl.evaluateSelection",
+        "title": "SPL: Evaluate Selection"
+      },
+      {
+        "command": "spl.restartLanguageServer",
+        "title": "SPL: Restart Language Server"
+      },
+      {
+        "command": "spl.showOutput",
+        "title": "SPL: Show Output"
+      }
+    ],
+    "configuration": {
+      "title": "SPL",
+      "properties": {
+        "spl.toolPath": {
+          "type": "string",
+          "default": "",
+          "description": "Path to the spltool executable. When empty, the extension runs `go run ./cmd/spltool lsp --stdio` from the workspace."
+        },
+        "spl.serverMode": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "toolPath",
+            "goRun"
+          ],
+          "default": "auto",
+          "description": "How to launch the SPL language server."
+        },
+        "spl.evaluation.profile": {
+          "type": "string",
+          "enum": [
+            "untrusted"
+          ],
+          "default": "untrusted",
+          "description": "Evaluation profile. Editor evaluation always uses the untrusted runtime."
+        },
+        "spl.evaluation.timeoutMs": {
+          "type": "number",
+          "default": 1500,
+          "minimum": 100,
+          "description": "Timeout for manual SPL evaluation commands."
+        },
+        "spl.evaluation.maxOutputBytes": {
+          "type": "number",
+          "default": 65536,
+          "minimum": 1024,
+          "description": "Maximum captured output for manual SPL evaluation commands."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "vscode:prepublish": "npm run compile"
+  },
+  "dependencies": {
+    "vscode-languageclient": "^9.0.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "@types/vscode": "^1.86.0",
+    "typescript": "^5.3.3"
+  }
+}

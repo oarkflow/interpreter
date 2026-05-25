@@ -240,6 +240,34 @@ func SyncModuleLock(projectDir string) (*SPLModuleLock, error) {
 	return lock, nil
 }
 
+func VerifyModuleLock(projectDir string) error {
+	projectDir = DiscoverProjectRoot(projectDir)
+	lockPath := filepath.Join(projectDir, SPLLockFileName)
+	lock, err := ReadModuleLockFromFile(lockPath)
+	if err != nil {
+		return err
+	}
+	aliases := make([]string, 0, len(lock.Dependencies))
+	for alias := range lock.Dependencies {
+		aliases = append(aliases, alias)
+	}
+	sort.Strings(aliases)
+	for _, alias := range aliases {
+		dep := lock.Dependencies[alias]
+		if strings.TrimSpace(dep.ResolvedPath) == "" {
+			return fmt.Errorf("dependency %q has empty resolved_path", alias)
+		}
+		got, err := DependencyChecksum(dep.ResolvedPath)
+		if err != nil {
+			return fmt.Errorf("dependency %q checksum failed: %w", alias, err)
+		}
+		if !strings.EqualFold(got, dep.Checksum) {
+			return fmt.Errorf("dependency %q checksum mismatch: got %s want %s", alias, got, dep.Checksum)
+		}
+	}
+	return nil
+}
+
 // ResolveManifestImport resolves an import path using the module manifest/lock.
 // moduleDir and sourcePath are used to locate the nearest manifest.
 // Returns (resolvedPath, matched, error).

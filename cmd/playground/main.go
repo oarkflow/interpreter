@@ -48,6 +48,17 @@ type executeResponse struct {
 }
 
 func playgroundSecurityPolicy(root string, renderAllowURLs bool, renderURLHosts []string) *interpreter.SecurityPolicy {
+	return playgroundSecurityPolicyForProfile(root, "untrusted", renderAllowURLs, renderURLHosts)
+}
+
+func playgroundSecurityPolicyForProfile(root string, profile string, renderAllowURLs bool, renderURLHosts []string) *interpreter.SecurityPolicy {
+	if strings.EqualFold(strings.TrimSpace(profile), "trusted") {
+		policy := &interpreter.SecurityPolicy{AllowEnvWrite: true}
+		if renderAllowURLs {
+			policy.AllowedNetworkHosts = append(policy.AllowedNetworkHosts, renderURLHosts...)
+		}
+		return policy
+	}
 	policy := &interpreter.SecurityPolicy{
 		ProtectHost:         true,
 		AllowedCapabilities: []string{security.CapabilityFilesystemRead},
@@ -940,6 +951,7 @@ print "=== Tour Complete ===";`,
 type playgroundConfig struct {
 	Addr                string
 	AuthSecret          string
+	ExecutionProfile    string
 	ReadTimeout         time.Duration
 	WriteTimeout        time.Duration
 	IdleTimeout         time.Duration
@@ -965,6 +977,7 @@ func loadConfig() (playgroundConfig, error) {
 	cfg := playgroundConfig{
 		Addr:                envString("PLAYGROUND_ADDR", ":8080"),
 		AuthSecret:          envString("PLAYGROUND_AUTH_SECRET", envString("PLAYGROUND_API_KEY", "")),
+		ExecutionProfile:    envString("PLAYGROUND_EXECUTION_PROFILE", "untrusted"),
 		ReadTimeout:         envDurationMS("PLAYGROUND_READ_TIMEOUT_MS", 15000),
 		WriteTimeout:        envDurationMS("PLAYGROUND_WRITE_TIMEOUT_MS", 15000),
 		IdleTimeout:         envDurationMS("PLAYGROUND_IDLE_TIMEOUT_MS", 30000),
@@ -988,6 +1001,12 @@ func loadConfig() (playgroundConfig, error) {
 
 	if cfg.MaxBodyBytes <= 0 {
 		return playgroundConfig{}, errors.New("PLAYGROUND_MAX_BODY_BYTES must be > 0")
+	}
+	switch strings.ToLower(strings.TrimSpace(cfg.ExecutionProfile)) {
+	case "trusted", "untrusted":
+		cfg.ExecutionProfile = strings.ToLower(strings.TrimSpace(cfg.ExecutionProfile))
+	default:
+		return playgroundConfig{}, errors.New("PLAYGROUND_EXECUTION_PROFILE must be trusted or untrusted")
 	}
 	if cfg.RateLimit <= 0 {
 		return playgroundConfig{}, errors.New("PLAYGROUND_RATE_LIMIT must be > 0")
@@ -1024,6 +1043,7 @@ func applyCLIFlags(cfg *playgroundConfig, args []string) error {
 	renderURLHosts := fs.String("render-url-hosts", strings.Join(cfg.RenderAllowURLHosts, ","), "comma-separated URL artifact host allowlist")
 	renderMode := fs.String("render-mode", cfg.RenderMode, "render mode: auto, inline, metadata, or off")
 	renderMaxBytes := fs.Int64("render-max-bytes", cfg.RenderMaxBytes, "maximum render artifact bytes")
+	profile := fs.String("profile", cfg.ExecutionProfile, "execution profile: trusted or untrusted")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -1036,6 +1056,12 @@ func applyCLIFlags(cfg *playgroundConfig, args []string) error {
 	}
 	if *renderMaxBytes <= 0 {
 		return fmt.Errorf("--render-max-bytes must be > 0")
+	}
+	switch strings.ToLower(strings.TrimSpace(*profile)) {
+	case "trusted", "untrusted":
+		cfg.ExecutionProfile = strings.ToLower(strings.TrimSpace(*profile))
+	default:
+		return fmt.Errorf("invalid --profile %q", *profile)
 	}
 	cfg.RenderMaxBytes = *renderMaxBytes
 	cfg.RenderAllowURLs = *renderAllowURLs
@@ -1481,7 +1507,7 @@ func main() {
 			writeJSON(w, status, map[string]any{"error": "requested render URL hosts are not allowed by server configuration"})
 			return
 		}
-		securityPolicy := playgroundSecurityPolicy(cwd, renderAllowURLs, renderURLHosts)
+		securityPolicy := playgroundSecurityPolicyForProfile(cwd, cfg.ExecutionProfile, renderAllowURLs, renderURLHosts)
 		result := interpreter.EvalForPlayground(req.Code, interpreter.PlaygroundOptions{
 			Args:      []string{},
 			MaxDepth:  cfg.EvalMaxDepth,

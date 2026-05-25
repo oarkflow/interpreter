@@ -1,0 +1,36 @@
+// Runtime resource limit examples.
+//
+// Normal run:
+//   go run ./cmd/interpreter testdata/examples_resource_limits.spl
+//
+// Try the same file with stricter limits:
+//   go run ./cmd/interpreter --max-array-length 2 testdata/examples_resource_limits.spl
+//   go run ./cmd/interpreter --max-hash-entries 1 testdata/examples_resource_limits.spl
+//   go run ./cmd/interpreter --max-string-bytes 8 testdata/examples_resource_limits.spl
+//
+// Those stricter commands should fail early with clear runtime errors.
+
+import "std/core" as core;
+
+print "=== resource limits ===";
+
+let smallArray = [1, 2, 3];
+print core.sprintf("array length=%d", len(smallArray));
+
+let smallHash = {
+  "name": "limits",
+  "kind": "example"
+};
+print core.sprintf("hash keys=%d", len(keys(smallHash)));
+
+let message = "resource limit example";
+print core.sprintf("message length=%d", len(message));
+
+// Import limit checks are most useful with multi-file projects. For example:
+//
+//   go run ./cmd/interpreter --max-import-count 0 testdata/examples_std_modules.spl
+//
+// should reject the first import with "module import count limit exceeded".
+
+print "resource limit example complete";
+

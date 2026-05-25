@@ -1,0 +1,34 @@
+// Standard module aliases provide a cleaner namespace for common builtin groups.
+//
+// Run:
+//   go run ./cmd/interpreter testdata/examples_std_modules.spl
+//
+// The same builtin functions are still available globally; the std/... imports
+// make larger programs easier to scan and make capability review clearer.
+
+import "std/core" as core;
+import "std/fs" as fs;
+import "std/test" as testing;
+import "std/config" as config;
+
+print "=== std module aliases ===";
+
+let label = core.sprintf("runtime=%s answer=%d", "spl", 42);
+print label;
+
+let exists = fs.file_exists("testdata/test_io.txt");
+print core.sprintf("test_io exists=%t", exists);
+
+let content, readErr = fs.read_file("testdata/test_io.txt");
+if (readErr != null) {
+  throw readErr;
+}
+print core.sprintf("test_io bytes=%d", len(content));
+
+let parsed = config.config_parse("{\"name\":\"spl\",\"ok\":true}", "json");
+print core.sprintf("parsed config name=%s ok=%t", parsed.name, parsed.ok);
+
+assert_eq(core.sprintf("%s-%d", "std", 1), "std-1");
+assert_true(exists, "expected repository test file to exist");
+
+print testing.test_summary();

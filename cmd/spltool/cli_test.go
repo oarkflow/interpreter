@@ -80,6 +80,27 @@ func TestRunModInitAndTidy(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(projectDir, "spl.lock")); err != nil {
 		t.Fatalf("expected lock file: %v", err)
 	}
+
+	stdout.Reset()
+	stderr.Reset()
+	code = run([]string{"mod", "verify"}, strings.NewReader(""), &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("unexpected verify exit code: %d stderr=%q", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "verified spl.lock") {
+		t.Fatalf("unexpected verify output: %q", stdout.String())
+	}
+}
+
+func TestRunConformance(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"conformance", "../../testdata/conformance"}, strings.NewReader(""), &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("conformance failed: code=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "passed") {
+		t.Fatalf("expected conformance summary, got %q", stdout.String())
+	}
 }
 
 func TestRunConfigInitSymbolsCompleteHoverDocsAndTest(t *testing.T) {

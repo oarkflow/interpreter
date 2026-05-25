@@ -1,0 +1,6 @@
+import "std/core" as core;
+
+test "std core module exposes builtins" {
+  assert_eq(core.sprintf("value=%d", 42), "value=42");
+}
+

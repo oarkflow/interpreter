@@ -1,0 +1,41 @@
+// Production profile examples.
+//
+// Safe smoke run:
+//   go run ./cmd/interpreter --profile untrusted testdata/examples_production_profiles.spl
+//
+// The untrusted profile allows read-only work by default and denies host
+// mutation unless you explicitly add capabilities and path/command allowlists.
+
+import "std/core" as core;
+import "std/fs" as fs;
+
+print "=== production profile smoke ===";
+
+let content, err = fs.read_file("test_io.txt");
+if (err != null) {
+  throw err;
+}
+
+print core.sprintf("read-only file access ok, bytes=%d", len(content));
+print core.sprintf("string helpers still work: %s", trim("  production  ").upper());
+
+// These are intentionally commented out. Run one at a time to verify the
+// untrusted profile blocks risky host access.
+//
+// throw exec("echo", "blocked");
+// let ok, writeErr = fs.write_file("blocked.txt", "should not be written");
+// if (writeErr != null) { throw writeErr; }
+// let outside, outsideErr = fs.read_file("/etc/passwd");
+// if (outsideErr != null) { throw outsideErr; }
+//
+// Expected checks:
+//   go run ./cmd/interpreter --profile untrusted /tmp/deny_exec.spl
+//     -> exec denied by host protection policy
+//
+//   go run ./cmd/interpreter --profile untrusted /tmp/deny_write.spl
+//     -> capability denied by host protection policy: filesystem_write
+//
+//   go run ./cmd/interpreter --profile untrusted /tmp/deny_escape.spl
+//     -> path is outside the allowed root
+
+print "untrusted profile smoke complete";

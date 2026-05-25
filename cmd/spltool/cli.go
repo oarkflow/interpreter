@@ -38,8 +38,10 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return runDocs(args[1:], stdin, stdout, stderr)
 	case "test":
 		return runTest(args[1:], stdout, stderr)
+	case "conformance":
+		return runConformance(args[1:], stdout, stderr)
 	case "lsp":
-		return runLSPInfo(stdout)
+		return runLSP(args[1:], stdin, stdout, stderr)
 	case "-h", "--help", "help":
 		printUsage(stdout)
 		return 0
@@ -99,7 +101,7 @@ func runConfig(args []string, stdout, stderr io.Writer) int {
 
 func runMod(args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
-		fmt.Fprintln(stderr, "usage: spltool mod <init|tidy>")
+		fmt.Fprintln(stderr, "usage: spltool mod <init|tidy|verify>")
 		return 2
 	}
 	switch args[0] {
@@ -141,6 +143,23 @@ func runMod(args []string, stdout, stderr io.Writer) int {
 			return 1
 		}
 		fmt.Fprintf(stdout, "synced %s with %d dependencies\n", interpreter.SPLLockFileName, len(lock.Dependencies))
+		return 0
+	case "verify":
+		fs := flag.NewFlagSet("mod verify", flag.ContinueOnError)
+		fs.SetOutput(stderr)
+		if err := fs.Parse(args[1:]); err != nil {
+			return 2
+		}
+		projectDir, err := os.Getwd()
+		if err != nil {
+			fmt.Fprintf(stderr, "failed to get cwd: %v\n", err)
+			return 1
+		}
+		if err := interpreter.VerifyModuleLock(projectDir); err != nil {
+			fmt.Fprintf(stderr, "module lock verification failed: %v\n", err)
+			return 1
+		}
+		fmt.Fprintf(stdout, "verified %s\n", interpreter.SPLLockFileName)
 		return 0
 	default:
 		fmt.Fprintf(stderr, "unknown mod command %q\n", args[0])
@@ -321,7 +340,14 @@ func runTest(args []string, stdout, stderr io.Writer) int {
 	fs.SetOutput(stderr)
 	jsonOut := fs.Bool("json", false, "emit machine-readable JSON")
 	filter := fs.String("filter", "", "substring filter for discovered test files")
+	profile := fs.String("profile", "trusted", "execution profile: trusted or untrusted")
 	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	switch strings.ToLower(strings.TrimSpace(*profile)) {
+	case "trusted", "untrusted":
+	default:
+		fmt.Fprintf(stderr, "invalid --profile %q\n", *profile)
 		return 2
 	}
 	targets := fs.Args()
@@ -339,6 +365,7 @@ func runTest(args []string, stdout, stderr io.Writer) int {
 		itemStart := time.Now()
 		_, err := interpreter.ExecFileWithOptions(file, nil, interpreter.ExecOptions{
 			ModuleDir: filepath.Dir(file),
+			Profile:   strings.ToLower(strings.TrimSpace(*profile)),
 			MaxSteps:  2_000_000,
 			MaxDepth:  256,
 			Timeout:   10 * time.Second,
@@ -371,10 +398,44 @@ func runTest(args []string, stdout, stderr io.Writer) int {
 	return 0
 }
 
+func runConformance(args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("conformance", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	jsonOut := fs.Bool("json", false, "emit machine-readable JSON")
+	profile := fs.String("profile", "trusted", "execution profile: trusted or untrusted")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	targets := fs.Args()
+	if len(targets) == 0 {
+		targets = []string{"testdata/conformance"}
+	}
+	runArgs := []string{"--profile", *profile}
+	if *jsonOut {
+		runArgs = append(runArgs, "--json")
+	}
+	runArgs = append(runArgs, targets...)
+	return runTest(runArgs, stdout, stderr)
+}
+
+func runLSP(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("lsp", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	stdio := fs.Bool("stdio", false, "run the SPL language server over stdio")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	if *stdio {
+		return runLSPServer(stdin, stdout, stderr)
+	}
+	return runLSPInfo(stdout)
+}
+
 func runLSPInfo(stdout io.Writer) int {
 	_ = json.NewEncoder(stdout).Encode(map[string]any{
-		"status": "helpers",
+		"status": "available",
 		"commands": []string{
+			"spltool lsp --stdio",
 			"spltool check --json",
 			"spltool symbols",
 			"spltool complete --prefix <text>",
@@ -471,7 +532,7 @@ func formatDiagnostic(d Diagnostic) string {
 }
 
 func printUsage(w io.Writer) {
-	fmt.Fprintln(w, "Usage: spltool <fmt|check|symbols|complete|hover|docs|test|config|mod|lsp> [flags] [files...]")
+	fmt.Fprintln(w, "Usage: spltool <fmt|check|symbols|complete|hover|docs|test|conformance|config|mod|lsp> [flags] [files...]")
 	fmt.Fprintln(w, "Use '-' to read from stdin.")
 }
 

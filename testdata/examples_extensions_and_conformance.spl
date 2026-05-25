@@ -1,0 +1,43 @@
+// Extension and conformance examples.
+//
+// This file shows the SPL side of the extension model. Go hosts register
+// plugins, custom builtins, and virtual std modules at process startup, then
+// scripts import those modules just like built-in std modules.
+//
+// Run:
+//   go run ./cmd/interpreter testdata/examples_extensions_and_conformance.spl
+//   go run ./cmd/spltool conformance
+
+import "std/core" as core;
+import "std/test" as testing;
+
+print "=== extensions and conformance ===";
+
+// Built-in std modules are always available.
+print core.sprintf("std/core sprintf works: %d", 42);
+
+// Host applications can register additional virtual modules in Go:
+//
+//   interpreter.RegisterStdModule("std/acme", map[string]interpreter.Object{
+//     "name": &interpreter.String{Value: "acme"},
+//   })
+//
+// Then SPL code can use:
+//
+//   import "std/acme" as acme;
+//   print acme.name;
+//
+// This example does not import std/acme because it must be registered by the
+// embedding host first.
+
+assert_eq(core.sprintf("%s:%d", "conformance", 1), "conformance:1");
+assert_true(len([1, 2, 3]) == 3, "array length should be stable");
+
+let makeAdder = function(x) {
+  return function(y) { x + y; };
+};
+let add7 = makeAdder(7);
+assert_eq(add7(5), 12);
+
+print testing.test_summary();
+print "extension/conformance example complete";

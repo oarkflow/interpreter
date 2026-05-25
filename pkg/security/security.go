@@ -41,6 +41,11 @@ func LoadSecurityPolicyFromEnv() *SecurityPolicy {
 		DeniedFileReadPaths:   parseCSVEnv("SPL_FILE_READ_DENY"),
 		AllowedFileWritePaths: parseCSVEnv("SPL_FILE_WRITE_ALLOW"),
 		DeniedFileWritePaths:  parseCSVEnv("SPL_FILE_WRITE_DENY"),
+		AllowedImportPaths:    parseCSVEnv("SPL_IMPORT_PATH_ALLOW"),
+		DeniedImportPaths:     parseCSVEnv("SPL_IMPORT_PATH_DENY"),
+		AllowedImportPackages: parseCSVEnv("SPL_IMPORT_PACKAGE_ALLOW"),
+		DeniedImportPackages:  parseCSVEnv("SPL_IMPORT_PACKAGE_DENY"),
+		DenyDynamicImports:    parseBoolEnvDefault("SPL_IMPORT_DENY_DYNAMIC", false),
 	}
 }
 
@@ -376,6 +381,27 @@ func CheckFileWriteAllowed(path string) error {
 		return fmt.Errorf("file write denied in strict security mode")
 	}
 	return nil
+}
+
+func CheckImportAllowed(importPath string, resolvedPath string) error {
+	p := ActiveSecurityPolicy()
+	if p == nil {
+		return nil
+	}
+	name := strings.ToLower(strings.TrimSpace(importPath))
+	if ContainsToken(p.DeniedImportPackages, name) {
+		return fmt.Errorf("import package denied by policy: %s", importPath)
+	}
+	if len(p.AllowedImportPackages) > 0 && !ContainsToken(p.AllowedImportPackages, name) {
+		return fmt.Errorf("import package not allowed by policy: %s", importPath)
+	}
+	if PathMatches(resolvedPath, p.DeniedImportPaths) {
+		return fmt.Errorf("import path denied by policy")
+	}
+	if len(p.AllowedImportPaths) > 0 && !PathMatches(resolvedPath, p.AllowedImportPaths) {
+		return fmt.Errorf("import path not allowed by policy")
+	}
+	return CheckFileReadAllowed(resolvedPath)
 }
 
 func ExitAllowed() error {

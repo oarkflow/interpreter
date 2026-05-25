@@ -13,6 +13,13 @@ import (
 	"github.com/oarkflow/interpreter"
 	"github.com/oarkflow/interpreter/pkg/ast"
 	"github.com/oarkflow/interpreter/pkg/eval"
+
+	// Keep editor tooling aligned with the first-party runtime packages shipped
+	// in this repository, not just the minimal CLI builtin set.
+	_ "github.com/oarkflow/interpreter/pkg/builtins/reactive"
+	_ "github.com/oarkflow/interpreter/pkg/builtins/scheduler"
+	_ "github.com/oarkflow/interpreter/pkg/builtins/server"
+	_ "github.com/oarkflow/interpreter/pkg/builtins/watcher"
 )
 
 type DiagnosticSeverity string
@@ -621,6 +628,9 @@ func builtinNameSet() map[string]struct{} {
 	for _, name := range eval.BuiltinNames() {
 		out[name] = struct{}{}
 	}
+	for name := range splRuntimeDocs {
+		out[name] = struct{}{}
+	}
 	return out
 }
 
@@ -821,6 +831,12 @@ func HoverAt(path, src string, line, col int) HoverInfo {
 	word := wordAt(src, line, col)
 	if word == "" {
 		return HoverInfo{}
+	}
+	if detail := KeywordMarkdown(word); detail != "" {
+		return HoverInfo{Name: word, Kind: "keyword", Detail: detail, Line: line, Column: col}
+	}
+	if detail := RuntimeDocMarkdown(word); detail != "" {
+		return HoverInfo{Name: word, Kind: "builtin", Detail: detail, Line: line, Column: col}
 	}
 	if eval.HasBuiltin(word) {
 		return HoverInfo{Name: word, Kind: "builtin", Detail: eval.BuiltinHelpText(word), Line: line, Column: col}

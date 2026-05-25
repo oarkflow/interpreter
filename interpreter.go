@@ -358,6 +358,8 @@ var (
 	NewEnvironment                 = object.NewEnvironment
 	NewGlobalEnvironment           = object.NewGlobalEnvironment
 	NewEnclosedEnvironment         = object.NewEnclosedEnvironment
+	EnvironmentSnapshot            = func(env *object.Environment) map[string]object.Object { return env.Snapshot() }
+	EnvironmentNames               = func(env *object.Environment) []string { return env.Names() }
 	ToObject                       = eval.ToObject
 	InjectData                     = eval.InjectData
 	StartCLI                       = eval.StartCLI
@@ -367,6 +369,7 @@ var (
 	NewSandboxVM                   = sandbox.NewSandboxVM
 	InitModuleManifest             = pkgmgr.InitModuleManifest
 	SyncModuleLock                 = pkgmgr.SyncModuleLock
+	VerifyModuleLock               = pkgmgr.VerifyModuleLock
 	RegisterTemplateRuntimeFactory = template.RegisterTemplateRuntimeFactory
 	RegisterHotReloadHook          = template.RegisterHotReloadHook
 )
@@ -464,11 +467,30 @@ const (
 
 // ExecError is returned by Exec*/ExecFile* functions on failure.
 type ExecError struct {
-	Kind        ExecErrorKind
-	Message     string
-	Path        string
-	Diagnostics []string
-	Stack       []CallFrame
+	Kind                  ExecErrorKind
+	Message               string
+	Path                  string
+	Diagnostics           []string
+	StructuredDiagnostics []Diagnostic
+	Stack                 []CallFrame
+}
+
+type DiagnosticSeverity string
+
+const (
+	DiagnosticError   DiagnosticSeverity = "error"
+	DiagnosticWarning DiagnosticSeverity = "warning"
+	DiagnosticInfo    DiagnosticSeverity = "info"
+)
+
+type Diagnostic struct {
+	Severity DiagnosticSeverity `json:"severity"`
+	Kind     ExecErrorKind      `json:"kind,omitempty"`
+	Message  string             `json:"message"`
+	Path     string             `json:"path,omitempty"`
+	Line     int                `json:"line,omitempty"`
+	Column   int                `json:"column,omitempty"`
+	Context  string             `json:"context,omitempty"`
 }
 
 func (e *ExecError) Error() string {
@@ -487,19 +509,50 @@ func (e *ExecError) Error() string {
 
 // ExecOptions controls the behaviour of ExecWithOptions / ExecFileWithOptions.
 type ExecOptions struct {
-	Args               []string
-	ModuleDir          string
-	MaxDepth           int
-	MaxSteps           int64
-	MaxHeapMB          int64
-	MaxOutputBytes     int64
-	MaxHTTPBodyBytes   int64
-	MaxExecOutputBytes int64
-	Timeout            time.Duration
-	Context            context.Context
-	Output             io.Writer
-	Security           *SecurityPolicy
-	Sandbox            *SandboxConfig
+	Args                   []string
+	ModuleDir              string
+	Profile                string
+	WorkerCommand          []string
+	MaxSourceBytes         int64
+	MaxDepth               int
+	MaxSteps               int64
+	MaxHeapMB              int64
+	MaxOutputBytes         int64
+	MaxHTTPBodyBytes       int64
+	MaxExecOutputBytes     int64
+	MaxStringBytes         int64
+	MaxArrayLength         int
+	MaxHashEntries         int
+	MaxImportDepth         int
+	MaxImportCount         int
+	Timeout                time.Duration
+	Context                context.Context
+	Output                 io.Writer
+	Security               *SecurityPolicy
+	Sandbox                *SandboxConfig
+	Observability          *ObservabilityHooks
+	RequireOSIsolation     bool
+	AllowInProcessFallback bool
+}
+
+type ExecutionEvent struct {
+	Profile string
+	Path    string
+}
+
+type ExecutionMetrics struct {
+	Profile     string
+	Path        string
+	Duration    time.Duration
+	Steps       int64
+	OutputBytes int64
+	ErrorKind   ExecErrorKind
+	Error       string
+}
+
+type ObservabilityHooks struct {
+	OnStart  func(ExecutionEvent)
+	OnFinish func(ExecutionMetrics)
 }
 
 // Exec executes the given SPL script content with the provided data.
@@ -512,7 +565,25 @@ func ExecWithOptions(script string, data map[string]interface{}, opts ExecOption
 	if err := validateExecOptions(opts); err != nil {
 		return nil, err
 	}
-	return withSecurityPolicyOverride(opts.Security, func() (retObj Object, retErr error) {
+	finish := startExecutionObservation(opts, "<memory>")
+	if isUntrustedProfile(opts.Profile) {
+		moduleDir := opts.ModuleDir
+		if moduleDir == "" {
+			moduleDir = "."
+		}
+		opts, outputCounter := observeUntrustedOutput(opts)
+		obj, err := ExecUntrustedWithOptions(script, data, untrustedOptionsFromExecOptions(opts, moduleDir))
+		finish(observedRuntimeStats{OutputBytes: outputCounter.OutputBytes()}, err)
+		return obj, err
+	}
+	obj, env, err := execTrustedWithOptions(script, data, opts)
+	finish(env, err)
+	return obj, err
+}
+
+func execTrustedWithOptions(script string, data map[string]interface{}, opts ExecOptions) (Object, *Environment, error) {
+	var observedEnv *Environment
+	obj, err := withSecurityPolicyOverride(opts.Security, func() (retObj Object, retErr error) {
 		defer func() {
 			if r := recover(); r != nil {
 				retObj = nil
@@ -533,6 +604,7 @@ func ExecWithOptions(script string, data map[string]interface{}, opts ExecOption
 			return nil, &ExecError{Kind: ExecErrorValidation, Message: vmErr.Error()}
 		}
 		env := vm.Environment()
+		observedEnv = env
 		defer env.RunCleanup()
 		if len(opts.Args) > 0 {
 			env.Set("ARGS", toObject(opts.Args))
@@ -550,9 +622,10 @@ func ExecWithOptions(script string, data map[string]interface{}, opts ExecOption
 
 		if len(p.Errors()) != 0 {
 			return nil, &ExecError{
-				Kind:        ExecErrorParser,
-				Message:     fmt.Sprintf("parser errors: %v", p.Errors()),
-				Diagnostics: append([]string(nil), p.Errors()...),
+				Kind:                  ExecErrorParser,
+				Message:               fmt.Sprintf("parser errors: %v", p.Errors()),
+				Diagnostics:           append([]string(nil), p.Errors()...),
+				StructuredDiagnostics: diagnosticsFromParserErrors("<memory>", script, p.Errors()),
 			}
 		}
 
@@ -568,6 +641,7 @@ func ExecWithOptions(script string, data map[string]interface{}, opts ExecOption
 
 		return result, nil
 	})
+	return obj, observedEnv, err
 }
 
 // ExecFile executes the SPL script from a file with the provided data.
@@ -580,7 +654,25 @@ func ExecFileWithOptions(filename string, data map[string]interface{}, opts Exec
 	if err := validateExecOptions(opts); err != nil {
 		return nil, err
 	}
-	return withSecurityPolicyOverride(opts.Security, func() (retObj Object, retErr error) {
+	finish := startExecutionObservation(opts, filename)
+	if isUntrustedProfile(opts.Profile) {
+		moduleDir := opts.ModuleDir
+		if moduleDir == "" {
+			moduleDir = filepath.Dir(filename)
+		}
+		opts, outputCounter := observeUntrustedOutput(opts)
+		obj, err := ExecFileUntrustedWithOptions(filename, data, untrustedOptionsFromExecOptions(opts, moduleDir))
+		finish(observedRuntimeStats{OutputBytes: outputCounter.OutputBytes()}, err)
+		return obj, err
+	}
+	obj, env, err := execFileTrustedWithOptions(filename, data, opts)
+	finish(env, err)
+	return obj, err
+}
+
+func execFileTrustedWithOptions(filename string, data map[string]interface{}, opts ExecOptions) (Object, *Environment, error) {
+	var observedEnv *Environment
+	obj, err := withSecurityPolicyOverride(opts.Security, func() (retObj Object, retErr error) {
 		defer func() {
 			if r := recover(); r != nil {
 				retObj = nil
@@ -606,6 +698,7 @@ func ExecFileWithOptions(filename string, data map[string]interface{}, opts Exec
 			return nil, &ExecError{Kind: ExecErrorValidation, Message: vmErr.Error(), Path: filename}
 		}
 		env := vm.Environment()
+		observedEnv = env
 		defer env.RunCleanup()
 		if len(opts.Args) > 0 {
 			env.Set("ARGS", toObject(opts.Args))
@@ -623,10 +716,11 @@ func ExecFileWithOptions(filename string, data map[string]interface{}, opts Exec
 
 		if len(p.Errors()) != 0 {
 			return nil, &ExecError{
-				Kind:        ExecErrorParser,
-				Message:     fmt.Sprintf("parser errors: %v", p.Errors()),
-				Path:        filename,
-				Diagnostics: append([]string(nil), p.Errors()...),
+				Kind:                  ExecErrorParser,
+				Message:               fmt.Sprintf("parser errors: %v", p.Errors()),
+				Path:                  filename,
+				Diagnostics:           append([]string(nil), p.Errors()...),
+				StructuredDiagnostics: diagnosticsFromParserErrors(filename, string(content), p.Errors()),
 			}
 		}
 
@@ -641,6 +735,7 @@ func ExecFileWithOptions(filename string, data map[string]interface{}, opts Exec
 
 		return result, nil
 	})
+	return obj, observedEnv, err
 }
 
 func runtimeExecError(path string, obj Object) *ExecError {
@@ -655,10 +750,129 @@ func runtimeExecError(path string, obj Object) *ExecError {
 			execErr.Diagnostics = append(execErr.Diagnostics, formatCallStack(errObj.Stack))
 		}
 	}
+	execErr.StructuredDiagnostics = []Diagnostic{{
+		Severity: DiagnosticError,
+		Kind:     ExecErrorRuntime,
+		Message:  execErr.Message,
+		Path:     path,
+	}}
 	return execErr
 }
 
+func diagnosticsFromParserErrors(path string, source string, errs []string) []Diagnostic {
+	diagnostics := make([]Diagnostic, 0, len(errs))
+	for _, msg := range errs {
+		line, col := diagnosticLineColumn(msg)
+		diagnostics = append(diagnostics, Diagnostic{
+			Severity: DiagnosticError,
+			Kind:     ExecErrorParser,
+			Message:  msg,
+			Path:     path,
+			Line:     line,
+			Column:   col,
+			Context:  parser.LineContext(source, line, col),
+		})
+	}
+	return diagnostics
+}
+
+func diagnosticLineColumn(msg string) (int, int) {
+	line, col := 0, 0
+	_, _ = fmt.Sscanf(msg, "line %d:%d", &line, &col)
+	if line == 0 {
+		_, _ = fmt.Sscanf(msg, "Line %d:%d", &line, &col)
+	}
+	return line, col
+}
+
+type observedRuntimeStats struct {
+	Steps       int64
+	OutputBytes int64
+}
+
+func startExecutionObservation(opts ExecOptions, path string) func(any, error) {
+	hooks := opts.Observability
+	if hooks == nil {
+		return func(any, error) {}
+	}
+	profile := strings.TrimSpace(opts.Profile)
+	if profile == "" {
+		profile = "trusted"
+	}
+	start := time.Now()
+	if hooks.OnStart != nil {
+		hooks.OnStart(ExecutionEvent{Profile: profile, Path: path})
+	}
+	called := false
+	return func(observed any, err error) {
+		if called {
+			return
+		}
+		called = true
+		metrics := ExecutionMetrics{
+			Profile:  profile,
+			Path:     path,
+			Duration: time.Since(start),
+		}
+		switch v := observed.(type) {
+		case *Environment:
+			if v != nil && v.RuntimeLimits != nil {
+				metrics.Steps = v.RuntimeLimits.Steps
+				metrics.OutputBytes = v.RuntimeLimits.OutputBytes
+			}
+		case observedRuntimeStats:
+			metrics.Steps = v.Steps
+			metrics.OutputBytes = v.OutputBytes
+		}
+		if err != nil {
+			metrics.Error = err.Error()
+			if execErr, ok := err.(*ExecError); ok {
+				metrics.ErrorKind = execErr.Kind
+			} else {
+				metrics.ErrorKind = ExecErrorRuntime
+			}
+		}
+		if hooks.OnFinish != nil {
+			hooks.OnFinish(metrics)
+		}
+	}
+}
+
+type outputCountingWriter struct {
+	dst io.Writer
+	n   int64
+}
+
+func (w *outputCountingWriter) Write(p []byte) (int, error) {
+	w.n += int64(len(p))
+	if w.dst == nil {
+		return len(p), nil
+	}
+	return w.dst.Write(p)
+}
+
+func (w *outputCountingWriter) OutputBytes() int64 {
+	if w == nil {
+		return 0
+	}
+	return w.n
+}
+
+func observeUntrustedOutput(opts ExecOptions) (ExecOptions, *outputCountingWriter) {
+	counter := &outputCountingWriter{dst: opts.Output}
+	opts.Output = counter
+	return opts, counter
+}
+
 func validateExecOptions(opts ExecOptions) error {
+	switch strings.ToLower(strings.TrimSpace(opts.Profile)) {
+	case "", "trusted", "untrusted", "readonly", "networked", "data-processing", "automation", "server":
+	default:
+		return &ExecError{Kind: ExecErrorValidation, Message: "Profile must be a known execution profile"}
+	}
+	if opts.MaxSourceBytes < 0 {
+		return &ExecError{Kind: ExecErrorValidation, Message: "MaxSourceBytes must be >= 0"}
+	}
 	if opts.MaxDepth < 0 {
 		return &ExecError{Kind: ExecErrorValidation, Message: "MaxDepth must be >= 0"}
 	}
@@ -677,10 +891,64 @@ func validateExecOptions(opts ExecOptions) error {
 	if opts.MaxExecOutputBytes < 0 {
 		return &ExecError{Kind: ExecErrorValidation, Message: "MaxExecOutputBytes must be >= 0"}
 	}
+	if opts.MaxStringBytes < 0 {
+		return &ExecError{Kind: ExecErrorValidation, Message: "MaxStringBytes must be >= 0"}
+	}
+	if opts.MaxArrayLength < 0 {
+		return &ExecError{Kind: ExecErrorValidation, Message: "MaxArrayLength must be >= 0"}
+	}
+	if opts.MaxHashEntries < 0 {
+		return &ExecError{Kind: ExecErrorValidation, Message: "MaxHashEntries must be >= 0"}
+	}
+	if opts.MaxImportDepth < 0 {
+		return &ExecError{Kind: ExecErrorValidation, Message: "MaxImportDepth must be >= 0"}
+	}
+	if opts.MaxImportCount < 0 {
+		return &ExecError{Kind: ExecErrorValidation, Message: "MaxImportCount must be >= 0"}
+	}
 	if opts.Timeout < 0 {
 		return &ExecError{Kind: ExecErrorValidation, Message: "Timeout must be >= 0"}
 	}
 	return nil
+}
+
+func isUntrustedProfile(profile string) bool {
+	profile = strings.ToLower(strings.TrimSpace(profile))
+	return profile != "" && profile != "trusted"
+}
+
+func untrustedOptionsFromExecOptions(opts ExecOptions, moduleDir string) UntrustedExecOptions {
+	uopts := UntrustedExecOptions{
+		Args:                   append([]string(nil), opts.Args...),
+		ModuleDir:              moduleDir,
+		Output:                 opts.Output,
+		MaxSourceBytes:         opts.MaxSourceBytes,
+		MaxDepth:               opts.MaxDepth,
+		MaxSteps:               opts.MaxSteps,
+		MaxHeapMB:              opts.MaxHeapMB,
+		MaxOutputBytes:         opts.MaxOutputBytes,
+		MaxHTTPBodyBytes:       opts.MaxHTTPBodyBytes,
+		MaxExecOutputBytes:     opts.MaxExecOutputBytes,
+		Timeout:                opts.Timeout,
+		WorkerCommand:          append([]string(nil), opts.WorkerCommand...),
+		RequireOSIsolation:     opts.RequireOSIsolation,
+		AllowInProcessFallback: opts.AllowInProcessFallback,
+	}
+	if opts.Security != nil {
+		uopts.AllowedCapabilities = append([]string(nil), opts.Security.AllowedCapabilities...)
+		uopts.AllowedExecCommands = append([]string(nil), opts.Security.AllowedExecCommands...)
+		uopts.AllowedNetworkHosts = append([]string(nil), opts.Security.AllowedNetworkHosts...)
+		uopts.AllowedDBDrivers = append([]string(nil), opts.Security.AllowedDBDrivers...)
+		uopts.AllowedDBDSNPatterns = append([]string(nil), opts.Security.AllowedDBDSNPatterns...)
+		uopts.AllowedFileReadPaths = append([]string(nil), opts.Security.AllowedFileReadPaths...)
+		uopts.AllowedFileWritePaths = append([]string(nil), opts.Security.AllowedFileWritePaths...)
+		uopts.AllowedImportPaths = append([]string(nil), opts.Security.AllowedImportPaths...)
+		uopts.DeniedImportPaths = append([]string(nil), opts.Security.DeniedImportPaths...)
+		uopts.AllowedImportPackages = append([]string(nil), opts.Security.AllowedImportPackages...)
+		uopts.DeniedImportPackages = append([]string(nil), opts.Security.DeniedImportPackages...)
+		uopts.DenyDynamicImports = opts.Security.DenyDynamicImports
+	}
+	return uopts
 }
 
 func applyExecRuntimeOptions(env *Environment, opts ExecOptions) {
@@ -707,6 +975,21 @@ func applyExecRuntimeOptions(env *Environment, opts ExecOptions) {
 	if opts.MaxExecOutputBytes > 0 {
 		rl.MaxExecOutputBytes = opts.MaxExecOutputBytes
 	}
+	if opts.MaxStringBytes > 0 {
+		rl.MaxStringBytes = opts.MaxStringBytes
+	}
+	if opts.MaxArrayLength > 0 {
+		rl.MaxArrayLength = opts.MaxArrayLength
+	}
+	if opts.MaxHashEntries > 0 {
+		rl.MaxHashEntries = opts.MaxHashEntries
+	}
+	if opts.MaxImportDepth > 0 {
+		rl.MaxImportDepth = opts.MaxImportDepth
+	}
+	if opts.MaxImportCount > 0 {
+		rl.MaxImportCount = opts.MaxImportCount
+	}
 	if opts.Timeout > 0 {
 		rl.Deadline = time.Now().Add(opts.Timeout)
 	}
@@ -714,7 +997,7 @@ func applyExecRuntimeOptions(env *Environment, opts ExecOptions) {
 		rl.Ctx = opts.Context
 	}
 
-	if rl.MaxDepth == 0 && rl.MaxSteps == 0 && rl.MaxHeapBytes == 0 && rl.MaxOutputBytes == 0 && rl.MaxHTTPBodyBytes == 0 && rl.MaxExecOutputBytes == 0 && rl.Deadline.IsZero() && rl.Ctx == nil {
+	if rl.MaxDepth == 0 && rl.MaxSteps == 0 && rl.MaxHeapBytes == 0 && rl.MaxOutputBytes == 0 && rl.MaxHTTPBodyBytes == 0 && rl.MaxExecOutputBytes == 0 && rl.MaxStringBytes == 0 && rl.MaxArrayLength == 0 && rl.MaxHashEntries == 0 && rl.MaxImportDepth == 0 && rl.MaxImportCount == 0 && rl.Deadline.IsZero() && rl.Ctx == nil {
 		env.RuntimeLimits = nil
 		return
 	}
@@ -884,6 +1167,8 @@ var (
 )
 
 func init() {
+	eval.RunFileFn = runCLIFile
+
 	// Wire sandbox function pointers
 	sandbox.EvalProgramFn = func(program any, env *object.Environment) object.Object {
 		if p, ok := program.(*ast.Program); ok {
@@ -975,6 +1260,75 @@ func init() {
 
 	// Wire import path resolution
 	eval.ResolveImportPathFn = resolveImportPath
+	eval.ResolveStdModuleFn = func(importPath string) (map[string]object.Object, bool) {
+		exports, ok := LookupStdModule(importPath)
+		return exports, ok
+	}
+}
+
+func runCLIFile(filename string, args []string, cliOpts eval.CLIOptions) {
+	opts := execOptionsFromCLI(cliOpts)
+	opts.Args = append([]string(nil), args...)
+	opts.ModuleDir = filepath.Dir(filename)
+	opts.Output = os.Stdout
+	obj, err := ExecFileWithOptions(filename, nil, opts)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "ERROR: %s\n", err)
+		os.Exit(1)
+	}
+	if rv, ok := obj.(*ReturnValue); ok && rv.Value != nil && rv.Value.Type() == object.INTEGER_OBJ {
+		os.Exit(int(rv.Value.(*object.Integer).Value))
+	}
+}
+
+func execOptionsFromCLI(cliOpts eval.CLIOptions) ExecOptions {
+	opts := ExecOptions{
+		Profile:                cliOpts.Profile,
+		MaxSourceBytes:         cliOpts.MaxSourceBytes,
+		MaxDepth:               cliOpts.MaxDepth,
+		MaxSteps:               cliOpts.MaxSteps,
+		MaxHeapMB:              cliOpts.MaxHeapMB,
+		MaxStringBytes:         cliOpts.MaxStringBytes,
+		MaxArrayLength:         cliOpts.MaxArrayLength,
+		MaxHashEntries:         cliOpts.MaxHashEntries,
+		MaxImportDepth:         cliOpts.MaxImportDepth,
+		MaxImportCount:         cliOpts.MaxImportCount,
+		Timeout:                cliOpts.Timeout,
+		RequireOSIsolation:     cliOpts.RequireOSIsolation,
+		AllowInProcessFallback: cliOpts.AllowInProcessFallback,
+	}
+	if cliSecurityPolicyProvided(cliOpts) {
+		opts.Security = &SecurityPolicy{
+			AllowedCapabilities:   append([]string(nil), cliOpts.AllowedCapabilities...),
+			AllowedExecCommands:   append([]string(nil), cliOpts.AllowedExecCommands...),
+			AllowedNetworkHosts:   append([]string(nil), cliOpts.AllowedNetworkHosts...),
+			AllowedDBDrivers:      append([]string(nil), cliOpts.AllowedDBDrivers...),
+			AllowedDBDSNPatterns:  append([]string(nil), cliOpts.AllowedDBDSNPatterns...),
+			AllowedFileReadPaths:  append([]string(nil), cliOpts.AllowedFileReadPaths...),
+			AllowedFileWritePaths: append([]string(nil), cliOpts.AllowedFileWritePaths...),
+			AllowedImportPaths:    append([]string(nil), cliOpts.AllowedImportPaths...),
+			DeniedImportPaths:     append([]string(nil), cliOpts.DeniedImportPaths...),
+			AllowedImportPackages: append([]string(nil), cliOpts.AllowedImportPackages...),
+			DeniedImportPackages:  append([]string(nil), cliOpts.DeniedImportPackages...),
+			DenyDynamicImports:    cliOpts.DenyDynamicImports,
+		}
+	}
+	return opts
+}
+
+func cliSecurityPolicyProvided(cliOpts eval.CLIOptions) bool {
+	return len(cliOpts.AllowedCapabilities) > 0 ||
+		len(cliOpts.AllowedExecCommands) > 0 ||
+		len(cliOpts.AllowedNetworkHosts) > 0 ||
+		len(cliOpts.AllowedDBDrivers) > 0 ||
+		len(cliOpts.AllowedDBDSNPatterns) > 0 ||
+		len(cliOpts.AllowedFileReadPaths) > 0 ||
+		len(cliOpts.AllowedFileWritePaths) > 0 ||
+		len(cliOpts.AllowedImportPaths) > 0 ||
+		len(cliOpts.DeniedImportPaths) > 0 ||
+		len(cliOpts.AllowedImportPackages) > 0 ||
+		len(cliOpts.DeniedImportPackages) > 0 ||
+		cliOpts.DenyDynamicImports
 }
 
 // resolveImportPath resolves a module import path relative to the caller's
@@ -1055,7 +1409,10 @@ func sanitizeImportPath(userPath string) (string, error) {
 	}
 
 	cleanPath := filepath.Clean(realPath)
-	baseClean := filepath.Clean(base)
+	baseClean, err := filepath.EvalSymlinks(filepath.Clean(base))
+	if err != nil {
+		baseClean = filepath.Clean(base)
+	}
 	if !strings.HasSuffix(baseClean, string(os.PathSeparator)) {
 		baseClean += string(os.PathSeparator)
 	}

@@ -70,6 +70,11 @@ type SandboxConfig struct {
 	DeniedFileWritePaths  []string
 	AllowedDBDSNPatterns  []string
 	DeniedDBDSNPatterns   []string
+	AllowedImportPaths    []string
+	DeniedImportPaths     []string
+	AllowedImportPackages []string
+	DeniedImportPackages  []string
+	DenyDynamicImports    bool
 }
 
 // DefaultExecSandboxConfig returns a SandboxConfig suitable for running
@@ -223,6 +228,11 @@ func sandboxSecurityPolicy(cfg SandboxConfig) *object.SecurityPolicy {
 		DeniedFileWritePaths:  append([]string(nil), cfg.DeniedFileWritePaths...),
 		AllowedDBDSNPatterns:  append([]string(nil), cfg.AllowedDBDSNPatterns...),
 		DeniedDBDSNPatterns:   append([]string(nil), cfg.DeniedDBDSNPatterns...),
+		AllowedImportPaths:    append([]string(nil), cfg.AllowedImportPaths...),
+		DeniedImportPaths:     append([]string(nil), cfg.DeniedImportPaths...),
+		AllowedImportPackages: append([]string(nil), cfg.AllowedImportPackages...),
+		DeniedImportPackages:  append([]string(nil), cfg.DeniedImportPackages...),
+		DenyDynamicImports:    cfg.DenyDynamicImports,
 	}
 }
 
