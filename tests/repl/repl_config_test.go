@@ -43,8 +43,11 @@ func TestReplCallTipUsesCompactFunctionSignature(t *testing.T) {
 	})
 
 	tip := repl.ReplCallTip("testType(", len("testType("), env)
-	if tip != "testType(val: any) -> string" {
+	if !strings.Contains(tip, "testType(val: any) -> string") {
 		t.Fatalf("unexpected call tip: %q", tip)
+	}
+	if !strings.Contains(tip, "active: val: any") {
+		t.Fatalf("call tip missing active parameter: %q", tip)
 	}
 	if strings.Contains(tip, "{") || strings.Contains(tip, "\n") || strings.Contains(tip, "return") {
 		t.Fatalf("call tip leaked function body formatting: %q", tip)

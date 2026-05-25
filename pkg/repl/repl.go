@@ -255,6 +255,10 @@ func RunReplInteractive(env *object.Environment) error {
 	if !IsTerminal(os.Stdin) {
 		return fmt.Errorf("stdin is not a terminal")
 	}
+	restoreTerminal, err := enableRawTerminal(os.Stdin)
+	if err == nil && restoreTerminal != nil {
+		defer restoreTerminal()
+	}
 
 	editor, err := newReplEditor(os.Stdin, os.Stdout, ReplCandidatesForEnv(env), env)
 	if err != nil {
@@ -299,6 +303,32 @@ func RunReplInteractive(env *object.Environment) error {
 		EvalReplInput(input, env)
 		editor.RecordInput(input)
 	}
+}
+
+func enableRawTerminal(in *os.File) (func(), error) {
+	if in == nil || isWindowsRuntime() {
+		return nil, nil
+	}
+	stateCmd := exec.Command("stty", "-g")
+	stateCmd.Stdin = in
+	stateBytes, err := stateCmd.Output()
+	if err != nil {
+		return nil, err
+	}
+	state := strings.TrimSpace(string(stateBytes))
+	rawCmd := exec.Command("stty", "raw", "-echo")
+	rawCmd.Stdin = in
+	if err := rawCmd.Run(); err != nil {
+		return nil, err
+	}
+	return func() {
+		if state == "" {
+			return
+		}
+		restoreCmd := exec.Command("stty", state)
+		restoreCmd.Stdin = in
+		_ = restoreCmd.Run()
+	}, nil
 }
 
 // RunReplBasic starts a simple line-based REPL without raw terminal input.
@@ -2580,20 +2610,15 @@ func (e *ReplEditor) applyCompletion(buf []rune, cursor int, prompt string) ([]r
 		return buf, cursor
 	}
 	if len(matches) == 1 {
-		completion := []rune(matches[0])
-		newBuf := append([]rune{}, buf[:ctx.Start]...)
-		newBuf = append(newBuf, completion...)
-		newBuf = append(newBuf, buf[ctx.End:]...)
-		return newBuf, ctx.Start + len(completion)
+		return replaceCompletion(buf, ctx, matches[0])
+	}
+	if suggestion, ok := firstCompletion(ctx.Prefix, matches); ok && strings.HasPrefix(suggestion, ctx.Prefix) {
+		return replaceCompletion(buf, ctx, suggestion)
 	}
 
 	common := LongestCommonPrefix(matches)
 	if len(common) > len(ctx.Prefix) {
-		completion := []rune(common)
-		newBuf := append([]rune{}, buf[:ctx.Start]...)
-		newBuf = append(newBuf, completion...)
-		newBuf = append(newBuf, buf[ctx.End:]...)
-		return newBuf, ctx.Start + len(completion)
+		return replaceCompletion(buf, ctx, common)
 	}
 
 	_, _ = fmt.Fprint(e.Out, "\r\n")
@@ -2611,6 +2636,14 @@ func (e *ReplEditor) applyCompletion(buf []rune, cursor int, prompt string) ([]r
 		_, _ = fmt.Fprint(e.Out, StylePrompt(prompt))
 	}
 	return buf, cursor
+}
+
+func replaceCompletion(buf []rune, ctx ReplCompletionContext, completion string) ([]rune, int) {
+	replacement := []rune(completion)
+	newBuf := append([]rune{}, buf[:ctx.Start]...)
+	newBuf = append(newBuf, replacement...)
+	newBuf = append(newBuf, buf[ctx.End:]...)
+	return newBuf, ctx.Start + len(replacement)
 }
 
 type ReplCompletionContext struct {
@@ -2702,6 +2735,38 @@ func (e *ReplEditor) completionDetails(ctx ReplCompletionContext) map[string]str
 	for _, cmd := range replCommandCatalog {
 		if strings.HasPrefix(cmd.Name, ctx.Prefix) || fuzzyContains(cmd.Name+" "+cmd.Summary, ctx.Prefix) {
 			details[cmd.Name] = cmd.Summary
+		}
+	}
+	if ctx.BaseExpr == "" {
+		if e != nil && e.Env != nil {
+			for _, name := range e.Env.Names() {
+				if name == "" {
+					continue
+				}
+				if !strings.HasPrefix(name, ctx.Prefix) && !fuzzyContains(name, ctx.Prefix) {
+					continue
+				}
+				if val, ok := e.Env.Get(name); ok {
+					if fn, ok := val.(*object.Function); ok {
+						details[name] = ReplFunctionSignature(name, fn)
+					} else if val != nil {
+						details[name] = fmt.Sprintf("%s value", val.Type())
+					}
+				}
+			}
+		}
+		if e != nil && BuiltinHelpTextFn != nil {
+			for _, name := range e.CompletionsForContext(ctx) {
+				if name == "" {
+					continue
+				}
+				if !strings.HasPrefix(name, ctx.Prefix) && !fuzzyContains(name, ctx.Prefix) {
+					continue
+				}
+				if detail := ReplBuiltinDetail(name); detail != "" {
+					details[name] = detail
+				}
+			}
 		}
 	}
 	if e == nil || e.Index == nil || ctx.BaseExpr != "" {
@@ -2819,42 +2884,292 @@ func (e *ReplEditor) toolingSourceForCursor(line string, cursor int) (string, in
 }
 
 func ReplCallTip(line string, cursor int, env *object.Environment) string {
-	runes := []rune(line)
-	if cursor < 0 || cursor > len(runes) {
-		return ""
-	}
-	if cursor == 0 {
-		return ""
-	}
-	i := cursor - 1
-	for i >= 0 && unicode.IsSpace(runes[i]) {
-		i--
-	}
-	if i < 0 || runes[i] != '(' {
-		return ""
-	}
-	j := i - 1
-	for j >= 0 && isTokenRune(runes[j]) {
-		j--
-	}
-	name := string(runes[j+1 : i])
-	if strings.TrimSpace(name) == "" {
+	name, argIndex, ok := ReplActiveCall(line, cursor)
+	if !ok || strings.TrimSpace(name) == "" {
 		return ""
 	}
 	if HasBuiltinFn != nil && HasBuiltinFn(name) {
-		if BuiltinHelpTextFn != nil {
-			return ReplCompactHint(BuiltinHelpTextFn(name), 140)
+		if detail := ReplBuiltinCallTip(name, argIndex); detail != "" {
+			return detail
 		}
 	}
 	if env != nil {
 		if val, ok := env.Get(name); ok {
 			if fn, ok := val.(*object.Function); ok {
-				return ReplFunctionSignature(name, fn)
+				return ReplFunctionCallTip(name, fn, argIndex)
 			}
 			return ReplCompactHint(fmt.Sprintf("%s: %s", name, val.Type()), 140)
 		}
 	}
 	return ""
+}
+
+// ReplActiveCall returns the function call enclosing cursor and the current
+// zero-based argument index. It is intentionally lightweight so it can run on
+// every keypress in the REPL.
+func ReplActiveCall(line string, cursor int) (name string, argIndex int, ok bool) {
+	runes := []rune(line)
+	if cursor < 0 {
+		cursor = 0
+	}
+	if cursor > len(runes) {
+		cursor = len(runes)
+	}
+	type frame struct {
+		delim    rune
+		name     string
+		argIndex int
+	}
+	stack := make([]frame, 0, 8)
+	var quote rune
+	escaped := false
+	for i := 0; i < cursor; i++ {
+		r := runes[i]
+		if quote != 0 {
+			if escaped {
+				escaped = false
+				continue
+			}
+			if r == '\\' {
+				escaped = true
+				continue
+			}
+			if r == quote {
+				quote = 0
+			}
+			continue
+		}
+		switch r {
+		case '\'', '"', '`':
+			quote = r
+		case '(':
+			stack = append(stack, frame{delim: r, name: callNameBefore(runes, i)})
+		case '[', '{':
+			stack = append(stack, frame{delim: r})
+		case ')', ']', '}':
+			if len(stack) == 0 {
+				continue
+			}
+			top := stack[len(stack)-1]
+			if (r == ')' && top.delim == '(') || (r == ']' && top.delim == '[') || (r == '}' && top.delim == '{') {
+				stack = stack[:len(stack)-1]
+			}
+		case ',':
+			if len(stack) == 0 {
+				continue
+			}
+			top := &stack[len(stack)-1]
+			if top.delim == '(' && strings.TrimSpace(top.name) != "" {
+				top.argIndex++
+			}
+		}
+	}
+	for i := len(stack) - 1; i >= 0; i-- {
+		if stack[i].delim == '(' && strings.TrimSpace(stack[i].name) != "" {
+			return stack[i].name, stack[i].argIndex, true
+		}
+	}
+	return "", 0, false
+}
+
+func callNameBefore(runes []rune, openParen int) string {
+	i := openParen - 1
+	for i >= 0 && unicode.IsSpace(runes[i]) {
+		i--
+	}
+	end := i + 1
+	for i >= 0 && isTokenRune(runes[i]) {
+		i--
+	}
+	return strings.TrimSpace(string(runes[i+1 : end]))
+}
+
+func ReplFunctionCallTip(name string, fn *object.Function, argIndex int) string {
+	signature := ReplFunctionSignature(name, fn)
+	if signature == "" {
+		return ""
+	}
+	param := ReplFunctionParamTip(fn, argIndex)
+	if param == "" {
+		return signature
+	}
+	return ReplCompactHint(signature+" | "+param, 180)
+}
+
+func ReplFunctionParamTip(fn *object.Function, argIndex int) string {
+	if fn == nil || argIndex < 0 || len(fn.Parameters) == 0 {
+		return ""
+	}
+	if argIndex >= len(fn.Parameters) {
+		if fn.HasRest && len(fn.Parameters) > 0 {
+			argIndex = len(fn.Parameters) - 1
+		} else {
+			return fmt.Sprintf("arg %d: extra argument", argIndex+1)
+		}
+	}
+	name := "arg"
+	if p := fn.Parameters[argIndex]; p != nil && strings.TrimSpace(p.String()) != "" {
+		name = p.String()
+	}
+	if fn.HasRest && argIndex == len(fn.Parameters)-1 {
+		name = "..." + name
+	}
+	if argIndex < len(fn.ParamTypes) && strings.TrimSpace(fn.ParamTypes[argIndex]) != "" {
+		name += ": " + strings.TrimSpace(fn.ParamTypes[argIndex])
+	}
+	if argIndex < len(fn.Defaults) && fn.Defaults[argIndex] != nil {
+		name += " = ..."
+	}
+	return fmt.Sprintf("active: %s", name)
+}
+
+func ReplBuiltinCallTip(name string, argIndex int) string {
+	detail := ReplBuiltinDetail(name)
+	if detail == "" {
+		return ""
+	}
+	argHint := ReplBuiltinArgHint(detail, argIndex)
+	if argHint != "" {
+		detail += " | " + argHint
+	}
+	return ReplCompactHint(detail, 180)
+}
+
+func ReplBuiltinDetail(name string) string {
+	name = strings.TrimSpace(name)
+	if name == "" || BuiltinHelpTextFn == nil {
+		return ""
+	}
+	help := strings.TrimSpace(BuiltinHelpTextFn(name))
+	doc := strings.TrimSpace(markdownToPlain(tooling.RuntimeDocMarkdown(name)))
+	switch {
+	case help == "" && doc == "":
+		return ""
+	case help == "":
+		return doc
+	case doc == "":
+		return help
+	default:
+		return help + " " + doc
+	}
+}
+
+func ReplBuiltinArgHint(detail string, argIndex int) string {
+	signature := firstSignatureFragment(detail)
+	open := strings.IndexRune(signature, '(')
+	close := strings.LastIndex(signature, ")")
+	if open < 0 || close <= open {
+		return ""
+	}
+	params := splitSignatureParams(signature[open+1 : close])
+	if len(params) == 0 {
+		return ""
+	}
+	idx := argIndex
+	if idx >= len(params) {
+		last := strings.TrimSpace(params[len(params)-1])
+		if !strings.Contains(last, "...") {
+			return fmt.Sprintf("active: extra argument %d", argIndex+1)
+		}
+		idx = len(params) - 1
+	}
+	return fmt.Sprintf("active: %s", strings.TrimSpace(params[idx]))
+}
+
+func firstSignatureFragment(detail string) string {
+	detail = strings.TrimSpace(detail)
+	if detail == "" {
+		return ""
+	}
+	end := len(detail)
+	for _, sep := range []string{";", " Signature:", ". "} {
+		if idx := strings.Index(detail, sep); idx >= 0 && idx < end {
+			end = idx
+		}
+	}
+	return strings.TrimSpace(detail[:end])
+}
+
+func splitSignatureParams(params string) []string {
+	params = strings.TrimSpace(params)
+	if params == "" {
+		return nil
+	}
+	var out []string
+	start := 0
+	depth := 0
+	var quote rune
+	escaped := false
+	runes := []rune(params)
+	for i, r := range runes {
+		if quote != 0 {
+			if escaped {
+				escaped = false
+				continue
+			}
+			if r == '\\' {
+				escaped = true
+				continue
+			}
+			if r == quote {
+				quote = 0
+			}
+			continue
+		}
+		switch r {
+		case '\'', '"', '`':
+			quote = r
+		case '(', '[', '{':
+			depth++
+		case ')', ']', '}':
+			if depth > 0 {
+				depth--
+			}
+		case ',':
+			if depth == 0 {
+				out = append(out, strings.TrimSpace(string(runes[start:i])))
+				start = i + 1
+			}
+		}
+	}
+	out = append(out, strings.TrimSpace(string(runes[start:])))
+	filtered := out[:0]
+	for _, item := range out {
+		for _, normalized := range expandOptionalSignatureParam(item) {
+			if normalized != "" {
+				filtered = append(filtered, normalized)
+			}
+		}
+	}
+	return filtered
+}
+
+func expandOptionalSignatureParam(param string) []string {
+	param = strings.TrimSpace(param)
+	if param == "" {
+		return nil
+	}
+	open := strings.Index(param, "[,")
+	close := strings.LastIndex(param, "]")
+	if open < 0 || close <= open {
+		return []string{param}
+	}
+	required := strings.TrimSpace(param[:open])
+	optional := strings.TrimSpace(param[open+2 : close])
+	out := []string{}
+	if required != "" {
+		out = append(out, required)
+	}
+	for _, part := range splitSignatureParams(optional) {
+		part = strings.TrimSpace(part)
+		if part != "" && !strings.Contains(strings.ToLower(part), "optional") {
+			part += " optional"
+		}
+		if part != "" {
+			out = append(out, part)
+		}
+	}
+	return out
 }
 
 func ReplFunctionSignature(name string, fn *object.Function) string {

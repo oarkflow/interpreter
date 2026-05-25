@@ -165,7 +165,6 @@ func initReplBridge() {
 			env.SecurityPolicy.DeniedImportPackages = append([]string(nil), cliOpts.DeniedImportPackages...)
 			env.SecurityPolicy.DenyDynamicImports = cliOpts.DenyDynamicImports
 		}
-		fmt.Println("Welcome to SPL REPL. Type 'exit' to quit.")
 		if err := repl.RunReplInteractive(env); err != nil {
 			repl.RunReplBasic(env)
 		}

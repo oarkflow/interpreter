@@ -6,6 +6,9 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/oarkflow/interpreter/pkg/ast"
+	"github.com/oarkflow/interpreter/pkg/object"
 )
 
 func TestParseHistoryData(t *testing.T) {
@@ -104,5 +107,109 @@ func TestSuggestionLinesShowVisibleMenu(t *testing.T) {
 	joined := strings.Join(lines, "\n")
 	if !strings.Contains(joined, "suggestions:") || !strings.Contains(joined, ":palette") {
 		t.Fatalf("unexpected suggestion lines: %#v", lines)
+	}
+}
+
+func TestTabAcceptsVisiblePrefixSuggestion(t *testing.T) {
+	editor := &ReplEditor{Candidates: []string{"print", "printf"}}
+	buf, cursor := editor.applyCompletion([]rune("pri"), len("pri"), ">> ")
+	if got := string(buf); got != "print" {
+		t.Fatalf("expected tab to accept visible suggestion, got %q cursor=%d", got, cursor)
+	}
+	if cursor != len("print") {
+		t.Fatalf("unexpected cursor after completion: %d", cursor)
+	}
+}
+
+func TestTabCompletesCommandSuggestion(t *testing.T) {
+	editor := &ReplEditor{Candidates: ReplCandidates()}
+	buf, _ := editor.applyCompletion([]rune(":pa"), len(":pa"), ">> ")
+	if got := string(buf); got != ":palette" {
+		t.Fatalf("expected command completion, got %q", got)
+	}
+}
+
+func TestReplCallTipStaysVisibleInsideArguments(t *testing.T) {
+	env := object.NewEnvironment()
+	env.Set("makeLabel", &object.Function{
+		Name: "makeLabel",
+		Parameters: []*ast.Identifier{
+			{Name: "name"},
+			{Name: "count"},
+		},
+		ParamTypes: []string{"string", "integer"},
+		ReturnType: "string",
+	})
+
+	line := `makeLabel("Ada", `
+	tip := ReplCallTip(line, len([]rune(line)), env)
+	if !strings.Contains(tip, "makeLabel(name: string, count: integer) -> string") {
+		t.Fatalf("expected function signature in call tip, got %q", tip)
+	}
+	if !strings.Contains(tip, "active: count: integer") {
+		t.Fatalf("expected active parameter in call tip, got %q", tip)
+	}
+}
+
+func TestReplCallTipIgnoresNestedCommas(t *testing.T) {
+	env := object.NewEnvironment()
+	env.Set("outer", &object.Function{
+		Name: "outer",
+		Parameters: []*ast.Identifier{
+			{Name: "first"},
+			{Name: "second"},
+		},
+		ParamTypes: []string{"array", "integer"},
+	})
+
+	line := `outer([1, 2, 3], `
+	tip := ReplCallTip(line, len([]rune(line)), env)
+	if !strings.Contains(tip, "active: second: integer") {
+		t.Fatalf("expected nested commas to be ignored, got %q", tip)
+	}
+}
+
+func TestSuggestionLinesIncludeFunctionSignature(t *testing.T) {
+	env := object.NewEnvironment()
+	env.Set("makeLabel", &object.Function{
+		Name:       "makeLabel",
+		Parameters: []*ast.Identifier{{Name: "name"}},
+		ParamTypes: []string{"string"},
+		ReturnType: "string",
+	})
+	editor := &ReplEditor{Env: env, Candidates: []string{"makeLabel"}}
+	ctx := ReplCompletionContext{Prefix: "make", Ok: true}
+	lines := editor.SuggestionLines(ctx, []string{"makeLabel"}, 120)
+	joined := strings.Join(lines, "\n")
+	if !strings.Contains(joined, "makeLabel(name: string) -> string") {
+		t.Fatalf("expected function signature in suggestions, got %#v", lines)
+	}
+}
+
+func TestBuiltinCallTipShowsParameter(t *testing.T) {
+	oldHasBuiltin := HasBuiltinFn
+	oldHelp := BuiltinHelpTextFn
+	HasBuiltinFn = func(name string) bool { return name == "read_json" }
+	BuiltinHelpTextFn = func(name string) string {
+		if name == "read_json" {
+			return "read_json(path[, opts]) loads JSON from disk"
+		}
+		return ""
+	}
+	defer func() {
+		HasBuiltinFn = oldHasBuiltin
+		BuiltinHelpTextFn = oldHelp
+	}()
+
+	line := `read_json(`
+	tip := ReplCallTip(line, len([]rune(line)), nil)
+	if !strings.Contains(tip, "read_json(path[, opts])") || !strings.Contains(tip, "active: path") {
+		t.Fatalf("expected builtin signature and parameter, got %q", tip)
+	}
+
+	line = `read_json("data.json", `
+	tip = ReplCallTip(line, len([]rune(line)), nil)
+	if !strings.Contains(tip, "active: opts optional") {
+		t.Fatalf("expected optional builtin parameter, got %q", tip)
 	}
 }
