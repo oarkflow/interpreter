@@ -14,6 +14,9 @@
     "onLanguage:spl",
     "onCommand:spl.runFile",
     "onCommand:spl.evaluateSelection",
+    "onCommand:spl.sessionCheckpoint",
+    "onCommand:spl.sessionRestore",
+    "onCommand:spl.sessionInspect",
     "onCommand:spl.restartLanguageServer",
     "onCommand:spl.showOutput"
   ],
@@ -47,6 +50,18 @@
       {
         "command": "spl.evaluateSelection",
         "title": "SPL: Evaluate Selection"
+      },
+      {
+        "command": "spl.sessionCheckpoint",
+        "title": "SPL: Session Checkpoint"
+      },
+      {
+        "command": "spl.sessionRestore",
+        "title": "SPL: Session Restore"
+      },
+      {
+        "command": "spl.sessionInspect",
+        "title": "SPL: Session Inspect"
       },
       {
         "command": "spl.restartLanguageServer",

@@ -111,6 +111,51 @@ func TestLSPCompletionHoverDefinitionReferencesAndFormatting(t *testing.T) {
 	}
 }
 
+func TestLSPSessionEvaluationCheckpointRestoreInspect(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "session.spl")
+	uri := pathToURI(path)
+	var out, errb bytes.Buffer
+	s := newLSPServer(strings.NewReader(""), &out, &errb)
+	s.dispatch("initialize", mustRaw(map[string]any{"rootUri": pathToURI(dir)}))
+	s.dispatch("textDocument/didOpen", mustRaw(map[string]any{
+		"textDocument": map[string]any{"uri": uri, "text": "let x = 1; x;"},
+	}))
+
+	evaluated, _ := s.dispatch("spl/evaluate", mustRaw(map[string]any{
+		"uri":     uri,
+		"text":    "let x = 1; x;",
+		"options": map[string]any{"profile": "trusted"},
+	}))
+	evalJSON, _ := json.Marshal(evaluated)
+	if !strings.Contains(string(evalJSON), `"ok":true`) || !strings.Contains(string(evalJSON), `"metrics"`) {
+		t.Fatalf("expected session evaluation metrics, got %s", evalJSON)
+	}
+
+	checkpoint, _ := s.dispatch("spl/sessionCheckpoint", mustRaw(map[string]any{"uri": uri, "name": "base"}))
+	checkpointJSON, _ := json.Marshal(checkpoint)
+	if !strings.Contains(string(checkpointJSON), `"ok":true`) || !strings.Contains(string(checkpointJSON), "base") {
+		t.Fatalf("expected checkpoint response, got %s", checkpointJSON)
+	}
+
+	s.dispatch("spl/evaluate", mustRaw(map[string]any{
+		"uri":     uri,
+		"text":    "x = 2; x;",
+		"options": map[string]any{"profile": "trusted"},
+	}))
+	restored, _ := s.dispatch("spl/sessionRestore", mustRaw(map[string]any{"uri": uri, "name": "base"}))
+	restoreJSON, _ := json.Marshal(restored)
+	if !strings.Contains(string(restoreJSON), `"ok":true`) {
+		t.Fatalf("expected restore response, got %s", restoreJSON)
+	}
+
+	inspect, _ := s.dispatch("spl/sessionInspect", mustRaw(map[string]any{"uri": uri}))
+	inspectJSON, _ := json.Marshal(inspect)
+	if !strings.Contains(string(inspectJSON), `"x":"1"`) {
+		t.Fatalf("expected inspect to show restored variable, got %s", inspectJSON)
+	}
+}
+
 func TestLSPHoverDocumentsRuntimeCallbacksParametersAndBlocks(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "scheduler.spl")

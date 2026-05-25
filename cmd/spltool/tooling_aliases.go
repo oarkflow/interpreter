@@ -15,6 +15,7 @@ type ProjectConfig = tooling.ProjectConfig
 type Symbol = tooling.Symbol
 type CompletionItem = tooling.CompletionItem
 type HoverInfo = tooling.HoverInfo
+type PartialParseResult = tooling.PartialParseResult
 type Location = tooling.Location
 type Reference = tooling.Reference
 type IndexedDocument = tooling.IndexedDocument
@@ -33,6 +34,7 @@ var (
 	FormatSource             = tooling.FormatSource
 	Analyze                  = tooling.Analyze
 	DiagnosticsJSON          = tooling.DiagnosticsJSON
+	ParsePartial             = tooling.ParsePartial
 	LoadProjectConfig        = tooling.LoadProjectConfig
 	DefaultProjectConfig     = tooling.DefaultProjectConfig
 	StaticDiagnostics        = tooling.StaticDiagnostics
@@ -46,6 +48,7 @@ var (
 	KeywordMarkdown          = tooling.KeywordMarkdown
 	RuntimeDocMarkdown       = tooling.RuntimeDocMarkdown
 	HoverMarkdown            = tooling.HoverMarkdown
+	ModuleDirForPath         = tooling.ModuleDirForPath
 	EvaluateSPL              = tooling.EvaluateSPL
 )
 

@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"io"
 	"time"
+
+	sessionpkg "github.com/oarkflow/interpreter/pkg/session"
 )
 
 type RuntimeOptions struct {
@@ -79,6 +81,43 @@ func (rt *Runtime) Exec(script string, data map[string]interface{}) (Object, err
 
 func (rt *Runtime) ExecFile(filename string, data map[string]interface{}) (Object, error) {
 	return ExecFileWithOptions(filename, data, rt.execOptions())
+}
+
+func (rt *Runtime) NewSession(opts SessionOptions) (*Session, error) {
+	if rt != nil {
+		rtOpts := rt.Options()
+		if opts.Profile == "" {
+			opts.Profile = rtOpts.Profile
+		}
+		if opts.ModuleDir == "" {
+			opts.ModuleDir = rtOpts.ModuleDir
+		}
+		if opts.Security == nil {
+			opts.Security = rtOpts.Security
+		}
+		if opts.Sandbox == nil {
+			opts.Sandbox = rtOpts.Sandbox
+		}
+		if opts.Output == nil {
+			opts.Output = rtOpts.Output
+		}
+		if opts.MaxDepth == 0 {
+			opts.MaxDepth = rtOpts.MaxDepth
+		}
+		if opts.MaxSteps == 0 {
+			opts.MaxSteps = rtOpts.MaxSteps
+		}
+		if opts.MaxHeapMB == 0 {
+			opts.MaxHeapMB = rtOpts.MaxHeapMB
+		}
+		if opts.MaxOutputBytes == 0 {
+			opts.MaxOutputBytes = rtOpts.MaxOutputBytes
+		}
+		if opts.Timeout == 0 {
+			opts.Timeout = rtOpts.Timeout
+		}
+	}
+	return sessionpkg.New(opts)
 }
 
 func (rt *Runtime) Options() RuntimeOptions {

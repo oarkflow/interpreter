@@ -110,6 +110,13 @@ type HoverInfo struct {
 	Column int    `json:"column,omitempty"`
 }
 
+type PartialParseResult struct {
+	Path        string       `json:"path,omitempty"`
+	Complete    bool         `json:"complete"`
+	Diagnostics []Diagnostic `json:"diagnostics,omitempty"`
+	Program     *ast.Program `json:"-"`
+}
+
 var parserLineColRe = regexp.MustCompile(`^Line (\d+)(?::(\d+))?`)
 
 var knownStdModules = map[string]struct{}{
@@ -130,6 +137,19 @@ func FormatSource(path, src string) Report {
 
 func Analyze(path, src string, wantFormat bool) Report {
 	return analyzeSource(path, src, wantFormat)
+}
+
+func ParsePartial(path, src string) PartialParseResult {
+	l := lexer.NewLexer(src)
+	p := parser.NewParser(l)
+	program := p.ParseProgram()
+	errs := p.Errors()
+	return PartialParseResult{
+		Path:        path,
+		Complete:    len(errs) == 0,
+		Diagnostics: diagnosticsFromParserErrors(path, src, errs),
+		Program:     program,
+	}
 }
 
 func DiagnosticsJSON(diags []Diagnostic) ([]byte, error) {

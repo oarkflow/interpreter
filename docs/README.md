@@ -87,12 +87,49 @@ go run ./cmd/spltool symbols --json testdata/hello.spl
 go run ./cmd/spltool complete --prefix pri testdata/hello.spl
 go run ./cmd/spltool hover --line 1 --col 1 testdata/hello.spl
 go run ./cmd/spltool docs testdata/hello.spl
+go run ./cmd/spltool session run --json --checkpoint baseline testdata/examples_runtime_workspace.spl
+go run ./cmd/spltool session debug testdata/examples_runtime_workspace.spl
 go run ./cmd/spltool test --json tests
 go run ./cmd/spltool conformance
 go run ./cmd/spltool lsp
 ```
 
 `check` includes parser diagnostics plus conservative static warnings for undefined identifiers, suspicious shadowing, unreachable statements, missing imports, deprecated builtins, and non-exhaustive match fallbacks. `symbols`, `complete`, and `hover` provide stable JSON surfaces that can back IDE/LSP integrations.
+
+### Runtime Workspace Sessions
+
+The session layer powers the REPL, embedding API, and editor evaluation. It keeps
+state across executions, records execution history, emits events/metrics, supports
+checkpoints, and can replay recorded inputs.
+
+REPL commands:
+
+```text
+:checkpoint baseline
+:inspect
+:metrics
+:events
+:restore baseline
+:replay
+```
+
+CLI examples:
+
+```bash
+go run ./cmd/spltool session run --json --checkpoint baseline testdata/examples_runtime_workspace.spl
+go run ./cmd/spltool session debug --json testdata/examples_runtime_workspace.spl
+```
+
+Embedding example:
+
+```go
+rt := interpreter.MustRuntime(interpreter.RuntimeOptions{Profile: "trusted"})
+sess, _ := rt.NewSession(interpreter.SessionOptions{ID: "workspace"})
+res := sess.Execute(interpreter.ExecutionRequest{Source: `let x = 40; x + 2;`})
+snap, _ := sess.Checkpoint("baseline")
+_ = snap
+fmt.Println(res.ResultText, sess.Inspect().Variables["x"])
+```
 
 ### Run benchmarks
 
@@ -104,6 +141,26 @@ Or use the benchmark runner:
 
 ```bash
 go run ./cmd/bench
+```
+
+### Performance Mode
+
+For allocation-sensitive embedding paths, parse once and reuse pooled
+environments:
+
+```go
+env := interpreter.NewPooledEnvironment()
+defer interpreter.ReleasePooledEnvironment(env)
+result := interpreter.Eval(program, env)
+_ = result
+```
+
+The interpreter also caches fast integer-loop analysis and uses scratch pools in
+hot arithmetic loops. On the tight preparsed loop benchmark, the pooled
+environment path is intended to stay at `0 B/op` and `0 allocs/op`:
+
+```bash
+go test ./pkg/eval -run ^$ -bench 'BenchmarkEvalRunOnlyPreparsed(PooledEnv)?$' -benchmem
 ```
 
 ## Language Features

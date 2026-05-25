@@ -1,0 +1,26 @@
+// Runtime workspace example.
+// Run:
+//   go run ./cmd/spltool session run --json --checkpoint baseline testdata/examples_runtime_workspace.spl
+//   go run ./cmd/spltool session debug testdata/examples_runtime_workspace.spl
+
+let orders = [
+	{"id": "A-100", "region": "east", "amount": 120},
+	{"id": "A-101", "region": "west", "amount": 80},
+	{"id": "A-102", "region": "east", "amount": 240}
+];
+
+let large = orders.filter(function(order) {
+	return order.amount >= 100;
+});
+
+let total = large.reduce(function(sum, order) {
+	return sum + order.amount;
+}, 0);
+
+metric("workspace.large_orders", len(large));
+trace("workspace.total", {"total": total});
+
+print sprintf("large_orders=%d total=%d", len(large), total);
+render(large, {"name": "large-orders.json"});
+
+total;

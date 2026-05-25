@@ -1,0 +1,12 @@
+// Small stateful session example for REPL or spltool session workflows.
+// In the REPL try:
+//   :checkpoint start
+//   :inspect
+//   :metrics
+//   :events
+//   :replay
+
+let counter = 1;
+counter = counter + 1;
+print "counter=" + counter;
+counter;

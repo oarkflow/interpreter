@@ -116,6 +116,26 @@ sum;
 	}
 }
 
+func BenchmarkEvalRunOnlyPreparsedPooledEnv(b *testing.B) {
+	script := `
+let sum = 0;
+for (let i = 0; i < 1000; i = i + 1) {
+  sum = sum + i;
+}
+sum;
+`
+	program := benchmarkParse(script, b)
+
+	b.ReportAllocs()
+	b.ResetTimer()
+
+	for i := 0; i < b.N; i++ {
+		env := object.NewPooledEnvironment()
+		benchmarkObjectSink = eval.Eval(program, env)
+		object.ReleasePooledEnvironment(env)
+	}
+}
+
 func BenchmarkBuiltinsStringAndJSON(b *testing.B) {
 	script := `
 let s = "hello,world,from,spl";

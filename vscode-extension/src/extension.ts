@@ -19,6 +19,8 @@ type EvaluationResult = {
   output?: string;
   error?: string;
   durationMs: number;
+  metrics?: Record<string, unknown>;
+  diagnostics?: string[];
 };
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
@@ -30,6 +32,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   context.subscriptions.push(
     vscode.commands.registerCommand('spl.runFile', runCurrentFile),
     vscode.commands.registerCommand('spl.evaluateSelection', evaluateSelection),
+    vscode.commands.registerCommand('spl.sessionCheckpoint', sessionCheckpoint),
+    vscode.commands.registerCommand('spl.sessionRestore', sessionRestore),
+    vscode.commands.registerCommand('spl.sessionInspect', sessionInspect),
     vscode.commands.registerCommand('spl.restartLanguageServer', async () => {
       await restartLanguageServer(context);
     }),
@@ -173,4 +178,58 @@ function showEvaluation(label: string, result: EvaluationResult): void {
     output.appendLine('Error:');
     output.appendLine(result.error);
   }
+  if (result.metrics) {
+    output.appendLine(`Metrics: ${JSON.stringify(result.metrics)}`);
+  }
+  if (result.diagnostics?.length) {
+    output.appendLine('Diagnostics:');
+    output.appendLine(result.diagnostics.join('\n'));
+  }
+}
+
+async function sessionCheckpoint(): Promise<void> {
+  const editor = activeSPLEditor();
+  if (!editor || !client) {
+    return;
+  }
+  const name = await vscode.window.showInputBox({ prompt: 'Checkpoint name', value: 'manual' });
+  if (!name) {
+    return;
+  }
+  const result = await client.sendRequest<Record<string, unknown>>('spl/sessionCheckpoint', {
+    uri: editor.document.uri.toString(),
+    name,
+  });
+  output.show(true);
+  output.appendLine(`[Session Checkpoint] ${JSON.stringify(result)}`);
+}
+
+async function sessionRestore(): Promise<void> {
+  const editor = activeSPLEditor();
+  if (!editor || !client) {
+    return;
+  }
+  const name = await vscode.window.showInputBox({ prompt: 'Checkpoint name to restore', value: 'manual' });
+  if (!name) {
+    return;
+  }
+  const result = await client.sendRequest<Record<string, unknown>>('spl/sessionRestore', {
+    uri: editor.document.uri.toString(),
+    name,
+  });
+  output.show(true);
+  output.appendLine(`[Session Restore] ${JSON.stringify(result)}`);
+}
+
+async function sessionInspect(): Promise<void> {
+  const editor = activeSPLEditor();
+  if (!editor || !client) {
+    return;
+  }
+  const result = await client.sendRequest<Record<string, unknown>>('spl/sessionInspect', {
+    uri: editor.document.uri.toString(),
+  });
+  output.show(true);
+  output.appendLine('[Session Inspect]');
+  output.appendLine(JSON.stringify(result, null, 2));
 }

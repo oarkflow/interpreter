@@ -54,4 +54,36 @@ func TestHelpMetaCommandOutputUsesCRPerLine(t *testing.T) {
 	if !strings.Contains(out, ":debug <expr>") || !strings.Contains(out, ":mem") || !strings.Contains(out, ":install <alias> <path>") || !strings.Contains(out, ":config set <key> <value>") {
 		t.Fatalf("missing newly documented commands: %q", out)
 	}
+	if !strings.Contains(out, "Alt+Left") || !strings.Contains(out, "Ctrl+U/Ctrl+K/Ctrl+W") || !strings.Contains(out, ":palette <query>") {
+		t.Fatalf("missing navigation/discovery help: %q", out)
+	}
+}
+
+func TestDiscoveryMetaCommands(t *testing.T) {
+	out := captureStdout(t, func() {
+		if !HandleReplMetaCommand(":commands checkpoint", nil, nil) {
+			t.Fatalf(":commands was not handled")
+		}
+	})
+	if !strings.Contains(out, ":checkpoint") || !strings.Contains(out, "save a session checkpoint") {
+		t.Fatalf("unexpected commands output: %q", out)
+	}
+
+	out = captureStdout(t, func() {
+		if !HandleReplMetaCommand(":tips", nil, nil) {
+			t.Fatalf(":tips was not handled")
+		}
+	})
+	if !strings.Contains(out, "Press Tab") || !strings.Contains(out, ":palette") {
+		t.Fatalf("unexpected tips output: %q", out)
+	}
+
+	out = captureStdout(t, func() {
+		if !HandleReplMetaCommand(":examples", nil, nil) {
+			t.Fatalf(":examples was not handled")
+		}
+	})
+	if !strings.Contains(out, "examples_runtime_workspace.spl") {
+		t.Fatalf("unexpected examples output: %q", out)
+	}
 }

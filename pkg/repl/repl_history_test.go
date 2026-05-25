@@ -65,3 +65,30 @@ func TestAppendHistoryEntriesError(t *testing.T) {
 		t.Fatalf("expected append error when path is a directory")
 	}
 }
+
+func TestNavigationWordBoundaries(t *testing.T) {
+	buf := []rune("orders.filter(function")
+	if got := previousWordBoundary(buf, len(buf)); got != len("orders.filter(") {
+		t.Fatalf("unexpected previous word boundary: %d", got)
+	}
+	if got := previousWordBoundary(buf, len("orders.filter")); got != 0 {
+		t.Fatalf("expected dot-qualified word to move to start, got %d", got)
+	}
+	if got := nextWordBoundary(buf, 0); got != len("orders.filter") {
+		t.Fatalf("unexpected next word boundary: %d", got)
+	}
+}
+
+func TestFuzzyCompletionsFindCommands(t *testing.T) {
+	got := FindCompletions("pal", ReplCandidates())
+	found := false
+	for _, item := range got {
+		if item == ":palette" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected :palette completion, got %#v", got)
+	}
+}

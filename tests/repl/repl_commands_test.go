@@ -149,6 +149,61 @@ func TestReplToolingMetaCommands(t *testing.T) {
 	}
 }
 
+func TestReplSessionWorkspaceCommands(t *testing.T) {
+	env := NewGlobalEnvironment(nil)
+	captureReplStdout(t, func() {
+		repl.EvalReplInput("let x = 1; x;", env)
+	})
+
+	out := captureReplStdout(t, func() {
+		if !repl.HandleReplMetaCommand(":checkpoint base", nil, env) {
+			t.Fatalf(":checkpoint was not handled")
+		}
+	})
+	if !strings.Contains(out, "checkpoint saved: base") {
+		t.Fatalf("unexpected checkpoint output: %q", out)
+	}
+
+	captureReplStdout(t, func() {
+		repl.EvalReplInput("x = 2; x;", env)
+	})
+	out = captureReplStdout(t, func() {
+		if !repl.HandleReplMetaCommand(":restore base", nil, env) {
+			t.Fatalf(":restore was not handled")
+		}
+	})
+	if !strings.Contains(out, "restored: base") {
+		t.Fatalf("unexpected restore output: %q", out)
+	}
+
+	out = captureReplStdout(t, func() {
+		if !repl.HandleReplMetaCommand(":inspect x", nil, env) {
+			t.Fatalf(":inspect was not handled")
+		}
+	})
+	if !strings.Contains(out, "x: INTEGER = 1") {
+		t.Fatalf("unexpected inspect output: %q", out)
+	}
+
+	out = captureReplStdout(t, func() {
+		if !repl.HandleReplMetaCommand(":metrics", nil, env) {
+			t.Fatalf(":metrics was not handled")
+		}
+	})
+	if !strings.Contains(out, "duration=") || !strings.Contains(out, "steps=") {
+		t.Fatalf("unexpected metrics output: %q", out)
+	}
+
+	out = captureReplStdout(t, func() {
+		if !repl.HandleReplMetaCommand(":events", nil, env) {
+			t.Fatalf(":events was not handled")
+		}
+	})
+	if !strings.Contains(out, "execution.") {
+		t.Fatalf("unexpected events output: %q", out)
+	}
+}
+
 func TestReplObjectMethodsAndFields(t *testing.T) {
 	methods := repl.ReplObjectMethods(&Array{})
 	fields := repl.ReplObjectFields(&Hash{Pairs: map[HashKey]HashPair{(&String{Value: "name"}).HashKey(): {Key: &String{Value: "name"}, Value: &String{Value: "spl"}}}})

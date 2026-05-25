@@ -39,6 +39,19 @@ func TestCheckSourceProducesStructuredDiagnostics(t *testing.T) {
 	}
 }
 
+func TestParsePartialReturnsDiagnosticsAndProgram(t *testing.T) {
+	result := ParsePartial("partial.spl", "let x = ;\nlet y = 2;")
+	if result.Complete {
+		t.Fatalf("expected incomplete parse")
+	}
+	if result.Program == nil {
+		t.Fatalf("expected best-effort program")
+	}
+	if len(result.Diagnostics) == 0 {
+		t.Fatalf("expected diagnostics")
+	}
+}
+
 func TestFormatSourceReturnsCanonicalText(t *testing.T) {
 	report := FormatSource("sample.spl", "let x=1; let y=2; if (x) { y; }")
 	if !report.OK {

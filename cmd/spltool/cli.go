@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -38,6 +39,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return runDocs(args[1:], stdin, stdout, stderr)
 	case "test":
 		return runTest(args[1:], stdout, stderr)
+	case "session":
+		return runSession(args[1:], stdin, stdout, stderr)
 	case "conformance":
 		return runConformance(args[1:], stdout, stderr)
 	case "lsp":
@@ -319,6 +322,152 @@ func runDocs(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	return 0
 }
 
+func runSession(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
+	if len(args) == 0 {
+		fmt.Fprintln(stderr, "usage: spltool session <run|debug> [flags] [files...]")
+		return 2
+	}
+	switch args[0] {
+	case "run":
+		return runSessionRun(args[1:], stdin, stdout, stderr)
+	case "debug":
+		return runSessionDebug(args[1:], stdin, stdout, stderr)
+	default:
+		fmt.Fprintf(stderr, "unknown session command %q\n", args[0])
+		return 2
+	}
+}
+
+func runSessionRun(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("session run", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	jsonOut := fs.Bool("json", false, "emit machine-readable JSON")
+	profile := fs.String("profile", "trusted", "execution profile")
+	checkpoint := fs.String("checkpoint", "", "checkpoint name to save after execution")
+	persist := fs.Bool("persist", false, "persist session metadata and input log")
+	dir := fs.String("dir", "", "session persistence directory")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	targets := fs.Args()
+	if len(targets) == 0 {
+		targets = []string{"-"}
+	}
+	var captured bytes.Buffer
+	out := io.Writer(stdout)
+	if *jsonOut {
+		out = &captured
+	}
+	rt, err := interpreter.NewRuntime(interpreter.RuntimeOptions{Profile: *profile, Output: out, AllowInProcessFallback: true})
+	if err != nil {
+		fmt.Fprintf(stderr, "session error: %v\n", err)
+		return 1
+	}
+	sess, err := rt.NewSession(interpreter.SessionOptions{
+		ID:             "spltool-session",
+		Profile:        *profile,
+		Output:         out,
+		Persist:        *persist,
+		PersistenceDir: *dir,
+	})
+	if err != nil {
+		fmt.Fprintf(stderr, "session error: %v\n", err)
+		return 1
+	}
+	results := []interpreter.ExecutionResult{}
+	for _, target := range targets {
+		path, src, err := readTarget(target, stdin)
+		if err != nil {
+			fmt.Fprintf(stderr, "session read error: %v\n", err)
+			return 1
+		}
+		res := sess.Execute(interpreter.ExecutionRequest{Source: src, Path: path})
+		results = append(results, res)
+		if !*jsonOut {
+			if res.OK {
+				fmt.Fprintf(stdout, "OK %s (%s)\n", res.Path, res.Metrics.Duration)
+			} else {
+				fmt.Fprintf(stdout, "ERROR %s\n%s\n", res.Path, res.Error)
+			}
+		}
+	}
+	var snap any
+	if *checkpoint != "" {
+		s, err := sess.Checkpoint(*checkpoint)
+		if err != nil {
+			fmt.Fprintf(stderr, "checkpoint error: %v\n", err)
+			return 1
+		}
+		snap = s
+	}
+	report := map[string]any{
+		"ok":         allSessionResultsOK(results),
+		"output":     captured.String(),
+		"results":    results,
+		"checkpoint": snap,
+		"session":    sess.Inspect(),
+	}
+	if *jsonOut {
+		return encodeJSON(stdout, stderr, report)
+	}
+	return boolExit(allSessionResultsOK(results))
+}
+
+func runSessionDebug(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("session debug", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	jsonOut := fs.Bool("json", false, "emit machine-readable JSON")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	target := "-"
+	if len(fs.Args()) > 0 {
+		target = fs.Args()[0]
+	}
+	path, src, err := readTarget(target, stdin)
+	if err != nil {
+		fmt.Fprintf(stderr, "session debug read error: %v\n", err)
+		return 1
+	}
+	sess, err := interpreter.NewSession(interpreter.SessionOptions{ID: "spltool-debug", SourcePath: path, ModuleDir: ModuleDirForPath(path)})
+	if err != nil {
+		fmt.Fprintf(stderr, "session debug error: %v\n", err)
+		return 1
+	}
+	trace := sess.Debug(src, path)
+	if *jsonOut {
+		return encodeJSON(stdout, stderr, trace)
+	}
+	for _, step := range trace.Steps {
+		status := "ok"
+		if !step.OK {
+			status = "error"
+		}
+		detail := step.Result
+		if detail == "" {
+			detail = step.Error
+		}
+		fmt.Fprintf(stdout, "[%d] %s %s => %s\n", step.Index, status, step.Statement, detail)
+	}
+	return boolExit(trace.OK)
+}
+
+func allSessionResultsOK(results []interpreter.ExecutionResult) bool {
+	for _, result := range results {
+		if !result.OK {
+			return false
+		}
+	}
+	return true
+}
+
+func boolExit(ok bool) int {
+	if ok {
+		return 0
+	}
+	return 1
+}
+
 type TestReport struct {
 	OK       bool             `json:"ok"`
 	Total    int              `json:"total"`
@@ -532,7 +681,7 @@ func formatDiagnostic(d Diagnostic) string {
 }
 
 func printUsage(w io.Writer) {
-	fmt.Fprintln(w, "Usage: spltool <fmt|check|symbols|complete|hover|docs|test|conformance|config|mod|lsp> [flags] [files...]")
+	fmt.Fprintln(w, "Usage: spltool <fmt|check|symbols|complete|hover|docs|test|session|conformance|config|mod|lsp> [flags] [files...]")
 	fmt.Fprintln(w, "Use '-' to read from stdin.")
 }
 

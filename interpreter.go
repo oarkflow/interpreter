@@ -27,6 +27,7 @@ import (
 	"github.com/oarkflow/interpreter/pkg/playground"
 	"github.com/oarkflow/interpreter/pkg/sandbox"
 	"github.com/oarkflow/interpreter/pkg/security"
+	sessionpkg "github.com/oarkflow/interpreter/pkg/session"
 	"github.com/oarkflow/interpreter/pkg/template"
 	"github.com/oarkflow/interpreter/pkg/token"
 
@@ -271,6 +272,24 @@ type (
 	ModuleContext          = object.ModuleContext
 	ModuleCacheEntry       = object.ModuleCacheEntry
 	Environment            = object.Environment
+
+	Session               = sessionpkg.Session
+	SessionID             = sessionpkg.SessionID
+	ExecutionID           = sessionpkg.ExecutionID
+	CheckpointID          = sessionpkg.CheckpointID
+	SessionOptions        = sessionpkg.SessionOptions
+	ExecutionRequest      = sessionpkg.ExecutionRequest
+	ExecutionResult       = sessionpkg.ExecutionResult
+	SessionArtifact       = sessionpkg.ArtifactSummary
+	DebugTrace            = sessionpkg.DebugTrace
+	DebugStep             = sessionpkg.DebugStep
+	SessionSnapshot       = sessionpkg.SessionSnapshot
+	SessionInspect        = sessionpkg.SessionInspect
+	RuntimeInspector      = sessionpkg.RuntimeInspector
+	AssistantProvider     = sessionpkg.AssistantProvider
+	AssistantRequest      = sessionpkg.AssistantRequest
+	AssistantResponse     = sessionpkg.AssistantResponse
+	SessionExecutionEvent = sessionpkg.ExecutionEvent
 )
 
 // ObjectType constants.
@@ -356,10 +375,14 @@ var (
 	MatchPattern                   = eval.MatchPattern
 	IsTruthy                       = object.IsTruthy
 	NewEnvironment                 = object.NewEnvironment
+	NewPooledEnvironment           = object.NewPooledEnvironment
+	ReleasePooledEnvironment       = object.ReleasePooledEnvironment
 	NewGlobalEnvironment           = object.NewGlobalEnvironment
 	NewEnclosedEnvironment         = object.NewEnclosedEnvironment
 	EnvironmentSnapshot            = func(env *object.Environment) map[string]object.Object { return env.Snapshot() }
 	EnvironmentNames               = func(env *object.Environment) []string { return env.Names() }
+	NewSession                     = sessionpkg.New
+	NewSessionWithEnvironment      = sessionpkg.NewWithEnvironment
 	ToObject                       = eval.ToObject
 	InjectData                     = eval.InjectData
 	StartCLI                       = eval.StartCLI

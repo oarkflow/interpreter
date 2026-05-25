@@ -965,6 +965,54 @@ func NewEnvironment() *Environment {
 	}
 }
 
+var environmentPool = sync.Pool{New: func() any {
+	return NewEnvironment()
+}}
+
+// NewPooledEnvironment returns a reusable environment for allocation-sensitive
+// embedding paths. Call ReleasePooledEnvironment when the evaluation is done.
+func NewPooledEnvironment() *Environment {
+	env := environmentPool.Get().(*Environment)
+	env.Reset()
+	return env
+}
+
+func ReleasePooledEnvironment(env *Environment) {
+	if env == nil {
+		return
+	}
+	env.RunCleanup()
+	env.Reset()
+	environmentPool.Put(env)
+}
+
+func (e *Environment) Reset() {
+	if e == nil {
+		return
+	}
+	e.Mu.Lock()
+	for k := range e.Store {
+		delete(e.Store, k)
+	}
+	e.Outer = nil
+	e.ModuleContext = nil
+	e.ModuleDir = ""
+	e.SourcePath = ""
+	e.ModuleCache = nil
+	e.ModuleLoading = nil
+	e.RuntimeLimits = nil
+	e.SecurityPolicy = nil
+	e.Output = nil
+	e.RenderConfig = nil
+	e.RenderArtifacts = nil
+	e.RenderArtifactSink = nil
+	e.CollectRenderArtifacts = false
+	e.CallStack = nil
+	e.OwnerID = ""
+	e.Cleanup = nil
+	e.Mu.Unlock()
+}
+
 func NewGlobalEnvironment(args []string) *Environment {
 	env := NewEnvironment()
 	argsArray := &Array{Elements: []Object{}}

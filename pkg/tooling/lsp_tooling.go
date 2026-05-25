@@ -162,12 +162,16 @@ type EvaluationOptions struct {
 }
 
 type EvaluationResult struct {
-	OK       bool   `json:"ok"`
-	Path     string `json:"path,omitempty"`
-	Result   string `json:"result,omitempty"`
-	Output   string `json:"output,omitempty"`
-	Error    string `json:"error,omitempty"`
-	Duration int64  `json:"durationMs"`
+	OK          bool             `json:"ok"`
+	Path        string           `json:"path,omitempty"`
+	Result      string           `json:"result,omitempty"`
+	Output      string           `json:"output,omitempty"`
+	Error       string           `json:"error,omitempty"`
+	Duration    int64            `json:"durationMs"`
+	Diagnostics []string         `json:"diagnostics,omitempty"`
+	Metrics     map[string]any   `json:"metrics,omitempty"`
+	Artifacts   []map[string]any `json:"artifacts,omitempty"`
+	Events      []map[string]any `json:"events,omitempty"`
 }
 
 func NewWorkspaceIndex(root string) *WorkspaceIndex {

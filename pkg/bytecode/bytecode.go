@@ -212,6 +212,7 @@ type VM struct {
 	program *BytecodeProgram
 	env     *object.Environment
 	stack   []object.Object
+	inline  [32]object.Object
 	ip      int
 }
 
@@ -221,11 +222,15 @@ func RunOnVM(program *BytecodeProgram, env *object.Environment) object.Object {
 	if stackCap < 8 {
 		stackCap = 8
 	}
-	v := &VM{
+	v := VM{
 		program: program,
 		env:     env,
-		stack:   make([]object.Object, 0, stackCap),
 		ip:      0,
+	}
+	if stackCap <= len(v.inline) {
+		v.stack = v.inline[:0]
+	} else {
+		v.stack = make([]object.Object, 0, stackCap)
 	}
 	return v.Run()
 }

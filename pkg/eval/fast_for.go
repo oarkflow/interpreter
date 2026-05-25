@@ -1,6 +1,8 @@
 package eval
 
 import (
+	"sync"
+
 	"github.com/oarkflow/interpreter/pkg/ast"
 	"github.com/oarkflow/interpreter/pkg/object"
 )
@@ -14,6 +16,16 @@ type fastIntLoop struct {
 	body      []*ast.AssignExpression
 }
 
+var fastIntLoopCache sync.Map
+
+var fastIntLoopLocalsPool = sync.Pool{New: func() any {
+	return make(map[string]int64, 8)
+}}
+
+var fastIntLoopDirtyPool = sync.Pool{New: func() any {
+	return make(map[string]struct{}, 8)
+}}
+
 func evalFastForStatement(fs *ast.ForStatement, env *object.Environment) (object.Object, bool) {
 	loop, ok := analyzeFastIntLoop(fs)
 	if !ok {
@@ -23,8 +35,10 @@ func evalFastForStatement(fs *ast.ForStatement, env *object.Environment) (object
 		return result, true
 	}
 
-	locals := make(map[string]int64, len(loop.body)+1)
-	dirty := make(map[string]struct{}, len(loop.body)+1)
+	locals := acquireFastIntLocals()
+	dirty := acquireFastIntDirty()
+	defer releaseFastIntLocals(locals)
+	defer releaseFastIntDirty(dirty)
 
 	start, ok, errObj := evalFastIntExpression(loop.start, locals, env)
 	if errObj != nil {
@@ -148,8 +162,7 @@ func evalFastAccumulatorLoop(loop *fastIntLoop, env *object.Environment) (object
 		return nil, false
 	}
 
-	locals := make(map[string]int64, 2)
-	start, ok, errObj := evalFastIntExpression(loop.start, locals, env)
+	start, ok, errObj := evalFastIntExpressionNoLocals(loop.start, "", 0, env)
 	if errObj != nil {
 		return errObj, true
 	}
@@ -166,16 +179,14 @@ func evalFastAccumulatorLoop(loop *fastIntLoop, env *object.Environment) (object
 		return nil, false
 	}
 
-	locals[loop.name] = start
-	locals[target] = targetInt.Value
-	limit, ok, errObj := evalFastIntExpression(loop.condition.Right, locals, env)
+	limit, ok, errObj := evalFastIntExpressionNoLocals(loop.condition.Right, loop.name, start, env)
 	if errObj != nil {
 		return errObj, true
 	}
 	if !ok {
 		return nil, false
 	}
-	step, ok, errObj := evalFastIntExpression(loop.postStep, locals, env)
+	step, ok, errObj := evalFastIntExpressionNoLocals(loop.postStep, loop.name, start, env)
 	if errObj != nil {
 		return errObj, true
 	}
@@ -233,6 +244,22 @@ func compareFastInts(left, right int64, operator string) bool {
 }
 
 func analyzeFastIntLoop(fs *ast.ForStatement) (*fastIntLoop, bool) {
+	if cached, ok := fastIntLoopCache.Load(fs); ok {
+		if loop, ok := cached.(*fastIntLoop); ok && loop != nil {
+			return loop, true
+		}
+		return nil, false
+	}
+	loop, ok := analyzeFastIntLoopUncached(fs)
+	if ok {
+		fastIntLoopCache.Store(fs, loop)
+		return loop, true
+	}
+	fastIntLoopCache.Store(fs, (*fastIntLoop)(nil))
+	return nil, false
+}
+
+func analyzeFastIntLoopUncached(fs *ast.ForStatement) (*fastIntLoop, bool) {
 	init, ok := fs.Init.(*ast.LetStatement)
 	if !ok || init.Name == nil || len(init.Names) > 1 || init.TypeName != "" || init.Value == nil {
 		return nil, false
@@ -378,4 +405,72 @@ func evalFastIntExpression(expr ast.Expression, locals map[string]int64, env *ob
 	default:
 		return 0, false, nil
 	}
+}
+
+func evalFastIntExpressionNoLocals(expr ast.Expression, localName string, localValue int64, env *object.Environment) (int64, bool, object.Object) {
+	switch expr := expr.(type) {
+	case *ast.IntegerLiteral:
+		return expr.Value, true, nil
+	case *ast.Identifier:
+		if expr.Name == localName {
+			return localValue, true, nil
+		}
+		obj, ok := env.Get(expr.Name)
+		if !ok {
+			return 0, false, object.NewError("identifier not found: %s", expr.Name)
+		}
+		intObj, ok := obj.(*object.Integer)
+		if !ok {
+			return 0, false, nil
+		}
+		return intObj.Value, true, nil
+	case *ast.InfixExpression:
+		left, ok, errObj := evalFastIntExpressionNoLocals(expr.Left, localName, localValue, env)
+		if errObj != nil || !ok {
+			return 0, ok, errObj
+		}
+		right, ok, errObj := evalFastIntExpressionNoLocals(expr.Right, localName, localValue, env)
+		if errObj != nil || !ok {
+			return 0, ok, errObj
+		}
+		switch expr.Operator {
+		case "+":
+			return left + right, true, nil
+		case "-":
+			return left - right, true, nil
+		case "*":
+			return left * right, true, nil
+		case "/":
+			if right == 0 {
+				return 0, false, object.NewError("division by zero")
+			}
+			return left / right, true, nil
+		default:
+			return 0, false, nil
+		}
+	default:
+		return 0, false, nil
+	}
+}
+
+func acquireFastIntLocals() map[string]int64 {
+	return fastIntLoopLocalsPool.Get().(map[string]int64)
+}
+
+func releaseFastIntLocals(m map[string]int64) {
+	for k := range m {
+		delete(m, k)
+	}
+	fastIntLoopLocalsPool.Put(m)
+}
+
+func acquireFastIntDirty() map[string]struct{} {
+	return fastIntLoopDirtyPool.Get().(map[string]struct{})
+}
+
+func releaseFastIntDirty(m map[string]struct{}) {
+	for k := range m {
+		delete(m, k)
+	}
+	fastIntLoopDirtyPool.Put(m)
 }

@@ -10,6 +10,9 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
+
+	"github.com/oarkflow/interpreter"
 )
 
 type rpcMessage struct {
@@ -27,14 +30,15 @@ type rpcError struct {
 }
 
 type lspServer struct {
-	in      io.Reader
-	out     io.Writer
-	err     io.Writer
-	sendMu  sync.Mutex
-	root    string
-	index   *WorkspaceIndex
-	docs    map[string]string
-	closing bool
+	in       io.Reader
+	out      io.Writer
+	err      io.Writer
+	sendMu   sync.Mutex
+	root     string
+	index    *WorkspaceIndex
+	docs     map[string]string
+	sessions map[string]*interpreter.Session
+	closing  bool
 }
 
 func runLSPServer(stdin io.Reader, stdout, stderr io.Writer) int {
@@ -49,12 +53,13 @@ func runLSPServer(stdin io.Reader, stdout, stderr io.Writer) int {
 func newLSPServer(stdin io.Reader, stdout, stderr io.Writer) *lspServer {
 	root, _ := os.Getwd()
 	return &lspServer{
-		in:    stdin,
-		out:   stdout,
-		err:   stderr,
-		root:  root,
-		index: NewWorkspaceIndex(root),
-		docs:  map[string]string{},
+		in:       stdin,
+		out:      stdout,
+		err:      stderr,
+		root:     root,
+		index:    NewWorkspaceIndex(root),
+		docs:     map[string]string{},
+		sessions: map[string]*interpreter.Session{},
 	}
 }
 
@@ -165,6 +170,12 @@ func (s *lspServer) dispatch(method string, params json.RawMessage) (any, error)
 		return s.formatting(params), nil
 	case "spl/evaluate":
 		return s.evaluate(params), nil
+	case "spl/sessionCheckpoint":
+		return s.sessionCheckpoint(params), nil
+	case "spl/sessionRestore":
+		return s.sessionRestore(params), nil
+	case "spl/sessionInspect":
+		return s.sessionInspect(params), nil
 	case "spl/refreshIndex":
 		s.index.Refresh()
 		return map[string]any{"ok": true, "documents": len(s.index.Documents)}, nil
@@ -434,7 +445,162 @@ func (s *lspServer) evaluate(params json.RawMessage) any {
 	if p.Text != "" {
 		src = p.Text
 	}
-	return EvaluateSPL(path, src, p.Options)
+	return s.evaluateWithSession(path, src, p.Options)
+}
+
+func (s *lspServer) evaluateWithSession(path, src string, opts EvaluationOptions) EvaluationResult {
+	start := time.Now()
+	var output bytes.Buffer
+	sess, err := s.sessionForPath(path, opts, &output)
+	if err != nil {
+		return EvaluationResult{OK: false, Path: path, Error: err.Error(), Duration: time.Since(start).Milliseconds()}
+	}
+	sess.SetOutput(&output)
+	res := sess.Execute(interpreter.ExecutionRequest{Source: src, Path: path})
+	out := EvaluationResult{
+		OK:          res.OK,
+		Path:        path,
+		Result:      res.ResultText,
+		Output:      output.String(),
+		Error:       res.Error,
+		Diagnostics: res.Diagnostics,
+		Duration:    res.Metrics.Duration.Milliseconds(),
+		Metrics: map[string]any{
+			"steps":       res.Metrics.Steps,
+			"outputBytes": res.Metrics.OutputBytes,
+			"resultType":  res.Metrics.ResultType,
+			"durationMs":  res.Metrics.Duration.Milliseconds(),
+			"executionId": string(res.ID),
+			"sessionId":   string(res.SessionID),
+		},
+	}
+	for _, ev := range sess.Events() {
+		out.Events = append(out.Events, map[string]any{
+			"kind":    ev.Kind,
+			"time":    ev.Time.Format(time.RFC3339Nano),
+			"message": ev.Message,
+		})
+	}
+	for _, art := range res.Artifacts {
+		out.Artifacts = append(out.Artifacts, map[string]any{
+			"kind":       art.Kind,
+			"name":       art.Name,
+			"mime":       art.MIME,
+			"source":     art.Source,
+			"sourceType": art.SourceTyp,
+			"width":      art.Width,
+			"height":     art.Height,
+		})
+	}
+	return out
+}
+
+func (s *lspServer) sessionForPath(path string, opts EvaluationOptions, output io.Writer) (*interpreter.Session, error) {
+	key := path
+	if strings.TrimSpace(key) == "" {
+		key = "<memory>"
+	}
+	if sess := s.sessions[key]; sess != nil {
+		return sess, nil
+	}
+	timeout := time.Duration(opts.TimeoutMS) * time.Millisecond
+	if timeout <= 0 {
+		timeout = 1500 * time.Millisecond
+	}
+	maxOutput := opts.MaxOutputBytes
+	if maxOutput <= 0 {
+		maxOutput = 64 * 1024
+	}
+	maxSteps := opts.MaxSteps
+	if maxSteps <= 0 {
+		maxSteps = 200_000
+	}
+	maxDepth := opts.MaxDepth
+	if maxDepth <= 0 {
+		maxDepth = 128
+	}
+	profile := strings.ToLower(strings.TrimSpace(opts.Profile))
+	if profile == "" {
+		profile = "untrusted"
+	}
+	rt, err := interpreter.NewRuntime(interpreter.RuntimeOptions{
+		Profile:                profile,
+		ModuleDir:              ModuleDirForPath(path),
+		MaxSteps:               maxSteps,
+		MaxDepth:               maxDepth,
+		MaxOutputBytes:         maxOutput,
+		Timeout:                timeout,
+		Output:                 output,
+		AllowInProcessFallback: true,
+	})
+	if err != nil {
+		return nil, err
+	}
+	sess, err := rt.NewSession(interpreter.SessionOptions{
+		ID:             interpreter.SessionID("lsp-" + strings.ReplaceAll(filepath.Clean(key), string(filepath.Separator), "-")),
+		Profile:        profile,
+		ModuleDir:      ModuleDirForPath(path),
+		SourcePath:     path,
+		Output:         output,
+		MaxSteps:       maxSteps,
+		MaxDepth:       maxDepth,
+		MaxOutputBytes: maxOutput,
+		Timeout:        timeout,
+		EventLimit:     64,
+	})
+	if err != nil {
+		return nil, err
+	}
+	s.sessions[key] = sess
+	return sess, nil
+}
+
+func (s *lspServer) sessionCheckpoint(params json.RawMessage) any {
+	var p struct {
+		URI  string `json:"uri"`
+		Name string `json:"name"`
+	}
+	_ = json.Unmarshal(params, &p)
+	path, _ := s.document(p.URI)
+	sess, err := s.sessionForPath(path, EvaluationOptions{}, io.Discard)
+	if err != nil {
+		return map[string]any{"ok": false, "error": err.Error()}
+	}
+	snap, err := sess.Checkpoint(p.Name)
+	if err != nil {
+		return map[string]any{"ok": false, "error": err.Error()}
+	}
+	return map[string]any{"ok": true, "checkpoint": snap.ID, "variables": snap.Variables}
+}
+
+func (s *lspServer) sessionRestore(params json.RawMessage) any {
+	var p struct {
+		URI  string `json:"uri"`
+		Name string `json:"name"`
+	}
+	_ = json.Unmarshal(params, &p)
+	path, _ := s.document(p.URI)
+	sess, err := s.sessionForPath(path, EvaluationOptions{}, io.Discard)
+	if err != nil {
+		return map[string]any{"ok": false, "error": err.Error()}
+	}
+	if err := sess.Restore(p.Name); err != nil {
+		return map[string]any{"ok": false, "error": err.Error()}
+	}
+	return map[string]any{"ok": true}
+}
+
+func (s *lspServer) sessionInspect(params json.RawMessage) any {
+	var p struct {
+		URI string `json:"uri"`
+	}
+	_ = json.Unmarshal(params, &p)
+	path, _ := s.document(p.URI)
+	sess, err := s.sessionForPath(path, EvaluationOptions{}, io.Discard)
+	if err != nil {
+		return map[string]any{"ok": false, "error": err.Error()}
+	}
+	return map[string]any{"ok": true, "session": sess.Inspect()}
 }
 
 func (s *lspServer) positionParams(params json.RawMessage) (string, string, int, int) {

@@ -183,3 +183,24 @@ test "adds" { assert_eq(add(1, 2), 3); }
 		t.Fatalf("expected one passing test file, got %q", stdout.String())
 	}
 }
+
+func TestRunSessionRunAndDebug(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"session", "run", "--json", "--checkpoint", "base"}, strings.NewReader("let x = 1; x + 1;"), &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("session run failed: code=%d stderr=%q stdout=%q", code, stderr.String(), stdout.String())
+	}
+	if !strings.Contains(stdout.String(), `"checkpoint"`) || !strings.Contains(stdout.String(), `"result": "2"`) {
+		t.Fatalf("expected session JSON result, got %q", stdout.String())
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	code = run([]string{"session", "debug", "--json"}, strings.NewReader("let x = 1; x + 2;"), &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("session debug failed: code=%d stderr=%q stdout=%q", code, stderr.String(), stdout.String())
+	}
+	if !strings.Contains(stdout.String(), `"steps"`) || !strings.Contains(stdout.String(), `"result": "3"`) {
+		t.Fatalf("expected debug trace result, got %q", stdout.String())
+	}
+}

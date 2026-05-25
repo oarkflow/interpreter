@@ -17,6 +17,7 @@ import (
 
 	"github.com/oarkflow/interpreter/pkg/object"
 	"github.com/oarkflow/interpreter/pkg/pkgmgr"
+	sessionpkg "github.com/oarkflow/interpreter/pkg/session"
 	"github.com/oarkflow/interpreter/pkg/tooling"
 )
 
@@ -141,6 +142,57 @@ type ReplEditor struct {
 
 const replHistoryFileName = ".interpreter_repl_history"
 
+type replCommandInfo struct {
+	Name     string
+	Usage    string
+	Summary  string
+	Category string
+}
+
+var replCommandCatalog = []replCommandInfo{
+	{":help", ":help", "show guided help and keyboard shortcuts", "discover"},
+	{":tips", ":tips", "show practical REPL tips", "discover"},
+	{":commands", ":commands [query]", "list commands with descriptions", "discover"},
+	{":palette", ":palette <query>", "search commands, builtins, variables, and workspace symbols", "discover"},
+	{":examples", ":examples", "show runnable SPL example scripts", "discover"},
+	{":hint", ":hint <expr|name>", "show hover-style documentation for code", "discover"},
+	{":builtins", ":builtins", "list available builtin functions", "language"},
+	{":search", ":search <text>", "search builtins and keywords", "language"},
+	{":doc", ":doc <name>", "show builtin, symbol, or object documentation", "language"},
+	{":type", ":type <expr>", "evaluate an expression and show its SPL type", "language"},
+	{":methods", ":methods <expr>", "list methods available on a value", "language"},
+	{":fields", ":fields <expr>", "list fields available on a value", "language"},
+	{":ast", ":ast <expr>", "print parsed AST representation", "language"},
+	{":diagnostics", ":diagnostics [source]", "show parser and static diagnostics", "tooling"},
+	{":symbols", ":symbols [query]", "list REPL and workspace symbols", "tooling"},
+	{":def", ":def <name>", "jump-style definition lookup", "tooling"},
+	{":refs", ":refs <name>", "find references for a symbol", "tooling"},
+	{":format", ":format [source]", "format SPL source", "tooling"},
+	{":history", ":history", "print command history", "session"},
+	{":vars", ":vars", "list variables in the current environment", "session"},
+	{":checkpoint", ":checkpoint [name]", "save a session checkpoint", "session"},
+	{":restore", ":restore <name>", "restore a session checkpoint", "session"},
+	{":replay", ":replay", "replay recorded session inputs", "session"},
+	{":inspect", ":inspect [name]", "inspect session state or a variable", "session"},
+	{":metrics", ":metrics", "show recent execution metrics", "observability"},
+	{":events", ":events", "show recent session events", "observability"},
+	{":trace", ":trace on|off", "toggle trace display", "observability"},
+	{":time", ":time <expr>", "evaluate and show elapsed time", "debug"},
+	{":debug", ":debug <expr>", "step through statements", "debug"},
+	{":mem", ":mem", "show Go runtime memory usage", "debug"},
+	{":tasks", ":tasks", "list background tasks when available", "runtime"},
+	{":cancel", ":cancel <id>", "cancel a task when available", "runtime"},
+	{":load", ":load <file>", "load and execute an SPL script", "workspace"},
+	{":reload", ":reload [file]", "clear module cache or reload a module", "workspace"},
+	{":install", ":install <alias> <path>", "add dependency to spl.mod and refresh lock", "workspace"},
+	{":config", ":config ...", "view or update REPL runtime/security config", "runtime"},
+	{":ask", ":ask <prompt>", "ask configured assistant provider", "assistant"},
+	{":explain", ":explain <code|error>", "explain code or an error with configured assistant", "assistant"},
+	{":fix", ":fix <code|error>", "ask configured assistant for a fix", "assistant"},
+	{":clear", ":clear", "clear the terminal", "terminal"},
+	{":reset", ":reset", "reset environment and REPL source context", "session"},
+}
+
 type ReplConfig struct {
 	ExecutionProfile       string
 	ModuleDir              string
@@ -174,6 +226,11 @@ var replConfigs = struct {
 	items map[string]*ReplConfig
 }{items: make(map[string]*ReplConfig)}
 
+var replSessions = struct {
+	mu    sync.Mutex
+	items map[*object.Environment]*sessionpkg.Session
+}{items: make(map[*object.Environment]*sessionpkg.Session)}
+
 type keyAction int
 
 const (
@@ -185,6 +242,8 @@ const (
 	keyHome
 	keyEnd
 	keyDelete
+	keyWordLeft
+	keyWordRight
 )
 
 // ---------------------------------------------------------------------------
@@ -202,6 +261,7 @@ func RunReplInteractive(env *object.Environment) error {
 		return err
 	}
 	defer editor.close()
+	PrintWelcome(env)
 
 	for {
 		editor.Candidates = ReplCandidatesForEnv(env)
@@ -243,6 +303,7 @@ func RunReplInteractive(env *object.Environment) error {
 
 // RunReplBasic starts a simple line-based REPL without raw terminal input.
 func RunReplBasic(env *object.Environment) {
+	PrintWelcome(env)
 	scanner := bufio.NewScanner(os.Stdin)
 	for {
 		fmt.Print(StylePrompt(">> "))
@@ -361,66 +422,39 @@ func EvalReplInput(input string, env *object.Environment) {
 
 // ReplEvalSource evaluates source code and optionally prints the result.
 func ReplEvalSource(input string, env *object.Environment, sourcePath string, printResult bool) {
-	if NewLexerFn == nil || NewParserFn == nil || ParseProgramFn == nil {
-		fmt.Println(Paint("error: lexer/parser not configured", ColorRed))
+	sess := replSessionForEnv(env)
+	if sess == nil {
+		fmt.Println(Paint("error: session not available", ColorRed))
 		return
 	}
-	l := NewLexerFn(input)
-	p := NewParserFn(l)
-	program, pErrors := ParseProgramFn(p)
-	if len(pErrors) != 0 {
-		for _, msg := range pErrors {
+	res := sess.Execute(sessionpkg.ExecutionRequest{Source: input, Path: sourcePath, Print: printResult})
+	if len(res.Diagnostics) != 0 {
+		for _, msg := range res.Diagnostics {
 			fmt.Println(Paint(msg, ColorRed))
 		}
 		return
 	}
-
-	prevModuleDir := ""
-	prevSourcePath := ""
-	if env != nil {
-		prevModuleDir = env.ModuleDir
-		prevSourcePath = env.SourcePath
-		if sourcePath != "" {
-			env.SourcePath = sourcePath
-			if sourcePath != "<repl>" && sourcePath != "<memory>" {
-				env.ModuleDir = filepath.Dir(sourcePath)
-			}
+	if !res.OK {
+		if res.Result != nil {
+			fmt.Println(FormatRuntimeErrorForDisplay(res.Result, input))
+		} else if res.Error != "" {
+			fmt.Println(Paint(res.Error, ColorRed))
 		}
-		defer func() {
-			env.ModuleDir = prevModuleDir
-			env.SourcePath = prevSourcePath
-		}()
-	}
-
-	var evaluated object.Object
-	if RunProgramSandboxedFn != nil {
-		var policy *object.SecurityPolicy
-		if env != nil {
-			policy = env.SecurityPolicy
-		}
-		evaluated = RunProgramSandboxedFn(program, env, policy)
-	} else if EvalFn != nil {
-		evaluated = EvalFn(program, env)
-	} else {
-		fmt.Println(Paint("error: eval function not configured", ColorRed))
 		return
 	}
-
-	if evaluated != nil {
-		isErr := false
-		if IsErrorFn != nil {
-			isErr = IsErrorFn(evaluated)
-		} else {
-			isErr = evaluated.Type() == object.ERROR_OBJ
-		}
-		if isErr {
-			fmt.Println(FormatRuntimeErrorForDisplay(evaluated, input))
-			return
-		}
-		if printResult && evaluated.Type() != object.NULL_OBJ {
-			fmt.Println(FormatObjectForDisplayWithEnv(evaluated, env))
-		}
+	if printResult && res.Result != nil && res.Result.Type() != object.NULL_OBJ {
+		fmt.Println(FormatObjectForDisplayWithEnv(res.Result, env))
 	}
+}
+
+func PrintWelcome(env *object.Environment) {
+	profile := "trusted"
+	if cfg := ReplConfigForEnv(env); cfg != nil && strings.TrimSpace(cfg.ExecutionProfile) != "" {
+		profile = cfg.ExecutionProfile
+	}
+	ReplPrintLine(Paint("SPL Runtime Workspace", ColorBold+ColorCyan))
+	ReplPrintLine(Paint("Type :tips for a quick tour, :commands to search commands, Tab for completion, Ctrl-R for history.", ColorGray))
+	ReplPrintLine(Paint("Session profile: "+profile, ColorGray))
 }
 
 func ReplPrintLine(s string) {
@@ -434,6 +468,32 @@ func replPrintBlock(s string) {
 	}
 }
 
+func replSessionForEnv(env *object.Environment) *sessionpkg.Session {
+	if env == nil {
+		return nil
+	}
+	replSessions.mu.Lock()
+	defer replSessions.mu.Unlock()
+	if sess := replSessions.items[env]; sess != nil {
+		return sess
+	}
+	opts := sessionpkg.SessionOptions{
+		ID:         sessionpkg.SessionID(fmt.Sprintf("repl-%p", env)),
+		Profile:    "trusted",
+		ModuleDir:  env.ModuleDir,
+		SourcePath: env.SourcePath,
+		Output:     os.Stdout,
+		EventLimit: 256,
+	}
+	sess, err := sessionpkg.NewWithEnvironment(env, opts)
+	if err != nil {
+		ReplPrintLine("session error: " + err.Error())
+		return nil
+	}
+	replSessions.items[env] = sess
+	return sess
+}
+
 // ReplCandidatesForEnv returns completion candidates from builtins, keywords,
 // and environment variables.
 func ReplCandidatesForEnv(env *object.Environment) []string {
@@ -441,11 +501,9 @@ func ReplCandidatesForEnv(env *object.Environment) []string {
 		"let", "if", "else", "while", "for", "in", "and", "or", "not", "break", "continue", "function", "return",
 		"print", "const", "import", "export", "true", "false", "null", "do", "typeof",
 		"try", "catch", "throw", "switch", "case", "default",
-		"exit", ":help", ":builtins", ":search", ":history", ":clear",
-		":vars", ":type", ":doc", ":methods", ":fields", ":ast", ":time", ":load", ":reload", ":reset",
-		":debug", ":mem", ":install",
-		":config", ":config list", ":config set", ":config get", ":config profile",
+		"exit",
 	}
+	kw = append(kw, ReplCommandNames()...)
 	all := make(map[string]struct{}, len(kw)+16)
 	if BuiltinNames != nil {
 		for name := range BuiltinNames() {
@@ -468,6 +526,127 @@ func ReplCandidatesForEnv(env *object.Environment) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+func ReplCommandNames() []string {
+	names := make([]string, 0, len(replCommandCatalog)+4)
+	for _, cmd := range replCommandCatalog {
+		names = append(names, cmd.Name)
+	}
+	names = append(names, ":config list", ":config get", ":config set", ":config profile")
+	sort.Strings(names)
+	return names
+}
+
+func ReplCommandDetail(name string) string {
+	for _, cmd := range replCommandCatalog {
+		if cmd.Name == name || strings.HasPrefix(name, cmd.Name+" ") {
+			return cmd.Summary
+		}
+	}
+	return ""
+}
+
+func ReplCommandsTable(query string) string {
+	query = strings.ToLower(strings.TrimSpace(query))
+	var b strings.Builder
+	b.WriteString("Command                  Category       Description\n")
+	b.WriteString("-------                  --------       -----------\n")
+	for _, cmd := range replCommandCatalog {
+		if query != "" && !strings.Contains(strings.ToLower(cmd.Name+" "+cmd.Usage+" "+cmd.Summary+" "+cmd.Category), query) {
+			continue
+		}
+		fmt.Fprintf(&b, "%-24s %-14s %s\n", cmd.Usage, cmd.Category, cmd.Summary)
+	}
+	return strings.TrimRight(b.String(), "\n")
+}
+
+func ReplTipsText() string {
+	return strings.Join([]string{
+		"Start with :examples, then :load <file> to run one.",
+		"Press Tab after a partial name for completion; press Tab again to list matches.",
+		"Type object. then Tab to see fields and methods for a runtime value.",
+		"Type a builtin call like read_json( to see a signature hint.",
+		"Use :checkpoint name, :restore name, and :replay for session workflows.",
+		"Use :diagnostics, :symbols, :def, :refs, and :format for editor-like tooling.",
+		"Use :metrics and :events after running code to inspect runtime behavior.",
+		"Use :palette text to search commands, builtins, variables, and workspace symbols together.",
+	}, "\n")
+}
+
+func ReplExamplesText() string {
+	examples := []string{
+		"testdata/hello.spl",
+		"testdata/examples_runtime_workspace.spl",
+		"testdata/examples_session_replay.spl",
+		"testdata/examples_json_csv_values.spl",
+		"testdata/examples_resource_limits.spl",
+		"testdata/examples_streaming.spl",
+		"testdata/pattern_matching.spl",
+	}
+	var b strings.Builder
+	b.WriteString("Runnable examples:\n")
+	for _, path := range examples {
+		b.WriteString("  :load ")
+		b.WriteString(path)
+		b.WriteByte('\n')
+	}
+	b.WriteString("\nFrom the shell:\n")
+	b.WriteString("  go run ./cmd/interpreter testdata/examples_json_csv_values.spl\n")
+	b.WriteString("  go run ./cmd/spltool session run --json --checkpoint baseline testdata/examples_runtime_workspace.spl")
+	return b.String()
+}
+
+func ReplPalette(query string, editor *ReplEditor, env *object.Environment) string {
+	query = strings.ToLower(strings.TrimSpace(query))
+	if query == "" {
+		return "usage: :palette <query>"
+	}
+	type row struct {
+		Kind   string
+		Label  string
+		Detail string
+	}
+	rows := []row{}
+	add := func(kind, label, detail string) {
+		haystack := strings.ToLower(kind + " " + label + " " + detail)
+		if strings.Contains(haystack, query) || fuzzyContains(haystack, query) {
+			rows = append(rows, row{Kind: kind, Label: label, Detail: detail})
+		}
+	}
+	for _, cmd := range replCommandCatalog {
+		add("command", cmd.Usage, cmd.Summary)
+	}
+	if BuiltinNames != nil {
+		for name := range BuiltinNames() {
+			detail := ""
+			if BuiltinHelpTextFn != nil {
+				detail = BuiltinHelpTextFn(name)
+			}
+			add("builtin", name, detail)
+		}
+	}
+	if env != nil {
+		for _, name := range env.Names() {
+			if val, ok := env.Get(name); ok {
+				add("variable", name, val.Type().String())
+			}
+		}
+	}
+	for _, sym := range replSymbols(editor) {
+		add(sym.Kind, sym.Name, sym.Detail)
+	}
+	if len(rows) == 0 {
+		return "no matches"
+	}
+	if len(rows) > 30 {
+		rows = rows[:30]
+	}
+	var b strings.Builder
+	for _, item := range rows {
+		fmt.Fprintf(&b, "%-10s %-28s %s\n", item.Kind, item.Label, ReplCompactHint(item.Detail, 80))
+	}
+	return strings.TrimRight(b.String(), "\n")
 }
 
 // ReplParseProgram parses input and returns (program, errors).
@@ -1234,6 +1413,9 @@ func HandleReplMetaCommand(line string, editor *ReplEditor, env *object.Environm
 	if trimmed == ":help" {
 		ReplPrintLine(Paint("Interactive features:", ColorBold+ColorCyan))
 		ReplPrintLine("- Arrow keys: history and cursor movement")
+		ReplPrintLine("- Home/End or Ctrl+A/Ctrl+E: jump to start/end")
+		ReplPrintLine("- Alt+Left/Alt+Right, Ctrl+Left/Ctrl+Right, Alt+B/Alt+F: move by word")
+		ReplPrintLine("- Ctrl+U/Ctrl+K/Ctrl+W: clear before cursor, clear after cursor, delete previous word")
 		ReplPrintLine("- Tab: semantic completion for names/methods/fields")
 		ReplPrintLine("- Inline suggestion: gray suffix preview")
 		ReplPrintLine("- Call tips: signatures/docs shown while typing calls")
@@ -1241,6 +1423,11 @@ func HandleReplMetaCommand(line string, editor *ReplEditor, env *object.Environm
 		ReplPrintLine("- Ctrl+C: clear current line")
 		ReplPrintLine("- Ctrl+D: exit when line is empty")
 		ReplPrintLine(Paint("Commands:", ColorBold+ColorCyan))
+		ReplPrintLine("- :tips       show practical REPL tips")
+		ReplPrintLine("- :commands [query] list/search all REPL commands")
+		ReplPrintLine("- :palette <query> search commands/builtins/symbols")
+		ReplPrintLine("- :examples   show runnable examples")
+		ReplPrintLine("- :hint <expr> show inline documentation")
 		ReplPrintLine("- :builtins   list all available builtins")
 		ReplPrintLine("- :search X   search builtins/keywords by text")
 		ReplPrintLine("- :history    print command history")
@@ -1259,6 +1446,16 @@ func HandleReplMetaCommand(line string, editor *ReplEditor, env *object.Environm
 		ReplPrintLine("- :time <expr> evaluate and show execution time")
 		ReplPrintLine("- :debug <expr> step through statements")
 		ReplPrintLine("- :mem        show runtime memory usage")
+		ReplPrintLine("- :checkpoint [name] save a session checkpoint")
+		ReplPrintLine("- :restore <name> restore a session checkpoint")
+		ReplPrintLine("- :replay     replay recorded session inputs from the initial checkpoint")
+		ReplPrintLine("- :inspect [name] inspect session state or a variable")
+		ReplPrintLine("- :metrics    show recent execution metrics")
+		ReplPrintLine("- :events     show recent session events")
+		ReplPrintLine("- :trace on|off toggle trace event display")
+		ReplPrintLine("- :tasks      list background tasks when task tracking is available")
+		ReplPrintLine("- :cancel <id> cancel a background task when cancellation is available")
+		ReplPrintLine("- :ask/:explain/:fix use configured assistant provider")
 		ReplPrintLine("- :load <file> load and execute a script file")
 		ReplPrintLine("- :reload [file] clear module cache or one module")
 		ReplPrintLine("- :install <alias> <path> add dependency to spl.mod and refresh lock")
@@ -1271,6 +1468,41 @@ func HandleReplMetaCommand(line string, editor *ReplEditor, env *object.Environm
 		return true
 	}
 	if handleReplConfigCommand(trimmed, env) {
+		return true
+	}
+	if trimmed == ":tips" {
+		replPrintBlock(ReplTipsText())
+		return true
+	}
+	if trimmed == ":examples" {
+		replPrintBlock(ReplExamplesText())
+		return true
+	}
+	if trimmed == ":commands" || strings.HasPrefix(trimmed, ":commands ") {
+		query := strings.TrimSpace(strings.TrimPrefix(trimmed, ":commands"))
+		replPrintBlock(ReplCommandsTable(query))
+		return true
+	}
+	if strings.HasPrefix(trimmed, ":palette") {
+		query := strings.TrimSpace(strings.TrimPrefix(trimmed, ":palette"))
+		if query == "" {
+			ReplPrintLine("usage: :palette <query>")
+			return true
+		}
+		replPrintBlock(ReplPalette(query, editor, env))
+		return true
+	}
+	if trimmed == ":hint" || strings.HasPrefix(trimmed, ":hint ") {
+		target := strings.TrimSpace(strings.TrimPrefix(trimmed, ":hint"))
+		if target == "" {
+			ReplPrintLine("usage: :hint <expr|name>")
+			return true
+		}
+		if doc := replToolingDoc(target, editor); doc != "" {
+			replPrintBlock(doc)
+			return true
+		}
+		replPrintBlock(ReplDocText(target, env))
 		return true
 	}
 	if strings.HasPrefix(trimmed, "!") {
@@ -1362,6 +1594,9 @@ func HandleReplMetaCommand(line string, editor *ReplEditor, env *object.Environm
 			env.Mu.Lock()
 			env.Store = make(map[string]object.Object)
 			env.Mu.Unlock()
+			replSessions.mu.Lock()
+			delete(replSessions.items, env)
+			replSessions.mu.Unlock()
 		}
 		if editor != nil {
 			editor.Source = ""
@@ -1370,6 +1605,152 @@ func HandleReplMetaCommand(line string, editor *ReplEditor, env *object.Environm
 			}
 		}
 		ReplPrintLine("environment reset")
+		return true
+	}
+	if trimmed == ":checkpoint" || strings.HasPrefix(trimmed, ":checkpoint ") {
+		name := strings.TrimSpace(strings.TrimPrefix(trimmed, ":checkpoint"))
+		sess := replSessionForEnv(env)
+		if sess == nil {
+			ReplPrintLine("session not available")
+			return true
+		}
+		snap, err := sess.Checkpoint(name)
+		if err != nil {
+			ReplPrintLine("checkpoint error: " + err.Error())
+			return true
+		}
+		ReplPrintLine("checkpoint saved: " + string(snap.ID))
+		return true
+	}
+	if strings.HasPrefix(trimmed, ":restore") {
+		name := strings.TrimSpace(strings.TrimPrefix(trimmed, ":restore"))
+		if name == "" {
+			ReplPrintLine("usage: :restore <checkpoint>")
+			return true
+		}
+		sess := replSessionForEnv(env)
+		if sess == nil {
+			ReplPrintLine("session not available")
+			return true
+		}
+		if err := sess.Restore(name); err != nil {
+			ReplPrintLine("restore error: " + err.Error())
+		} else {
+			ReplPrintLine("restored: " + name)
+		}
+		return true
+	}
+	if trimmed == ":replay" || strings.HasPrefix(trimmed, ":replay ") {
+		sess := replSessionForEnv(env)
+		if sess == nil {
+			ReplPrintLine("session not available")
+			return true
+		}
+		results, err := sess.Replay()
+		if err != nil {
+			ReplPrintLine("replay error: " + err.Error())
+			return true
+		}
+		ReplPrintLine(fmt.Sprintf("replayed %d execution(s)", len(results)))
+		for _, res := range results {
+			status := "ok"
+			if !res.OK {
+				status = "error"
+			}
+			detail := res.ResultText
+			if detail == "" {
+				detail = res.Error
+			}
+			ReplPrintLine(fmt.Sprintf("  %s %s %s", res.ID, status, detail))
+		}
+		return true
+	}
+	if trimmed == ":inspect" || strings.HasPrefix(trimmed, ":inspect ") {
+		name := strings.TrimSpace(strings.TrimPrefix(trimmed, ":inspect"))
+		sess := replSessionForEnv(env)
+		if sess == nil {
+			ReplPrintLine("session not available")
+			return true
+		}
+		if name != "" {
+			if val, ok := env.Get(name); ok {
+				ReplPrintLine(fmt.Sprintf("%s: %s = %s", name, val.Type(), FormatObjectPlain(val)))
+			} else {
+				ReplPrintLine("not found: " + name)
+			}
+			return true
+		}
+		replPrintSessionInspect(sess.Inspect())
+		return true
+	}
+	if trimmed == ":metrics" {
+		sess := replSessionForEnv(env)
+		if sess == nil {
+			ReplPrintLine("session not available")
+			return true
+		}
+		inspect := sess.Inspect()
+		if len(inspect.History) == 0 {
+			ReplPrintLine("no executions recorded")
+			return true
+		}
+		for _, res := range inspect.History {
+			ReplPrintLine(fmt.Sprintf("%s ok=%t duration=%s steps=%d output=%d result=%s", res.ID, res.OK, res.Metrics.Duration, res.Metrics.Steps, res.Metrics.OutputBytes, res.Metrics.ResultType))
+		}
+		return true
+	}
+	if trimmed == ":events" {
+		sess := replSessionForEnv(env)
+		if sess == nil {
+			ReplPrintLine("session not available")
+			return true
+		}
+		events := sess.Events()
+		if len(events) == 0 {
+			ReplPrintLine("no session events")
+			return true
+		}
+		start := 0
+		if len(events) > 20 {
+			start = len(events) - 20
+		}
+		for _, ev := range events[start:] {
+			ReplPrintLine(fmt.Sprintf("%s %s %s", ev.Time.Format("15:04:05"), ev.Kind, ev.Message))
+		}
+		return true
+	}
+	if strings.HasPrefix(trimmed, ":trace") {
+		arg := strings.TrimSpace(strings.TrimPrefix(trimmed, ":trace"))
+		if arg == "on" || arg == "off" {
+			ReplPrintLine("trace display " + arg)
+		} else {
+			ReplPrintLine("usage: :trace <on|off>")
+		}
+		return true
+	}
+	if trimmed == ":tasks" {
+		ReplPrintLine("task tracking is not yet available for this session")
+		return true
+	}
+	if strings.HasPrefix(trimmed, ":cancel") {
+		ReplPrintLine("task cancellation is not yet available for this session")
+		return true
+	}
+	if strings.HasPrefix(trimmed, ":ask") || strings.HasPrefix(trimmed, ":explain") || strings.HasPrefix(trimmed, ":fix") {
+		parts := strings.Fields(trimmed)
+		kind := strings.TrimPrefix(parts[0], ":")
+		prompt := strings.TrimSpace(strings.TrimPrefix(trimmed, parts[0]))
+		sess := replSessionForEnv(env)
+		if sess == nil {
+			ReplPrintLine("session not available")
+			return true
+		}
+		answer, err := sess.Ask(kind, prompt)
+		if err != nil {
+			ReplPrintLine("assistant unavailable: " + err.Error())
+			return true
+		}
+		replPrintBlock(answer.Text)
 		return true
 	}
 	if strings.HasPrefix(trimmed, ":type ") {
@@ -1617,6 +1998,27 @@ func replPrintDiagnostics(diags []tooling.Diagnostic) {
 		if d.Snippet != "" {
 			replPrintBlock("  " + strings.ReplaceAll(strings.TrimRight(d.Snippet, "\n"), "\n", "\n  "))
 		}
+	}
+}
+
+func replPrintSessionInspect(inspect sessionpkg.SessionInspect) {
+	ReplPrintLine(fmt.Sprintf("session: %s profile=%s", inspect.ID, inspect.Profile))
+	if inspect.ModuleDir != "" {
+		ReplPrintLine("module_dir: " + inspect.ModuleDir)
+	}
+	names := make([]string, 0, len(inspect.Variables))
+	for name := range inspect.Variables {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	ReplPrintLine(fmt.Sprintf("variables: %d", len(names)))
+	for _, name := range names {
+		ReplPrintLine(fmt.Sprintf("  %s = %s", name, inspect.Variables[name]))
+	}
+	ReplPrintLine(fmt.Sprintf("executions: %d", len(inspect.History)))
+	ReplPrintLine(fmt.Sprintf("checkpoints: %d", len(inspect.Checkpoints)))
+	if inspect.RuntimeLimits != nil {
+		ReplPrintLine(fmt.Sprintf("runtime: steps=%v output=%v", inspect.RuntimeLimits["steps"], inspect.RuntimeLimits["output_bytes"]))
 	}
 }
 
@@ -1968,6 +2370,15 @@ func (e *ReplEditor) readLine(prompt string) (string, error) {
 			cursor = 0
 		case 5: // Ctrl+E
 			cursor = len(buf)
+		case 11: // Ctrl+K
+			buf = buf[:cursor]
+		case 21: // Ctrl+U
+			buf = buf[:0]
+			cursor = 0
+		case 23: // Ctrl+W
+			start := previousWordBoundary(buf, cursor)
+			buf = append(buf[:start], buf[cursor:]...)
+			cursor = start
 		case 18: // Ctrl+R
 			buf, cursor = e.ReverseHistorySearch(buf)
 		case 9: // Tab
@@ -2011,6 +2422,10 @@ func (e *ReplEditor) readLine(prompt string) (string, error) {
 				if cursor < len(buf) {
 					buf = append(buf[:cursor], buf[cursor+1:]...)
 				}
+			case keyWordLeft:
+				cursor = previousWordBoundary(buf, cursor)
+			case keyWordRight:
+				cursor = nextWordBoundary(buf, cursor)
 			}
 		default:
 			if ch >= 32 {
@@ -2059,6 +2474,10 @@ func (e *ReplEditor) readEscapeAction() keyAction {
 	switch b[0] {
 	case '[':
 		return e.readCSIAction()
+	case 'b':
+		return keyWordLeft
+	case 'f':
+		return keyWordRight
 	case 'O':
 		if _, err := e.In.Read(b[:]); err != nil {
 			return keyUnknown
@@ -2121,6 +2540,10 @@ func (e *ReplEditor) readCSIAction() keyAction {
 	s := string(seq)
 
 	switch {
+	case strings.HasSuffix(s, ";5D"), strings.HasSuffix(s, ";3D"):
+		return keyWordLeft
+	case strings.HasSuffix(s, ";5C"), strings.HasSuffix(s, ";3C"):
+		return keyWordRight
 	case strings.HasSuffix(s, "A"):
 		return keyUp
 	case strings.HasSuffix(s, "B"):
@@ -2133,9 +2556,9 @@ func (e *ReplEditor) readCSIAction() keyAction {
 		return keyHome
 	case strings.HasSuffix(s, "F"):
 		return keyEnd
-	case strings.HasPrefix(s, "1~"), strings.HasPrefix(s, "7~"):
+	case strings.HasPrefix(s, "1~"), strings.HasPrefix(s, "7~"), strings.HasPrefix(s, "1;"):
 		return keyHome
-	case strings.HasPrefix(s, "4~"), strings.HasPrefix(s, "8~"):
+	case strings.HasPrefix(s, "4~"), strings.HasPrefix(s, "8~"), strings.HasPrefix(s, "4;"):
 		return keyEnd
 	case strings.HasPrefix(s, "3~"):
 		return keyDelete
@@ -2273,6 +2696,11 @@ func (e *ReplEditor) workspaceCompletionLabels(ctx ReplCompletionContext, base [
 
 func (e *ReplEditor) completionDetails(ctx ReplCompletionContext) map[string]string {
 	details := map[string]string{}
+	for _, cmd := range replCommandCatalog {
+		if strings.HasPrefix(cmd.Name, ctx.Prefix) || fuzzyContains(cmd.Name+" "+cmd.Summary, ctx.Prefix) {
+			details[cmd.Name] = cmd.Summary
+		}
+	}
 	if e == nil || e.Index == nil || ctx.BaseExpr != "" {
 		return details
 	}
@@ -2531,10 +2959,40 @@ func isTokenRune(r rune) bool {
 	return unicode.IsLetter(r) || unicode.IsDigit(r) || r == '_' || r == ':'
 }
 
+func previousWordBoundary(buf []rune, cursor int) int {
+	if cursor > len(buf) {
+		cursor = len(buf)
+	}
+	for cursor > 0 && unicode.IsSpace(buf[cursor-1]) {
+		cursor--
+	}
+	for cursor > 0 && isNavigationWordRune(buf[cursor-1]) {
+		cursor--
+	}
+	return cursor
+}
+
+func nextWordBoundary(buf []rune, cursor int) int {
+	if cursor < 0 {
+		cursor = 0
+	}
+	for cursor < len(buf) && unicode.IsSpace(buf[cursor]) {
+		cursor++
+	}
+	for cursor < len(buf) && isNavigationWordRune(buf[cursor]) {
+		cursor++
+	}
+	return cursor
+}
+
+func isNavigationWordRune(r rune) bool {
+	return unicode.IsLetter(r) || unicode.IsDigit(r) || r == '_' || r == ':' || r == '.'
+}
+
 func FindCompletions(prefix string, candidates []string) []string {
 	out := make([]string, 0, 8)
 	for _, c := range candidates {
-		if strings.HasPrefix(c, prefix) {
+		if strings.HasPrefix(c, prefix) || fuzzyContains(c, prefix) {
 			out = append(out, c)
 		}
 	}
@@ -2547,7 +3005,30 @@ func firstCompletion(prefix string, candidates []string) (string, bool) {
 			return c, true
 		}
 	}
+	for _, c := range candidates {
+		if fuzzyContains(c, prefix) {
+			return c, true
+		}
+	}
 	return "", false
+}
+
+func fuzzyContains(candidate, query string) bool {
+	candidate = strings.ToLower(candidate)
+	query = strings.ToLower(strings.TrimSpace(query))
+	if query == "" {
+		return true
+	}
+	if strings.Contains(candidate, query) {
+		return true
+	}
+	j := 0
+	for _, r := range candidate {
+		if j < len(query) && byte(r) == query[j] {
+			j++
+		}
+	}
+	return j == len(query)
 }
 
 func LongestCommonPrefix(items []string) string {
