@@ -136,6 +136,49 @@ go run ./cmd/spltool lsp
 
 `check` includes parser diagnostics plus conservative static warnings for undefined identifiers, suspicious shadowing, unreachable statements, missing imports, deprecated builtins, and non-exhaustive match fallbacks. `symbols`, `complete`, and `hover` provide stable JSON surfaces that can back IDE/LSP integrations.
 
+### Daily Tech Chores
+
+The standard REPL, interpreter, playground, and `spltool` command link the
+first-party `tools/*` modules for file, archive, image, secret, media, system,
+and network chores. Bulk/destructive operations preview by default and require
+`apply: true` in SPL or `--apply` in `spltool`.
+
+```spl
+import "tools/files";
+let plan = bulk_rename("./photos", {
+  "match": "*.jpg",
+  "template": "{date}_{seq}.{ext}",
+  "apply": false
+});
+let organized = file_organize("./downloads", "./downloads/by-type", {"apply": false});
+let checksum = file_checksum("./docs/report.pdf");
+
+import "tools/media";
+let ffmpeg = ffmpeg_status();
+
+import "tools/office";
+let rows = office_read("./data/people.csv");
+```
+
+```bash
+go run ./cmd/spltool files rename ./photos --match '*.jpg' --template '{date}_{seq}.{ext}'
+go run ./cmd/spltool files organize ./downloads ./downloads/by-type --apply
+go run ./cmd/spltool files checksum ./docs/report.pdf
+go run ./cmd/spltool archive compress ./docs backup.zip --format zip --apply
+go run ./cmd/spltool archive extract backup.zip ./restore --apply
+go run ./cmd/spltool image convert ./photos ./web --to png --apply
+go run ./cmd/spltool image resize ./photo.jpg ./photo-small.jpg --width 1200 --apply
+go run ./cmd/spltool office read ./data/people.csv --json
+go run ./cmd/spltool media ffmpeg-status
+go run ./cmd/spltool media convert input.mov output.mp4 --install --apply
+go run ./cmd/spltool media install-ffmpeg --apply
+```
+
+Media conversion uses `ffmpeg`/`ffprobe` when available. `spltool media
+install-ffmpeg` detects common OS package managers and previews the install
+command unless `--apply` is supplied. `spltool media convert --install --apply`
+will install ffmpeg first when it is missing, then run the conversion.
+
 ### Runtime Workspace Sessions
 
 The session layer powers the REPL, embedding API, and editor evaluation. It keeps

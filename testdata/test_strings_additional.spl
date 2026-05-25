@@ -1,4 +1,8 @@
 // Additional string builtin examples.
+import "std/string" as str;
+import "std/json" as json;
+import "std/path" as path;
+
 let ok = true;
 
 ok = ok && trim("  hi  ") == "hi";
@@ -21,5 +25,23 @@ ok = ok && trim_prefix("prefix-value", "prefix-") == "value";
 ok = ok && trim_suffix("value.spl", ".spl") == "value";
 ok = ok && pad_left("7", 3, "0") == "007";
 ok = ok && pad_right("7", 3, "0") == "700";
+ok = ok && last_index_of("banana", "na") == 4;
+ok = ok && replace_n("a-a-a", "-", "_", 1) == "a_a-a";
+ok = ok && trim_chars("..spl..", ".") == "spl";
+ok = ok && len(words("helloWorld SPL")) == 3;
+ok = ok && len(chars("spl")) == 3;
+ok = ok && reverse_string("abc") == "cba";
+ok = ok && is_blank("  ") == true;
+ok = ok && is_numeric("42.5") == true;
+ok = ok && is_alpha("SPL") == true;
+ok = ok && is_alnum("SPL3") == true;
+ok = ok && unescape_html(escape_html("<b>")) == "<b>";
+ok = ok && url_decode(url_encode("a b")) == "a b";
+ok = ok && base64_decode(base64_encode("spl")) == "spl";
+ok = ok && json.json_parse("{\"a\":1}")["a"] == 1;
+ok = ok && contains(json.json_stringify({"a": 1}), "\"a\"") == true;
+ok = ok && str.reverse_string("abc") == "cba";
+ok = ok && path.path_ext("dir/file.spl") == ".spl";
+ok = ok && path.path_base("dir/file.spl") == "file.spl";
 
 ok;

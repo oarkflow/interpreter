@@ -103,6 +103,53 @@ func TestRunConformance(t *testing.T) {
 	}
 }
 
+func TestRunFilesRenamePreviewDoesNotMutate(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "photo.jpg")
+	if err := os.WriteFile(src, []byte("image"), 0o600); err != nil {
+		t.Fatalf("write source: %v", err)
+	}
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"files", "rename", dir, "--match", "*.jpg", "--template", "{date}_{seq}.{ext}"}, strings.NewReader(""), &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("rename preview failed: code=%d stderr=%q stdout=%q", code, stderr.String(), stdout.String())
+	}
+	if !strings.Contains(stdout.String(), "planned rename") {
+		t.Fatalf("expected planned rename, got %q", stdout.String())
+	}
+	if _, err := os.Stat(src); err != nil {
+		t.Fatalf("preview should not mutate source: %v", err)
+	}
+}
+
+func TestRunArchiveCompressApply(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "doc.txt")
+	dst := filepath.Join(dir, "doc.zip")
+	if err := os.WriteFile(src, []byte("hello"), 0o600); err != nil {
+		t.Fatalf("write source: %v", err)
+	}
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"archive", "compress", src, dst, "--format", "zip", "--apply"}, strings.NewReader(""), &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("archive compress failed: code=%d stderr=%q stdout=%q", code, stderr.String(), stdout.String())
+	}
+	if _, err := os.Stat(dst); err != nil {
+		t.Fatalf("expected zip archive: %v", err)
+	}
+}
+
+func TestRunMediaFFmpegStatus(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"media", "ffmpeg-status"}, strings.NewReader(""), &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("ffmpeg-status failed: code=%d stderr=%q", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "ffmpeg") {
+		t.Fatalf("expected ffmpeg status JSON, got %q", stdout.String())
+	}
+}
+
 func TestRunConfigInitSymbolsCompleteHoverDocsAndTest(t *testing.T) {
 	projectDir, err := os.MkdirTemp(".", "spltool-dx-test-")
 	if err != nil {

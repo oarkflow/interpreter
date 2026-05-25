@@ -9,7 +9,7 @@ import (
 )
 
 func TestRootImportDoesNotRegisterOptionalBuiltins(t *testing.T) {
-	for _, name := range []string{"db_connect", "http_get", "ftp_list", "bcrypt_hash", "image_resize"} {
+	for _, name := range []string{"db_connect", "http_get", "ftp_list", "bcrypt_hash", "image_resize", "bulk_rename", "media_convert"} {
 		if eval.HasBuiltin(name) {
 			t.Fatalf("optional builtin %q registered by root import", name)
 		}

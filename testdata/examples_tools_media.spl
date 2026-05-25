@@ -1,0 +1,4 @@
+import "tools/media";
+
+let status = ffmpeg_status();
+print status;

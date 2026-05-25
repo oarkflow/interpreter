@@ -6,7 +6,16 @@ import (
 	"testing"
 
 	"github.com/oarkflow/interpreter"
+	"github.com/oarkflow/interpreter/pkg/eval"
 )
+
+func TestCLILinksToolsBuiltins(t *testing.T) {
+	for _, name := range []string{"bulk_rename", "archive_compress", "image_convert_batch", "media_convert", "ffmpeg_status"} {
+		if !eval.HasBuiltin(name) {
+			t.Fatalf("expected tools builtin %q to be linked into cmd/interpreter", name)
+		}
+	}
+}
 
 func TestCLIImportsTemplateRuntime(t *testing.T) {
 	dir := t.TempDir()

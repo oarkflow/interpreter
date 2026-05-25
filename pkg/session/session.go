@@ -367,7 +367,7 @@ func (s *Session) Execute(req ExecutionRequest) ExecutionResult {
 	} else {
 		result.OK = true
 		if obj != nil {
-			result.ResultText = obj.Inspect()
+			result.ResultText = object.FormatPlain(obj)
 		}
 	}
 	result.Metrics = metricsFor(s.env, start, result)
@@ -527,7 +527,7 @@ func (s *Session) Debug(src string, path string) DebugTrace {
 			DurationMS: time.Since(start).Milliseconds(),
 		}
 		if obj != nil && obj.Type() != object.NULL_OBJ {
-			step.Result = obj.Inspect()
+			step.Result = object.FormatPlain(obj)
 		}
 		if object.IsError(obj) {
 			step.Error = objectErrorString(obj)

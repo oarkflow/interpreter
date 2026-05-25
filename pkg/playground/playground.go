@@ -228,7 +228,7 @@ func EvalForPlayground(script string, opts PlaygroundOptions) PlaygroundResult {
 				if art, ok := evaluated.(*object.RenderArtifact); ok {
 					env.AddRenderArtifact(art)
 				}
-				res.Result = evaluated.Inspect()
+				res.Result = object.FormatPlain(evaluated)
 				if maxOutput > 0 && int64(len(res.Result)) > maxOutput {
 					res.Result = res.Result[:maxOutput]
 				}

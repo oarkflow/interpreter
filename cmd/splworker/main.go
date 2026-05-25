@@ -4,6 +4,7 @@ import (
 	"os"
 
 	"github.com/oarkflow/interpreter"
+	_ "github.com/oarkflow/interpreter/builtins/tools"
 )
 
 func main() {

@@ -33,6 +33,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     vscode.commands.registerCommand('spl.sessionCheckpoint', sessionCheckpoint),
     vscode.commands.registerCommand('spl.sessionRestore', sessionRestore),
     vscode.commands.registerCommand('spl.sessionInspect', sessionInspect),
+    vscode.commands.registerCommand('spl.toolsFfmpegStatus', () => runSpltoolTask(context, 'Tools FFmpeg Status', ['media', 'ffmpeg-status'])),
+    vscode.commands.registerCommand('spl.toolsInstallFfmpeg', () => runSpltoolTask(context, 'Tools Install FFmpeg', ['media', 'install-ffmpeg', '--apply'])),
+    vscode.commands.registerCommand('spl.toolsPreviewBulkRename', () => previewBulkRename(context)),
     vscode.commands.registerCommand('spl.restartLanguageServer', async () => {
       await restartLanguageServer(context);
     }),
@@ -251,4 +254,65 @@ async function sessionInspect(): Promise<void> {
   output.show(true);
   output.appendLine('[Session Inspect]');
   output.appendLine(JSON.stringify(result, null, 2));
+}
+
+async function previewBulkRename(context: vscode.ExtensionContext): Promise<void> {
+  const folder = await vscode.window.showOpenDialog({
+    canSelectFiles: false,
+    canSelectFolders: true,
+    canSelectMany: false,
+    title: 'Select folder to preview bulk rename',
+  });
+  if (!folder?.length) {
+    return;
+  }
+  const match = await vscode.window.showInputBox({ prompt: 'Glob match', value: '*.jpg' });
+  if (!match) {
+    return;
+  }
+  const template = await vscode.window.showInputBox({ prompt: 'Rename template', value: '{date}_{seq}.{ext}' });
+  if (!template) {
+    return;
+  }
+  await runSpltoolTask(context, 'Tools Preview Bulk Rename', ['files', 'rename', folder[0].fsPath, '--match', match, '--template', template, '--json']);
+}
+
+async function runSpltoolTask(context: vscode.ExtensionContext, label: string, args: string[]): Promise<void> {
+  const terminalOptions = resolveSpltoolCommand(context, args);
+  output.show(true);
+  output.appendLine('');
+  output.appendLine(`[${label}] ${terminalOptions.command} ${terminalOptions.args.join(' ')}`);
+  await new Promise<void>((resolve) => {
+    const child = spawn(terminalOptions.command, terminalOptions.args, {
+      cwd: terminalOptions.cwd,
+      shell: false,
+      stdio: 'pipe',
+    });
+    child.stdout.on('data', (chunk: Buffer) => output.append(chunk.toString()));
+    child.stderr.on('data', (chunk: Buffer) => output.append(chunk.toString()));
+    child.on('error', (err) => {
+      output.appendLine(`Failed: ${err.message}`);
+      void vscode.window.showErrorMessage(`${label} failed. Run "SPL: Show Output" for details.`);
+      resolve();
+    });
+    child.on('close', (code) => {
+      output.appendLine(`[${label}] exited with code ${code ?? 'unknown'}`);
+      if (code === 0) {
+        vscode.window.setStatusBarMessage(`${label} complete`, 2500);
+      } else {
+        void vscode.window.showWarningMessage(`${label} exited with code ${code}. Run "SPL: Show Output" for details.`);
+      }
+      resolve();
+    });
+  });
+}
+
+function resolveSpltoolCommand(context: vscode.ExtensionContext, args: string[]): { command: string; args: string[]; cwd: string } {
+  const config = vscode.workspace.getConfiguration('spl');
+  const toolPath = config.get<string>('toolPath', '').trim();
+  const workspaceRoot = resolveRepositoryRoot(context);
+  if (toolPath) {
+    return { command: toolPath, args, cwd: workspaceRoot };
+  }
+  return { command: 'go', args: ['run', './cmd/spltool', ...args], cwd: workspaceRoot };
 }

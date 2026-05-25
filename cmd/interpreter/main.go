@@ -4,6 +4,7 @@ import (
 	"os"
 
 	"github.com/oarkflow/interpreter"
+	_ "github.com/oarkflow/interpreter/builtins/tools"
 	_ "github.com/oarkflow/interpreter/pkg/builtins/reactive"
 	_ "github.com/oarkflow/interpreter/pkg/builtins/scheduler"
 	_ "github.com/oarkflow/interpreter/pkg/builtins/server"

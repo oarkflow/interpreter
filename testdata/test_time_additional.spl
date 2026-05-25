@@ -1,4 +1,6 @@
 // Additional time builtin examples.
+import "std/time" as t;
+
 let ok = true;
 
 ok = ok && iso_to_unix("1970-01-01T00:00:00Z") == 0;
@@ -15,8 +17,17 @@ ok = ok && time_diff(86400, 0, "day") == 1;
 ok = ok && start_of_day(86399) == 0;
 ok = ok && end_of_day(1) == 86399;
 ok = ok && start_of_week(0) == -259200;
+ok = ok && end_of_week(0) == 345599;
+ok = ok && start_of_month(0) == 0;
 ok = ok && end_of_month(0) == 2678399;
 ok = ok && add_months(0, 1) == 2678400;
+ok = ok && parse_duration("1h30m") == 5400000;
+ok = ok && format_duration(5400000) == "1h30m0s";
+ok = ok && is_weekend(0) == false;
+ok = ok && weekday(0) == 4;
+ok = ok && month(0) == 1;
+ok = ok && year(0) == 1970;
+ok = ok && t.year(0) == 1970;
 ok = ok && date_with_format(2026, 2, 23, "YYYY-MM-DD") == "2026-02-23";
 ok = ok && format_time_tz(0, "YYYY-MM-DD HH:mm", "America/New_York") == "1969-12-31 19:00";
 ok = ok && parse_time_tz("1969-12-31 19:00", "YYYY-MM-DD HH:mm", "America/New_York") == 0;

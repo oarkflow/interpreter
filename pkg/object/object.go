@@ -609,6 +609,65 @@ func (h *Hash) Inspect() string {
 	return out.String()
 }
 
+func FormatPlain(obj Object) string {
+	return formatPlainDepth(obj, 0)
+}
+
+func formatPlainDepth(obj Object, depth int) string {
+	if obj == nil {
+		return "null"
+	}
+	switch v := obj.(type) {
+	case *OwnedValue:
+		return formatPlainDepth(v.Inner, depth)
+	case *ImmutableValue:
+		return formatPlainDepth(v.Inner, depth)
+	case *GeneratorValue:
+		return formatPlainDepth(&Array{Elements: v.Elements}, depth)
+	case *Array:
+		return formatArrayPlain(v, depth)
+	case *Hash:
+		return formatHashPlain(v, depth)
+	default:
+		return obj.Inspect()
+	}
+}
+
+func formatArrayPlain(arr *Array, depth int) string {
+	if arr == nil || len(arr.Elements) == 0 {
+		return "[]"
+	}
+	indent := strings.Repeat("  ", depth)
+	childIndent := strings.Repeat("  ", depth+1)
+	parts := make([]string, 0, len(arr.Elements))
+	for _, el := range arr.Elements {
+		parts = append(parts, childIndent+formatPlainDepth(el, depth+1))
+	}
+	return "[\n" + strings.Join(parts, ",\n") + "\n" + indent + "]"
+}
+
+func formatHashPlain(h *Hash, depth int) string {
+	if h == nil || len(h.Pairs) == 0 {
+		return "{}"
+	}
+	indent := strings.Repeat("  ", depth)
+	childIndent := strings.Repeat("  ", depth+1)
+	keys := make([]string, 0, len(h.Pairs))
+	keyToPair := make(map[string]HashPair, len(h.Pairs))
+	for _, pair := range h.Pairs {
+		key := pair.Key.Inspect()
+		keys = append(keys, key)
+		keyToPair[key] = pair
+	}
+	sort.Strings(keys)
+	parts := make([]string, 0, len(keys))
+	for _, key := range keys {
+		pair := keyToPair[key]
+		parts = append(parts, childIndent+key+": "+formatPlainDepth(pair.Value, depth+1))
+	}
+	return "{\n" + strings.Join(parts, ",\n") + "\n" + indent + "}"
+}
+
 // ---------------------------------------------------------------------------
 // Future
 // ---------------------------------------------------------------------------

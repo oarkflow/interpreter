@@ -19,6 +19,7 @@ import (
 
 	// Keep editor tooling aligned with the first-party runtime packages shipped
 	// in this repository, not just the minimal CLI builtin set.
+	_ "github.com/oarkflow/interpreter/pkg/builtins"
 	_ "github.com/oarkflow/interpreter/pkg/builtins/reactive"
 	_ "github.com/oarkflow/interpreter/pkg/builtins/scheduler"
 	_ "github.com/oarkflow/interpreter/pkg/builtins/server"
@@ -121,23 +122,51 @@ type PartialParseResult struct {
 var parserLineColRe = regexp.MustCompile(`^Line (\d+)(?::(\d+))?`)
 
 var knownStdModuleExports = map[string][]string{
-	"std/core":     {"help", "sprintf", "printf", "interpolate", "len", "type"},
-	"core":         {"help", "sprintf", "printf", "interpolate", "len", "type"},
-	"std/fs":       {"read_file", "write_file", "file_exists", "remove_file", "readdir", "glob", "mkdir", "rmdir", "stat"},
-	"fs":           {"read_file", "write_file", "file_exists", "remove_file", "readdir", "glob", "mkdir", "rmdir", "stat"},
-	"std/render":   {"file", "image", "render"},
-	"render":       {"file", "image", "render"},
-	"std/test":     {"assert_true", "assert_eq", "assert_neq", "assert_contains", "assert_throws", "test_summary", "run_tests"},
-	"test":         {"assert_true", "assert_eq", "assert_neq", "assert_contains", "assert_throws", "test_summary", "run_tests"},
-	"std/config":   {"config_load", "config_parse", "secret", "secret_reveal", "secret_mask"},
-	"config":       {"config_load", "config_parse", "secret", "secret_reveal", "secret_mask"},
-	"database":     {"db_connect", "db_query", "db_exec", "db_begin", "db_commit", "db_rollback", "db_tables", "db_close", "query", "lazy_query"},
-	"images":       {"image_load", "image_resize", "image_crop", "image_rotate", "image_convert", "image_save", "image_info", "image_render", "image_resize_file", "image_convert_file"},
-	"integrations": {"http_request", "http_get", "http_post", "webhook", "smtp_send", "ftp_list", "ftp_get", "ftp_put", "sftp_list", "sftp_get", "sftp_put"},
-	"cryptoextra":  {"bcrypt_hash", "bcrypt_verify"},
-	"yaml":         {"config_load", "config_parse"},
-	"config/yaml":  {"config_load", "config_parse"},
-	"builtins":     {},
+	"std/core":      {"help", "sprintf", "printf", "interpolate", "len", "type"},
+	"core":          {"help", "sprintf", "printf", "interpolate", "len", "type"},
+	"std/fs":        {"read_file", "write_file", "file_exists", "remove_file", "readdir", "glob", "mkdir", "rmdir", "stat"},
+	"fs":            {"read_file", "write_file", "file_exists", "remove_file", "readdir", "glob", "mkdir", "rmdir", "stat"},
+	"std/render":    {"file", "image", "render"},
+	"render":        {"file", "image", "render"},
+	"std/test":      {"assert_true", "assert_eq", "assert_neq", "assert_contains", "assert_throws", "test_summary", "run_tests"},
+	"test":          {"assert_true", "assert_eq", "assert_neq", "assert_contains", "assert_throws", "test_summary", "run_tests"},
+	"std/config":    {"config_load", "config_parse", "secret", "secret_reveal", "secret_mask"},
+	"config":        {"config_load", "config_parse", "secret", "secret_reveal", "secret_mask"},
+	"std/math":      {"PI", "E", "INF", "NAN", "abs", "pow", "sqrt", "min", "max", "clamp", "round", "floor", "ceil", "sin", "cos", "tan", "asin", "acos", "atan", "atan2", "log", "log2", "log10", "exp", "hypot", "cbrt", "mod", "sign", "trunc", "round_to", "lerp", "normalize", "map_range", "percent", "factorial", "gcd", "lcm", "is_nan", "is_inf", "is_finite", "is_integer", "is_prime", "to_radians", "to_degrees", "mean", "median", "mode", "variance", "stddev", "percentile"},
+	"math":          {"PI", "E", "INF", "NAN", "abs", "pow", "sqrt", "min", "max", "clamp", "round", "floor", "ceil", "sin", "cos", "tan", "asin", "acos", "atan", "atan2", "log", "log2", "log10", "exp", "hypot", "cbrt", "mod", "sign", "trunc", "round_to", "lerp", "normalize", "map_range", "percent", "factorial", "gcd", "lcm", "is_nan", "is_inf", "is_finite", "is_integer", "is_prime", "to_radians", "to_degrees", "mean", "median", "mode", "variance", "stddev", "percentile"},
+	"std/random":    {"random", "seed_random", "random_range", "random_float", "random_choice", "shuffle", "sample", "random_bytes", "random_string"},
+	"random":        {"random", "seed_random", "random_range", "random_float", "random_choice", "shuffle", "sample", "random_bytes", "random_string"},
+	"std/string":    {"upper", "lower", "split", "join", "trim", "replace", "replace_n", "starts_with", "ends_with", "contains", "index_of", "last_index_of", "substring", "repeat", "title", "slug", "snake_case", "kebab_case", "camel_case", "pascal_case", "swap_case", "count_substr", "truncate", "split_lines", "trim_prefix", "trim_suffix", "trim_chars", "pad_left", "pad_right", "words", "chars", "reverse_string", "is_blank", "is_numeric", "is_alpha", "is_alnum", "escape_html", "unescape_html", "url_encode", "url_decode", "base64_encode", "base64_decode", "regex_match", "regex_replace", "regex_find_all", "regex_split"},
+	"string":        {"upper", "lower", "split", "join", "trim", "replace", "replace_n", "starts_with", "ends_with", "contains", "index_of", "last_index_of", "substring", "repeat", "title", "slug", "snake_case", "kebab_case", "camel_case", "pascal_case", "swap_case", "count_substr", "truncate", "split_lines", "trim_prefix", "trim_suffix", "trim_chars", "pad_left", "pad_right", "words", "chars", "reverse_string", "is_blank", "is_numeric", "is_alpha", "is_alnum", "escape_html", "unescape_html", "url_encode", "url_decode", "base64_encode", "base64_decode", "regex_match", "regex_replace", "regex_find_all", "regex_split"},
+	"std/array":     {"len", "first", "last", "rest", "push", "reverse", "slice", "range", "sort", "sort_by", "uniq", "unique", "find", "contains", "sum", "avg", "mean", "median", "mode", "variance", "stddev", "percentile", "compact", "flatten", "any", "all", "zip", "chunk", "partition", "take", "drop", "pluck", "index_by", "random_choice", "shuffle", "sample"},
+	"array":         {"len", "first", "last", "rest", "push", "reverse", "slice", "range", "sort", "sort_by", "uniq", "unique", "find", "contains", "sum", "avg", "mean", "median", "mode", "variance", "stddev", "percentile", "compact", "flatten", "any", "all", "zip", "chunk", "partition", "take", "drop", "pluck", "index_by", "random_choice", "shuffle", "sample"},
+	"std/hash":      {"keys", "values", "has_key", "get", "merge", "delete_key", "pick", "omit", "entries", "from_entries", "group_by", "index_by", "deep_equal", "coalesce", "default"},
+	"hash":          {"keys", "values", "has_key", "get", "merge", "delete_key", "pick", "omit", "entries", "from_entries", "group_by", "index_by", "deep_equal", "coalesce", "default"},
+	"std/time":      {"time", "now", "time_ms", "now_iso", "now_format", "format_time", "parse_time", "date_with_format", "time_add", "time_sub", "time_diff", "start_of_day", "end_of_day", "unix_to_iso", "unix_ms_to_iso", "iso_to_unix", "iso_to_unix_ms", "parse_time_tz", "format_time_tz", "to_timezone", "start_of_week", "end_of_week", "start_of_month", "end_of_month", "add_months", "parse_duration", "format_duration", "is_weekend", "weekday", "month", "year"},
+	"time":          {"time", "now", "time_ms", "now_iso", "now_format", "format_time", "parse_time", "date_with_format", "time_add", "time_sub", "time_diff", "start_of_day", "end_of_day", "unix_to_iso", "unix_ms_to_iso", "iso_to_unix", "iso_to_unix_ms", "parse_time_tz", "format_time_tz", "to_timezone", "start_of_week", "end_of_week", "start_of_month", "end_of_month", "add_months", "parse_duration", "format_duration", "is_weekend", "weekday", "month", "year"},
+	"std/json":      {"read_json", "write_json", "json_parse", "json_stringify", "json_encode", "json_decode"},
+	"json":          {"read_json", "write_json", "json_parse", "json_stringify", "json_encode", "json_decode"},
+	"std/csv":       {"read_csv", "write_csv", "csv_decode", "csv_encode", "table_rows", "table_columns", "table_select", "table_filter", "table_map"},
+	"csv":           {"read_csv", "write_csv", "csv_decode", "csv_encode", "table_rows", "table_columns", "table_select", "table_filter", "table_map"},
+	"std/crypto":    {"md5", "sha256", "sha512", "hash", "hmac", "hmac_sha256", "hmac_sha512", "password_hash", "password_verify", "encrypt", "decrypt", "constant_time_eq", "base64_encode", "base64_decode", "hex_encode", "hex_decode", "random_bytes", "random_string"},
+	"crypto":        {"md5", "sha256", "sha512", "hash", "hmac", "hmac_sha256", "hmac_sha512", "password_hash", "password_verify", "encrypt", "decrypt", "constant_time_eq", "base64_encode", "base64_decode", "hex_encode", "hex_decode", "random_bytes", "random_string"},
+	"std/path":      {"basename", "dirname", "path_join", "path_base", "path_dir", "path_ext", "path_clean", "path_abs"},
+	"path":          {"basename", "dirname", "path_join", "path_base", "path_dir", "path_ext", "path_clean", "path_abs"},
+	"database":      {"db_connect", "db_query", "db_exec", "db_begin", "db_commit", "db_rollback", "db_tables", "db_close", "query", "lazy_query"},
+	"images":        {"image_load", "image_resize", "image_crop", "image_rotate", "image_convert", "image_save", "image_info", "image_render", "image_resize_file", "image_convert_file"},
+	"integrations":  {"http_request", "http_get", "http_post", "webhook", "smtp_send", "ftp_list", "ftp_get", "ftp_put", "sftp_list", "sftp_get", "sftp_put"},
+	"tools/files":   {"bulk_rename", "file_search", "file_locate", "file_move_plan", "file_copy_plan", "file_dedupe", "file_remove_plan", "file_organize", "file_checksum"},
+	"tools/archive": {"archive_compress", "archive_extract", "archive_list"},
+	"tools/images":  {"image_convert_batch", "image_optimize", "image_crop_file", "image_resize_file", "image_thumbnail", "image_info_file"},
+	"tools/office":  {"office_text", "office_read"},
+	"tools/secrets": {"secret_generate", "token_generate", "file_encrypt", "file_decrypt"},
+	"tools/media":   {"media_info", "media_convert", "ffmpeg_status", "ffmpeg_install"},
+	"tools/system":  {"system_info"},
+	"tools/network": {"dns_lookup", "tcp_check", "http_probe"},
+	"cryptoextra":   {"bcrypt_hash", "bcrypt_verify"},
+	"yaml":          {"config_load", "config_parse"},
+	"config/yaml":   {"config_load", "config_parse"},
+	"builtins":      {},
 }
 
 var knownStdModules = func() map[string]struct{} {
@@ -1352,18 +1381,56 @@ func signatureForFunctionLiteral(name string, fn *ast.FunctionLiteral) string {
 
 func CompletionItems(path, src, prefix string) []CompletionItem {
 	items := []CompletionItem{}
+	seen := map[string]struct{}{}
+	add := func(item CompletionItem) {
+		if item.Label == "" || !strings.HasPrefix(item.Label, prefix) {
+			return
+		}
+		key := item.Label + "\x00" + item.Kind
+		if _, ok := seen[key]; ok {
+			return
+		}
+		seen[key] = struct{}{}
+		items = append(items, item)
+	}
 	for _, name := range eval.BuiltinNames() {
-		if strings.HasPrefix(name, prefix) {
-			items = append(items, CompletionItem{Label: name, Kind: "builtin", Detail: eval.BuiltinHelpText(name)})
+		detail := RuntimeDocMarkdown(name)
+		if detail == "" {
+			detail = eval.BuiltinHelpText(name)
+		}
+		add(CompletionItem{Label: name, Kind: "builtin", Detail: detail})
+	}
+	for _, exports := range knownStdModuleExports {
+		for _, name := range exports {
+			if detail := RuntimeDocMarkdown(name); detail != "" {
+				add(CompletionItem{Label: name, Kind: "builtin", Detail: detail})
+			}
 		}
 	}
 	for _, sym := range VisibleSymbolsForSource(path, src) {
-		if strings.HasPrefix(sym.Name, prefix) {
-			items = append(items, CompletionItem{Label: sym.Name, Kind: sym.Kind, Detail: sym.Detail})
-		}
+		add(CompletionItem{Label: sym.Name, Kind: sym.Kind, Detail: sym.Detail})
 	}
-	sort.Slice(items, func(i, j int) bool { return items[i].Label < items[j].Label })
+	sort.Slice(items, func(i, j int) bool {
+		pi, pj := completionKindRank(items[i].Kind), completionKindRank(items[j].Kind)
+		if pi != pj {
+			return pi < pj
+		}
+		return items[i].Label < items[j].Label
+	})
 	return items
+}
+
+func completionKindRank(kind string) int {
+	switch kind {
+	case "variable", "function", "type", "test":
+		return 0
+	case "keyword":
+		return 1
+	case "builtin":
+		return 2
+	default:
+		return 3
+	}
 }
 
 func HoverAt(path, src string, line, col int) HoverInfo {
@@ -1378,7 +1445,7 @@ func HoverAt(path, src string, line, col int) HoverInfo {
 		return HoverInfo{Name: word, Kind: "builtin", Detail: detail, Line: line, Column: col}
 	}
 	if eval.HasBuiltin(word) {
-		return HoverInfo{Name: word, Kind: "builtin", Detail: eval.BuiltinHelpText(word), Line: line, Column: col}
+		return HoverInfo{Name: word, Kind: "builtin", Detail: RuntimeDocMarkdown(word), Line: line, Column: col}
 	}
 	for _, sym := range VisibleSymbolsForSource(path, src) {
 		if sym.Name == word {

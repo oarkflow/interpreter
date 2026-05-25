@@ -185,6 +185,7 @@ var replCommandCatalog = []replCommandInfo{
 	{":load", ":load <file>", "load and execute an SPL script", "workspace"},
 	{":reload", ":reload [file]", "clear module cache or reload a module", "workspace"},
 	{":install", ":install <alias> <path>", "add dependency to spl.mod and refresh lock", "workspace"},
+	{":tools", ":tools", "show daily tech chore modules and preview-first tool examples", "discover"},
 	{":config", ":config ...", "view or update REPL runtime/security config", "runtime"},
 	{":ask", ":ask <prompt>", "ask configured assistant provider", "assistant"},
 	{":explain", ":explain <code|error>", "explain code or an error with configured assistant", "assistant"},
@@ -597,6 +598,7 @@ func ReplTipsText() string {
 		"Press Tab after a partial name for completion; press Tab again to list matches.",
 		"Type object. then Tab to see fields and methods for a runtime value.",
 		"Type a builtin call like read_json( to see a signature hint.",
+		"Daily chores live in tools/* modules; start with import \"tools/files\" and keep apply false until the preview plan looks right.",
 		"Use :checkpoint name, :restore name, and :replay for session workflows.",
 		"Use :diagnostics, :symbols, :def, :refs, and :format for editor-like tooling.",
 		"Use :metrics and :events after running code to inspect runtime behavior.",
@@ -610,6 +612,8 @@ func ReplExamplesText() string {
 		"testdata/examples_runtime_workspace.spl",
 		"testdata/examples_session_replay.spl",
 		"testdata/examples_json_csv_values.spl",
+		"testdata/examples_tools_files.spl",
+		"testdata/examples_tools_media.spl",
 		"testdata/examples_resource_limits.spl",
 		"testdata/examples_streaming.spl",
 		"testdata/pattern_matching.spl",
@@ -623,8 +627,27 @@ func ReplExamplesText() string {
 	}
 	b.WriteString("\nFrom the shell:\n")
 	b.WriteString("  go run ./cmd/interpreter testdata/examples_json_csv_values.spl\n")
+	b.WriteString("  go run ./cmd/interpreter-full testdata/examples_tools_media.spl\n")
 	b.WriteString("  go run ./cmd/spltool session run --json --checkpoint baseline testdata/examples_runtime_workspace.spl")
 	return b.String()
+}
+
+func ReplToolsText() string {
+	return strings.Join([]string{
+		"Daily tech chore modules:",
+		"  tools/files    bulk_rename, file_search, file_organize, file_checksum, file_remove_plan",
+		"  tools/archive  archive_compress, archive_extract, archive_list",
+		"  tools/images   image_convert_batch, image_info_file, image_resize_file, image_thumbnail, image_crop_file",
+		"  tools/office   office_text, office_read",
+		"  tools/secrets  secret_generate, token_generate, file_encrypt, file_decrypt",
+		"  tools/media    media_info, media_convert, ffmpeg_status, ffmpeg_install",
+		"",
+		"Preview-first examples:",
+		"  import \"tools/files\";",
+		"  bulk_rename(\"photos\", {\"match\": \"*.jpg\", \"template\": \"{date}_{seq}.{ext}\", \"apply\": false});",
+		"  import \"tools/media\";",
+		"  media_convert(\"input.mov\", \"output.mp4\", {\"install\": true, \"apply\": false});",
+	}, "\n")
 }
 
 func ReplPalette(query string, editor *ReplEditor, env *object.Environment) string {
@@ -1458,6 +1481,7 @@ func HandleReplMetaCommand(line string, editor *ReplEditor, env *object.Environm
 		ReplPrintLine("- :commands [query] list/search all REPL commands")
 		ReplPrintLine("- :palette <query> search commands/builtins/symbols")
 		ReplPrintLine("- :examples   show runnable examples")
+		ReplPrintLine("- :tools      show daily tech chore modules and preview-first examples")
 		ReplPrintLine("- :hint <expr> show inline documentation")
 		ReplPrintLine("- :builtins   list all available builtins")
 		ReplPrintLine("- :search X   search builtins/keywords by text")
@@ -1507,6 +1531,10 @@ func HandleReplMetaCommand(line string, editor *ReplEditor, env *object.Environm
 	}
 	if trimmed == ":examples" {
 		replPrintBlock(ReplExamplesText())
+		return true
+	}
+	if trimmed == ":tools" {
+		replPrintBlock(ReplToolsText())
 		return true
 	}
 	if trimmed == ":commands" || strings.HasPrefix(trimmed, ":commands ") {
@@ -3048,6 +3076,8 @@ func ReplBuiltinDetail(name string) string {
 	case help == "":
 		return doc
 	case doc == "":
+		return help
+	case !strings.Contains(help, "(...) builtin function"):
 		return help
 	default:
 		return help + " " + doc

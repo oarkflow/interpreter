@@ -14,6 +14,7 @@ import (
 	"unicode"
 
 	"github.com/oarkflow/interpreter/pkg/ast"
+	"github.com/oarkflow/interpreter/pkg/eval"
 	"github.com/oarkflow/interpreter/pkg/lexer"
 	"github.com/oarkflow/interpreter/pkg/parser"
 )
@@ -126,6 +127,447 @@ var splRuntimeDocs = map[string]RuntimeDoc{
 	"listen":            {"listen", "web builtin", "listen(server, port_or_addr)", "Starts the HTTP server and blocks until it shuts down.", "Server status", "listen(app, 3000);"},
 	"listen_async":      {"listen_async", "web builtin", "listen_async(server, port_or_addr)", "Starts the HTTP server in the background so the script can continue running.", "Server status/future", "let running = listen_async(app, 3000);"},
 	"shutdown":          {"shutdown", "web builtin", "shutdown(server)", "Stops a running SPL web server and releases registered runtime cleanup resources.", "Boolean/status", "shutdown(app);"},
+}
+
+type StdModuleDoc struct {
+	Name        string
+	Category    string
+	Purpose     string
+	Exports     []string
+	Example     string
+	Recommended bool
+}
+
+var splStdModuleDocs = map[string]StdModuleDoc{
+	"std/core":      {"std/core", "core", "Groups universal interpreter helpers for formatting, length/type inspection, interpolation, and builtin discovery.", []string{"help", "sprintf", "printf", "interpolate", "len", "type"}, "import \"std/core\" as core;\nprint core.len(items);", true},
+	"core":          {"core", "core", "Short alias for std/core.", []string{"help", "sprintf", "printf", "interpolate", "len", "type"}, "import \"core\" as core;\nprint core.type(value);", false},
+	"std/math":      {"std/math", "numeric computing", "Groups numeric, trigonometry, range-mapping, and statistics helpers for scripts that transform measurements, scores, prices, or other number-heavy data.", []string{"round_to", "median", "stddev", "percentile", "gcd", "lerp"}, "import \"std/math\" as math;\nlet p95 = math.percentile(latencies, 95);", true},
+	"math":          {"math", "numeric computing", "Short alias for std/math. Useful in quick scripts; prefer std/math in shared code for clarity.", []string{"round_to", "median", "stddev", "percentile", "gcd", "lerp"}, "import \"math\" as math;\nprint math.gcd(18, 24);", false},
+	"std/random":    {"std/random", "random data", "Collects pseudo-random numbers, deterministic seeding, sampling, shuffling, and secure random byte/string helpers.", []string{"random", "seed_random", "random_float", "random_choice", "shuffle", "sample"}, "import \"std/random\" as random;\nlet picked = random.random_choice(items);", true},
+	"random":        {"random", "random data", "Short alias for std/random.", []string{"random_float", "random_choice", "shuffle", "sample"}, "import \"random\" as random;\nlet hand = random.sample(deck, 5);", false},
+	"std/string":    {"std/string", "text processing", "Collects text cleanup, casing, regex, encoding, URL, HTML, and string predicate helpers.", []string{"trim", "slug", "words", "reverse_string", "is_blank", "url_encode"}, "import \"std/string\" as str;\nlet key = str.slug(title);", true},
+	"string":        {"string", "text processing", "Short alias for std/string.", []string{"trim", "slug", "words", "reverse_string", "is_blank"}, "import \"string\" as str;\nprint str.reverse_string(\"abc\");", false},
+	"std/array":     {"std/array", "array/data transforms", "Groups array selection, ordering, statistics, grouping-adjacent helpers, and random sampling for data-processing scripts.", []string{"unique", "sort_by", "pluck", "index_by", "take", "drop"}, "import \"std/array\" as array;\nlet names = array.pluck(users, \"name\");", true},
+	"array":         {"array", "array/data transforms", "Short alias for std/array.", []string{"unique", "sort_by", "pluck", "take", "drop"}, "import \"array\" as array;\nlet top = array.take(scores, 10);", false},
+	"std/hash":      {"std/hash", "hash/object transforms", "Groups object/hash key selection, lookup, conversion, grouping, and deep comparison helpers.", []string{"get", "pick", "omit", "entries", "from_entries", "deep_equal"}, "import \"std/hash\" as hash;\nlet public = hash.omit(user, [\"password\"]);", true},
+	"hash":          {"hash", "hash/object transforms", "Short alias for std/hash.", []string{"get", "pick", "omit", "entries"}, "import \"hash\" as hash;\nprint hash.get(config, \"port\", 3000);", false},
+	"std/time":      {"std/time", "time/date handling", "Groups Unix timestamp, ISO, timezone, calendar boundary, duration, and date-part helpers.", []string{"format_time_tz", "parse_duration", "start_of_month", "end_of_week", "weekday", "year"}, "import \"std/time\" as time;\nlet ms = time.parse_duration(\"1h30m\");", true},
+	"time":          {"time", "time/date handling", "Short alias for std/time.", []string{"now", "format_time", "parse_duration", "year"}, "import \"time\" as time;\nprint time.year(time.now());", false},
+	"std/json":      {"std/json", "JSON data", "Groups JSON file IO and text encode/decode helpers for API payloads and config-shaped data.", []string{"read_json", "write_json", "json_parse", "json_stringify"}, "import \"std/json\" as json;\nlet payload = json.json_parse(raw);", true},
+	"json":          {"json", "JSON data", "Short alias for std/json.", []string{"json_parse", "json_stringify"}, "import \"json\" as json;\nprint json.json_stringify({ ok: true });", false},
+	"std/csv":       {"std/csv", "CSV/table data", "Groups CSV file IO, CSV text encode/decode, and table row/column transformation helpers.", []string{"read_csv", "csv_decode", "table_rows", "table_select", "table_filter"}, "import \"std/csv\" as csv;\nlet rows = csv.table_rows(csv.read_csv(\"people.csv\"));", true},
+	"csv":           {"csv", "CSV/table data", "Short alias for std/csv.", []string{"read_csv", "csv_decode", "table_rows"}, "import \"csv\" as csv;\nlet table = csv.csv_decode(raw);", false},
+	"std/crypto":    {"std/crypto", "crypto/encoding", "Groups hashing, HMAC, password hashing, authenticated encryption, constant-time comparison, and byte encoders.", []string{"sha256", "hmac_sha256", "password_hash", "constant_time_eq", "base64_encode"}, "import \"std/crypto\" as crypto;\nlet digest = crypto.sha256(body);", true},
+	"crypto":        {"crypto", "crypto/encoding", "Short alias for std/crypto.", []string{"sha256", "hmac_sha256", "base64_encode"}, "import \"crypto\" as crypto;\nprint crypto.sha256(\"hello\");", false},
+	"std/path":      {"std/path", "path utilities", "Groups path joining, basename/dirname aliases, extension lookup, cleaning, and absolute path conversion.", []string{"path_join", "path_base", "path_dir", "path_ext", "path_clean", "path_abs"}, "import \"std/path\" as path;\nlet out = path.path_join(\"dist\", \"app.json\");", true},
+	"path":          {"path", "path utilities", "Short alias for std/path.", []string{"path_join", "path_ext", "path_base"}, "import \"path\" as path;\nprint path.path_ext(\"app.spl\");", false},
+	"tools/files":   {"tools/files", "daily file chores", "Groups preview-first file operations such as searching, bulk renaming, organizing, checksums, moving, copying, removal, and duplicate detection.", []string{"bulk_rename", "file_search", "file_organize", "file_checksum", "file_remove_plan"}, "import \"tools/files\" as files;\nlet plan = files.bulk_rename(\"testdata\", {\"match\": \"*.spl\", \"apply\": false});", true},
+	"tools/archive": {"tools/archive", "archives", "Groups archive listing, compression, and extraction helpers. Mutating operations preview by default.", []string{"archive_compress", "archive_extract", "archive_list"}, "import \"tools/archive\" as archive;\nlet plan = archive.archive_compress(\"docs\", \"backup.zip\", {\"format\": \"zip\", \"apply\": false});", true},
+	"tools/images":  {"tools/images", "image chores", "Groups batch image conversion, optimization previews, file metadata, resize, thumbnail, and crop helpers for photographer and asset workflows.", []string{"image_convert_batch", "image_info_file", "image_resize_file", "image_thumbnail", "image_crop_file"}, "import \"tools/images\" as images;\nlet plan = images.image_convert_batch(\"photos\", \"web\", {\"to\": \"png\", \"apply\": false});", true},
+	"tools/office":  {"tools/office", "office files", "Groups safe office-like text and structured extraction helpers for plain text, Markdown, CSV, JSON, DOCX, and XLSX files.", []string{"office_text", "office_read"}, "import \"tools/office\" as office;\nprint office.office_text(\"README.md\");", true},
+	"tools/secrets": {"tools/secrets", "secret chores", "Groups secret generation, token generation, and preview-first file encryption/decryption helpers.", []string{"secret_generate", "token_generate", "file_encrypt", "file_decrypt"}, "import \"tools/secrets\" as secrets;\nlet token = secrets.token_generate(32);", true},
+	"tools/media":   {"tools/media", "audio/video chores", "Groups ffmpeg-backed media probing, conversion, status, and install helpers. Conversion previews by default.", []string{"media_info", "media_convert", "ffmpeg_status", "ffmpeg_install"}, "import \"tools/media\" as media;\nprint media.ffmpeg_status();", true},
+	"tools/system":  {"tools/system", "system inspection", "Groups safe host/runtime inspection helpers gated by the system capability.", []string{"system_info"}, "import \"tools/system\" as system;\nprint system.system_info();", true},
+	"tools/network": {"tools/network", "network checks", "Groups DNS, TCP, and HTTP probe helpers gated by network policy.", []string{"dns_lookup", "tcp_check", "http_probe"}, "import \"tools/network\" as net;\nprint net.dns_lookup(\"example.com\");", true},
+}
+
+var builtinSignatureHints = map[string]string{
+	"abs":                 "abs(n)",
+	"acos":                "acos(n)",
+	"all":                 "all(array)",
+	"any":                 "any(array)",
+	"asin":                "asin(n)",
+	"atan":                "atan(n)",
+	"atan2":               "atan2(y, x)",
+	"avg":                 "avg(array)",
+	"ceil":                "ceil(n)",
+	"chunk":               "chunk(array, size)",
+	"clamp":               "clamp(value, min, max)",
+	"coalesce":            "coalesce(...values)",
+	"compact":             "compact(array)",
+	"contains":            "contains(string_or_array, needle)",
+	"cos":                 "cos(n)",
+	"cosh":                "cosh(n)",
+	"count_substr":        "count_substr(s, substr)",
+	"default":             "default(value, fallback)",
+	"delete_key":          "delete_key(hash, key)",
+	"ends_with":           "ends_with(s, suffix)",
+	"find":                "find(array, value)",
+	"first":               "first(array)",
+	"flatten":             "flatten(array)",
+	"floor":               "floor(n)",
+	"get":                 "get(hash, key[, default])",
+	"group_by":            "group_by(array, key)",
+	"has_key":             "has_key(hash, key)",
+	"hypot":               "hypot(a, b)",
+	"index_of":            "index_of(s, substr)",
+	"is_even":             "is_even(n)",
+	"is_inf":              "is_inf(n)",
+	"is_nan":              "is_nan(n)",
+	"is_odd":              "is_odd(n)",
+	"join":                "join(array, separator)",
+	"keys":                "keys(hash)",
+	"last":                "last(array)",
+	"len":                 "len(value)",
+	"log":                 "log(n)",
+	"log10":               "log10(n)",
+	"log2":                "log2(n)",
+	"lower":               "lower(s)",
+	"max":                 "max(...numbers)",
+	"merge":               "merge(left, right)",
+	"min":                 "min(...numbers)",
+	"partition":           "partition(array, key, value)",
+	"pow":                 "pow(base, exponent)",
+	"push":                "push(array, value)",
+	"random":              "random([max])",
+	"random_range":        "random_range(min, max)",
+	"range":               "range(end) or range(start, end[, step])",
+	"reduce":              "reduce(array, operator)",
+	"repeat":              "repeat(s, count)",
+	"replace":             "replace(s, old, new)",
+	"rest":                "rest(array)",
+	"reverse":             "reverse(array)",
+	"round":               "round(n)",
+	"sin":                 "sin(n)",
+	"sinh":                "sinh(n)",
+	"slice":               "slice(array, start, end)",
+	"sort":                "sort(array)",
+	"split":               "split(s, separator)",
+	"split_lines":         "split_lines(s)",
+	"sqrt":                "sqrt(n)",
+	"starts_with":         "starts_with(s, prefix)",
+	"substring":           "substring(s, start, end)",
+	"sum":                 "sum(array)",
+	"tan":                 "tan(n)",
+	"tanh":                "tanh(n)",
+	"to_degrees":          "to_degrees(radians)",
+	"to_radians":          "to_radians(degrees)",
+	"trim":                "trim(s)",
+	"trim_prefix":         "trim_prefix(s, prefix)",
+	"trim_suffix":         "trim_suffix(s, suffix)",
+	"uniq":                "uniq(array)",
+	"upper":               "upper(s)",
+	"values":              "values(hash)",
+	"zip":                 "zip(left, right)",
+	"bulk_rename":         "bulk_rename(dir[, opts])",
+	"file_search":         "file_search(root[, opts])",
+	"file_locate":         "file_locate(root[, opts])",
+	"file_move_plan":      "file_move_plan(src, dst[, opts])",
+	"file_copy_plan":      "file_copy_plan(src, dst[, opts])",
+	"file_dedupe":         "file_dedupe(root[, opts])",
+	"archive_compress":    "archive_compress(src, dst[, opts])",
+	"archive_extract":     "archive_extract(src, dst[, opts])",
+	"archive_list":        "archive_list(path)",
+	"image_convert_batch": "image_convert_batch(src_dir, dst_dir[, opts])",
+	"image_optimize":      "image_optimize(src_dir, dst_dir[, opts])",
+	"image_crop_file":     "image_crop_file(src, dst[, opts])",
+	"office_text":         "office_text(path)",
+	"secret_generate":     "secret_generate([length][, alphabet])",
+	"token_generate":      "token_generate([bytes])",
+	"file_encrypt":        "file_encrypt(src, dst, passphrase[, opts])",
+	"file_decrypt":        "file_decrypt(src, dst, passphrase[, opts])",
+	"media_info":          "media_info(path)",
+	"media_convert":       "media_convert(src, dst[, opts])",
+	"ffmpeg_status":       "ffmpeg_status()",
+	"ffmpeg_install":      "ffmpeg_install([opts])",
+	"system_info":         "system_info()",
+	"dns_lookup":          "dns_lookup(host)",
+	"tcp_check":           "tcp_check(address[, timeout_ms])",
+	"http_probe":          "http_probe(url[, timeout_ms])",
+}
+
+var builtinPurposeHints = map[string]string{
+	"abs":                 "Returns the absolute value of an integer or float.",
+	"acos":                "Returns the arccosine of a number in radians.",
+	"all":                 "Returns true when every element in an array is truthy. Empty arrays return true.",
+	"any":                 "Returns true when at least one element in an array is truthy.",
+	"asin":                "Returns the arcsine of a number in radians.",
+	"atan":                "Returns the arctangent of a number in radians.",
+	"atan2":               "Returns the arctangent of y/x using both coordinates to determine the quadrant.",
+	"avg":                 "Returns the arithmetic average of numeric array values.",
+	"ceil":                "Rounds a float up to the nearest integer.",
+	"chunk":               "Splits an array into sub-arrays with at most size elements each.",
+	"clamp":               "Constrains a numeric value to an inclusive minimum and maximum. Values below min become min; values above max become max.",
+	"coalesce":            "Returns the first argument that is not null, or null when every argument is null.",
+	"compact":             "Returns a copy of an array with null values removed.",
+	"contains":            "For strings, reports whether the substring exists. For arrays, reports whether an equal inspected value exists.",
+	"cos":                 "Returns the cosine of a number in radians.",
+	"cosh":                "Returns the hyperbolic cosine of a number.",
+	"count_substr":        "Counts non-overlapping occurrences of a substring in a string.",
+	"default":             "Returns fallback when value is null; otherwise returns value unchanged.",
+	"delete_key":          "Returns a copy of a hash without the requested key.",
+	"ends_with":           "Reports whether a string ends with the given suffix.",
+	"find":                "Returns the first array element equal to value, or null when no element matches.",
+	"first":               "Returns the first array element, or null for an empty array.",
+	"flatten":             "Flattens one level of nested arrays into a new array.",
+	"floor":               "Rounds a float down to the nearest integer.",
+	"get":                 "Looks up a hash key. When the key is missing, returns the optional default or null.",
+	"group_by":            "Groups an array of hashes by the value stored at key, returning a hash of arrays.",
+	"has_key":             "Reports whether a hash contains the requested key.",
+	"hypot":               "Returns sqrt(a*a + b*b) without intermediate overflow for large float values.",
+	"index_of":            "Returns the first byte index of substr in s, or -1 when missing.",
+	"is_even":             "Reports whether an integer is divisible by 2.",
+	"is_inf":              "Reports whether a numeric value is positive or negative infinity.",
+	"is_nan":              "Reports whether a numeric value is NaN.",
+	"is_odd":              "Reports whether an integer is not divisible by 2.",
+	"join":                "Converts array elements to strings and joins them with separator.",
+	"keys":                "Returns the keys of a hash as an array.",
+	"last":                "Returns the last array element, or null for an empty array.",
+	"len":                 "Returns the number of bytes in a string, elements in an array, or pairs in a hash.",
+	"log":                 "Returns the natural logarithm of a number.",
+	"log10":               "Returns the base-10 logarithm of a number.",
+	"log2":                "Returns the base-2 logarithm of a number.",
+	"lower":               "Returns a lower-case copy of a string.",
+	"max":                 "Returns the largest numeric argument.",
+	"merge":               "Returns a hash containing all pairs from left and right. Values from right replace duplicate keys.",
+	"min":                 "Returns the smallest numeric argument.",
+	"partition":           "Splits an array of hashes into matching and non-matching groups based on key == value.",
+	"pow":                 "Raises base to exponent. Integer non-negative exponent cases preserve integer results when exact.",
+	"push":                "Returns a copy of an array with value appended.",
+	"random":              "Returns a pseudo-random integer from 0 up to max-1. Without max, uses a large integer range.",
+	"random_range":        "Returns a pseudo-random integer from min up to max-1.",
+	"range":               "Builds an integer sequence suitable for loops, generated test data, and array operations.",
+	"reduce":              "Reduces an array with a named built-in operation such as sum or concat.",
+	"repeat":              "Repeats a string count times.",
+	"replace":             "Replaces every occurrence of old with new in a string.",
+	"rest":                "Returns all array elements except the first.",
+	"reverse":             "Returns a copy of an array with elements in reverse order.",
+	"round":               "Rounds a number to the nearest integer.",
+	"sin":                 "Returns the sine of a number in radians.",
+	"sinh":                "Returns the hyperbolic sine of a number.",
+	"slice":               "Returns a copy of array elements in the half-open range start..end.",
+	"sort":                "Returns a sorted copy of a homogeneous integer or string array.",
+	"split":               "Splits a string around every occurrence of separator.",
+	"split_lines":         "Splits a string into lines, normalizing CRLF to LF first.",
+	"sqrt":                "Returns the square root. Integer inputs preserve the legacy truncated integer result; float inputs return float precision.",
+	"starts_with":         "Reports whether a string starts with the given prefix.",
+	"substring":           "Returns the rune-based substring in the half-open range start..end.",
+	"sum":                 "Adds numeric array values.",
+	"tan":                 "Returns the tangent of a number in radians.",
+	"tanh":                "Returns the hyperbolic tangent of a number.",
+	"to_degrees":          "Converts radians to degrees.",
+	"to_radians":          "Converts degrees to radians.",
+	"trim":                "Removes leading and trailing Unicode whitespace.",
+	"trim_prefix":         "Removes prefix from the start of a string when present.",
+	"trim_suffix":         "Removes suffix from the end of a string when present.",
+	"uniq":                "Returns the first occurrence of each distinct array value.",
+	"upper":               "Returns an upper-case copy of a string.",
+	"values":              "Returns the values of a hash as an array.",
+	"zip":                 "Pairs elements from two arrays up to the shorter length.",
+	"bulk_rename":         "Builds a preview or apply plan for renaming files in a directory using a glob match and template placeholders.",
+	"file_search":         "Searches files by glob pattern and optional filename substring within the allowed filesystem root.",
+	"file_locate":         "Alias for file_search when a script reads more naturally as a locate operation.",
+	"file_move_plan":      "Builds a preview or apply plan for moving one file to another path.",
+	"file_copy_plan":      "Builds a preview or apply plan for copying one file to another path.",
+	"file_dedupe":         "Scans files and reports duplicate-content candidates without deleting anything.",
+	"archive_compress":    "Builds a preview or apply plan for creating a zip, tar, or gzip archive.",
+	"archive_extract":     "Builds a preview or apply plan for extracting a supported archive safely.",
+	"archive_list":        "Lists entries in a supported archive without extracting it.",
+	"image_convert_batch": "Builds a preview or apply plan for converting matching image files into an output directory.",
+	"image_optimize":      "Re-encodes images through the batch conversion path so users can preview optimized outputs.",
+	"image_crop_file":     "Builds a preview or apply plan for cropping a single image file.",
+	"office_text":         "Extracts text from supported office-like/plain data files.",
+	"secret_generate":     "Generates a masked secret value suitable for passwords or one-off credentials.",
+	"token_generate":      "Generates a masked URL-safe random token.",
+	"file_encrypt":        "Builds a preview or apply plan for AES-GCM file encryption.",
+	"file_decrypt":        "Builds a preview or apply plan for AES-GCM file decryption.",
+	"media_info":          "Returns media metadata using ffprobe when available, with a Go-native fallback for basic image metadata.",
+	"media_convert":       "Builds a preview or apply plan for converting audio/video with ffmpeg, optionally installing ffmpeg first.",
+	"ffmpeg_status":       "Reports ffmpeg and ffprobe availability plus the detected installer command.",
+	"ffmpeg_install":      "Builds a preview or apply plan for installing ffmpeg with the detected OS package manager.",
+	"system_info":         "Returns safe host/runtime metadata when system capability is allowed.",
+	"dns_lookup":          "Resolves host addresses under the active network policy.",
+	"tcp_check":           "Checks TCP connectivity to an address under the active network policy.",
+	"http_probe":          "Sends an HTTP HEAD probe under the active network policy.",
+}
+
+var builtinReturnHints = map[string]string{
+	"abs":                 "Integer or float",
+	"acos":                "Float",
+	"all":                 "Boolean",
+	"any":                 "Boolean",
+	"asin":                "Float",
+	"atan":                "Float",
+	"atan2":               "Float",
+	"avg":                 "Float",
+	"ceil":                "Integer",
+	"chunk":               "Array",
+	"clamp":               "Integer",
+	"coalesce":            "First non-null value, or null",
+	"compact":             "Array",
+	"contains":            "Boolean",
+	"cos":                 "Float",
+	"cosh":                "Float",
+	"count_substr":        "Integer",
+	"default":             "Original value or fallback",
+	"delete_key":          "Hash",
+	"ends_with":           "Boolean",
+	"find":                "Matching value or null",
+	"first":               "First value or null",
+	"flatten":             "Array",
+	"floor":               "Integer",
+	"get":                 "Value, default, or null",
+	"group_by":            "Hash of arrays",
+	"has_key":             "Boolean",
+	"hypot":               "Float",
+	"index_of":            "Integer",
+	"is_even":             "Boolean",
+	"is_inf":              "Boolean",
+	"is_nan":              "Boolean",
+	"is_odd":              "Boolean",
+	"join":                "String",
+	"keys":                "Array",
+	"last":                "Last value or null",
+	"len":                 "Integer",
+	"log":                 "Float",
+	"log10":               "Float",
+	"log2":                "Float",
+	"lower":               "String",
+	"max":                 "Integer or float",
+	"merge":               "Hash",
+	"min":                 "Integer or float",
+	"partition":           "Array containing [matching, rest]",
+	"pow":                 "Integer or float",
+	"push":                "Array",
+	"random":              "Integer",
+	"random_range":        "Integer",
+	"range":               "Array of integers",
+	"reduce":              "Reduced value",
+	"repeat":              "String",
+	"replace":             "String",
+	"rest":                "Array",
+	"reverse":             "Array",
+	"round":               "Integer",
+	"sin":                 "Float",
+	"sinh":                "Float",
+	"slice":               "Array",
+	"sort":                "Array",
+	"split":               "Array of strings",
+	"split_lines":         "Array of strings",
+	"sqrt":                "Integer or float",
+	"starts_with":         "Boolean",
+	"substring":           "String",
+	"sum":                 "Integer or float",
+	"tan":                 "Float",
+	"tanh":                "Float",
+	"to_degrees":          "Float",
+	"to_radians":          "Float",
+	"trim":                "String",
+	"trim_prefix":         "String",
+	"trim_suffix":         "String",
+	"uniq":                "Array",
+	"upper":               "String",
+	"values":              "Array",
+	"zip":                 "Array of pairs",
+	"bulk_rename":         "Array of operation plans",
+	"file_search":         "Array of file metadata hashes",
+	"file_locate":         "Array of file metadata hashes",
+	"file_move_plan":      "Operation plan hash",
+	"file_copy_plan":      "Operation plan hash",
+	"file_dedupe":         "Array of operation plans",
+	"archive_compress":    "Operation plan hash",
+	"archive_extract":     "Operation plan hash",
+	"archive_list":        "Array of archive entry hashes",
+	"image_convert_batch": "Array of operation plans",
+	"image_optimize":      "Array of operation plans",
+	"image_crop_file":     "Operation plan hash",
+	"office_text":         "String",
+	"secret_generate":     "SECRET",
+	"token_generate":      "SECRET",
+	"file_encrypt":        "Operation plan hash",
+	"file_decrypt":        "Operation plan hash",
+	"media_info":          "Hash",
+	"media_convert":       "Operation plan hash",
+	"ffmpeg_status":       "Hash",
+	"ffmpeg_install":      "Operation plan hash",
+	"system_info":         "Hash",
+	"dns_lookup":          "Array of strings",
+	"tcp_check":           "Hash",
+	"http_probe":          "Hash",
+}
+
+var builtinExampleHints = map[string]string{
+	"clamp":               "let capped = clamp(score, 0, 100);",
+	"len":                 "print len([\"a\", \"b\", \"c\"]);",
+	"bulk_rename":         "let plan = bulk_rename(\"testdata\", {\"match\": \"*.spl\", \"template\": \"{date}_{seq}.{ext}\", \"apply\": false});",
+	"archive_compress":    "let plan = archive_compress(\"docs\", \"backup.zip\", {\"format\": \"zip\", \"apply\": false});",
+	"image_convert_batch": "let plan = image_convert_batch(\"photos\", \"web\", {\"to\": \"png\", \"apply\": false});",
+	"secret_generate":     "let password = secret_generate(32);",
+	"media_convert":       "let plan = media_convert(\"input.mov\", \"output.mp4\", {\"codec\": \"libx264\", \"apply\": false});",
+	"ffmpeg_install":      "let install = ffmpeg_install({\"apply\": false});",
+	"ffmpeg_status":       "print ffmpeg_status();",
+}
+
+func init() {
+	for name, doc := range enhancementRuntimeDocs {
+		splRuntimeDocs[name] = doc
+	}
+}
+
+var enhancementRuntimeDocs = map[string]RuntimeDoc{
+	"cbrt":            {"cbrt", "math builtin", "cbrt(n)", "Returns the cube root of a number.", "Float", "print cbrt(27);"},
+	"mod":             {"mod", "math builtin", "mod(a, b)", "Returns numeric remainder. Integer inputs return an integer; float inputs use floating-point modulo.", "Integer or float", "print mod(10, 3);"},
+	"sign":            {"sign", "math builtin", "sign(n)", "Classifies a number as negative, zero, or positive.", "-1, 0, or 1", "print sign(-42);"},
+	"trunc":           {"trunc", "math builtin", "trunc(n)", "Removes the fractional part of a number without rounding.", "Integer or float", "print trunc(4.9);"},
+	"round_to":        {"round_to", "math builtin", "round_to(n, decimals)", "Rounds a number to a fixed number of decimal places.", "Float", "print round_to(3.14159, 2);"},
+	"lerp":            {"lerp", "math builtin", "lerp(a, b, t)", "Interpolates between a and b where t is usually between 0 and 1.", "Float", "print lerp(10, 20, 0.25);"},
+	"normalize":       {"normalize", "math builtin", "normalize(value, min, max)", "Maps a value inside a range to a 0..1 position.", "Float", "print normalize(75, 50, 100);"},
+	"map_range":       {"map_range", "math builtin", "map_range(value, in_min, in_max, out_min, out_max)", "Maps a value from one numeric range into another.", "Float", "print map_range(score, 0, 100, 1, 5);"},
+	"percent":         {"percent", "math builtin", "percent(value, total)", "Returns value as a percentage of total.", "Float", "print percent(25, 200);"},
+	"factorial":       {"factorial", "math builtin", "factorial(n)", "Returns n! for non-negative integers.", "Integer", "print factorial(5);"},
+	"gcd":             {"gcd", "math builtin", "gcd(a, b)", "Returns the greatest common divisor of two integers.", "Integer", "print gcd(18, 24);"},
+	"lcm":             {"lcm", "math builtin", "lcm(a, b)", "Returns the least common multiple of two integers.", "Integer", "print lcm(6, 8);"},
+	"is_finite":       {"is_finite", "math predicate", "is_finite(n)", "Reports whether a number is neither NaN nor infinite.", "Boolean", "if is_finite(value) { print value; }"},
+	"is_integer":      {"is_integer", "math predicate", "is_integer(n)", "Reports whether a numeric value has no fractional part.", "Boolean", "print is_integer(10.0);"},
+	"is_prime":        {"is_prime", "math predicate", "is_prime(n)", "Reports whether an integer is prime.", "Boolean", "print is_prime(17);"},
+	"random_float":    {"random_float", "random builtin", "random_float()", "Returns a pseudo-random float in the half-open range [0, 1).", "Float", "print random_float();"},
+	"random_choice":   {"random_choice", "random builtin", "random_choice(array)", "Returns one random element from an array, or null for an empty array.", "Any value", "let winner = random_choice(users);"},
+	"shuffle":         {"shuffle", "random builtin", "shuffle(array)", "Returns a shuffled copy of an array without mutating the input.", "Array", "let shuffled = shuffle(deck);"},
+	"sample":          {"sample", "random builtin", "sample(array, count)", "Returns up to count random elements from an array without replacement.", "Array", "let hand = sample(deck, 5);"},
+	"mean":            {"mean", "statistics builtin", "mean(array)", "Returns the arithmetic mean of numeric array values. Alias-style companion to avg.", "Float", "print mean([2, 4, 6]);"},
+	"median":          {"median", "statistics builtin", "median(array)", "Returns the middle numeric value after sorting, or the average of the two middle values.", "Number or null", "print median([9, 1, 5]);"},
+	"mode":            {"mode", "statistics builtin", "mode(array)", "Returns the most frequently occurring value in an array.", "Any value or null", "print mode([\"a\", \"b\", \"a\"]);"},
+	"variance":        {"variance", "statistics builtin", "variance(array)", "Returns population variance for numeric array values.", "Float", "print variance(scores);"},
+	"stddev":          {"stddev", "statistics builtin", "stddev(array)", "Returns population standard deviation for numeric array values.", "Float", "print round_to(stddev(scores), 2);"},
+	"percentile":      {"percentile", "statistics builtin", "percentile(array, p)", "Returns the pth percentile for numeric array values, where p is 0..100.", "Float or null", "let p95 = percentile(latencies, 95);"},
+	"unique":          {"unique", "array builtin", "unique(array)", "Returns the first occurrence of each distinct value. This is the clear-name alias of uniq.", "Array", "print unique([1, 1, 2]);"},
+	"sort_by":         {"sort_by", "array builtin", "sort_by(array, key)", "Sorts an array of hashes by the inspected value at key.", "Array", "let ordered = sort_by(users, \"age\");"},
+	"take":            {"take", "array builtin", "take(array, n)", "Returns the first n elements of an array.", "Array", "let top = take(scores, 10);"},
+	"drop":            {"drop", "array builtin", "drop(array, n)", "Skips the first n elements of an array.", "Array", "let rest = drop(items, 1);"},
+	"pluck":           {"pluck", "array builtin", "pluck(array, key)", "Extracts key from every hash in an array, returning null where the key is absent.", "Array", "let names = pluck(users, \"name\");"},
+	"index_by":        {"index_by", "array/hash builtin", "index_by(array, key)", "Builds a hash where each hash element is indexed by its key value.", "Hash", "let by_id = index_by(users, \"id\");"},
+	"pick":            {"pick", "hash builtin", "pick(hash, keys)", "Returns a hash containing only the requested keys.", "Hash", "let public = pick(user, [\"id\", \"name\"]);"},
+	"omit":            {"omit", "hash builtin", "omit(hash, keys)", "Returns a hash without the requested keys.", "Hash", "let public = omit(user, [\"password\"]);"},
+	"entries":         {"entries", "hash builtin", "entries(hash)", "Converts a hash to an array of [key, value] pairs.", "Array", "print entries({ a: 1 });"},
+	"from_entries":    {"from_entries", "hash builtin", "from_entries(entries)", "Converts [key, value] pairs back into a hash.", "Hash", "print from_entries([[\"a\", 1]]);"},
+	"deep_equal":      {"deep_equal", "comparison builtin", "deep_equal(a, b)", "Compares scalars, arrays, and hashes recursively. Numeric int/float values compare by numeric value.", "Boolean", "assert_true(deep_equal({ a: [1] }, { a: [1.0] }));"},
+	"last_index_of":   {"last_index_of", "string builtin", "last_index_of(s, substr)", "Returns the last byte index of substr in s, or -1 when missing.", "Integer", "print last_index_of(\"banana\", \"na\");"},
+	"replace_n":       {"replace_n", "string builtin", "replace_n(s, old, new, n)", "Replaces at most n occurrences of old with new.", "String", "print replace_n(\"a-a-a\", \"-\", \"_\", 1);"},
+	"trim_chars":      {"trim_chars", "string builtin", "trim_chars(s, chars)", "Trims all leading and trailing runes contained in chars.", "String", "print trim_chars(\"..spl..\", \".\");"},
+	"words":           {"words", "string builtin", "words(s)", "Splits text into normalized lower-case words using punctuation and case boundaries.", "Array of strings", "print words(\"helloWorld SPL\");"},
+	"chars":           {"chars", "string builtin", "chars(s)", "Splits a string into Unicode character strings.", "Array of strings", "print chars(\"spl\");"},
+	"reverse_string":  {"reverse_string", "string builtin", "reverse_string(s)", "Returns a string with Unicode characters in reverse order.", "String", "print reverse_string(\"abc\");"},
+	"is_blank":        {"is_blank", "string predicate", "is_blank(s)", "Reports whether a string is empty or only whitespace.", "Boolean", "print is_blank(\"  \");"},
+	"is_numeric":      {"is_numeric", "string predicate", "is_numeric(s)", "Reports whether a string parses as a number.", "Boolean", "print is_numeric(\"42.5\");"},
+	"is_alpha":        {"is_alpha", "string predicate", "is_alpha(s)", "Reports whether a string contains only letters and is not empty.", "Boolean", "print is_alpha(\"SPL\");"},
+	"is_alnum":        {"is_alnum", "string predicate", "is_alnum(s)", "Reports whether a string contains only letters/digits and is not empty.", "Boolean", "print is_alnum(\"SPL3\");"},
+	"escape_html":     {"escape_html", "string builtin", "escape_html(s)", "Escapes special HTML characters for safe text output.", "String", "print escape_html(\"<b>\");"},
+	"unescape_html":   {"unescape_html", "string builtin", "unescape_html(s)", "Decodes HTML entities back to text.", "String", "print unescape_html(\"&lt;b&gt;\");"},
+	"json_parse":      {"json_parse", "JSON builtin", "json_parse(text)", "Parses JSON text into SPL arrays, hashes, strings, numbers, booleans, and null.", "SPL value", "let data = json_parse(raw);"},
+	"json_stringify":  {"json_stringify", "JSON builtin", "json_stringify(value[, opts])", "Serializes an SPL value to JSON text. opts can include pretty and indent.", "String", "print json_stringify({ ok: true });"},
+	"path_base":       {"path_base", "path builtin", "path_base(path)", "Returns the final path element.", "String", "print path_base(\"dir/file.spl\");"},
+	"path_dir":        {"path_dir", "path builtin", "path_dir(path)", "Returns the parent directory portion of a path.", "String", "print path_dir(\"dir/file.spl\");"},
+	"path_ext":        {"path_ext", "path builtin", "path_ext(path)", "Returns the file extension, including the leading dot.", "String", "print path_ext(\"file.spl\");"},
+	"path_clean":      {"path_clean", "path builtin", "path_clean(path)", "Normalizes redundant separators and dot segments in a path.", "String", "print path_clean(\"a/../b\");"},
+	"path_abs":        {"path_abs", "path builtin", "path_abs(path)", "Converts a path to an absolute path according to the host process working directory.", "String or error", "print path_abs(\".\");"},
+	"parse_duration":  {"parse_duration", "time builtin", "parse_duration(text)", "Parses Go-style duration text such as 1h30m or 250ms into milliseconds.", "Integer milliseconds", "let timeout = parse_duration(\"1h30m\");"},
+	"format_duration": {"format_duration", "time builtin", "format_duration(milliseconds)", "Formats a millisecond duration as compact duration text.", "String", "print format_duration(5400000);"},
+	"start_of_month":  {"start_of_month", "time builtin", "start_of_month(unix_seconds)", "Returns the UTC Unix timestamp for the first second of that month.", "Integer timestamp", "print start_of_month(now());"},
+	"end_of_week":     {"end_of_week", "time builtin", "end_of_week(unix_seconds)", "Returns the UTC Unix timestamp for the last second of the ISO-style week.", "Integer timestamp", "print end_of_week(now());"},
+	"is_weekend":      {"is_weekend", "time predicate", "is_weekend(unix_seconds)", "Reports whether a UTC timestamp falls on Saturday or Sunday.", "Boolean", "print is_weekend(now());"},
+	"weekday":         {"weekday", "time builtin", "weekday(unix_seconds)", "Returns UTC weekday number where Sunday is 0.", "Integer", "print weekday(now());"},
+	"month":           {"month", "time builtin", "month(unix_seconds)", "Returns UTC month number, 1 through 12.", "Integer", "print month(now());"},
+	"year":            {"year", "time builtin", "year(unix_seconds)", "Returns UTC year.", "Integer", "print year(now());"},
 }
 
 type Location struct {
@@ -319,11 +761,14 @@ func WorkspaceCompletionItems(idx *WorkspaceIndex, path, src, prefix string) []C
 	for _, kw := range splKeywords {
 		add(CompletionItem{Label: kw, Kind: "keyword", Detail: KeywordMarkdown(kw)})
 	}
-	for _, item := range CompletionItems(path, src, prefix) {
-		add(item)
-	}
 	for _, doc := range splRuntimeDocs {
 		add(CompletionItem{Label: doc.Name, Kind: "builtin", Detail: RuntimeDocMarkdown(doc.Name)})
+	}
+	for _, item := range CompletionItems(path, src, prefix) {
+		if md := RuntimeDocMarkdown(item.Label); md != "" {
+			item.Detail = md
+		}
+		add(item)
 	}
 	if idx != nil {
 		for _, sym := range idx.AllSymbols() {
@@ -351,6 +796,11 @@ func KeywordMarkdown(name string) string {
 }
 
 func HoverMarkdown(idx *WorkspaceIndex, path, src string, line, col int) string {
+	if target, ok := importTargetAt(src, line, col); ok {
+		if md := StdModuleMarkdown(target); md != "" {
+			return md
+		}
+	}
 	if loc, ok := importLocationAt(path, src, line, col); ok {
 		return fmt.Sprintf("**import** `%s`\n\nResolves to `%s`.\n\nGo to definition opens the target module.", loc.Name, loc.Path)
 	}
@@ -424,7 +874,10 @@ func HoverMarkdown(idx *WorkspaceIndex, path, src string, line, col int) string 
 func RuntimeDocMarkdown(name string) string {
 	doc, ok := splRuntimeDocs[name]
 	if !ok {
-		return ""
+		doc, ok = inferredRuntimeDoc(name)
+		if !ok {
+			return ""
+		}
 	}
 	var b strings.Builder
 	fmt.Fprintf(&b, "**%s** `%s`\n\n", doc.Kind, doc.Name)
@@ -432,6 +885,178 @@ func RuntimeDocMarkdown(name string) string {
 	b.WriteString(doc.Interpretation)
 	if doc.Returns != "" {
 		fmt.Fprintf(&b, "\n\nReturns: %s.", doc.Returns)
+	}
+	if doc.Example != "" {
+		fmt.Fprintf(&b, "\n\nExample:\n```spl\n%s\n```", doc.Example)
+	}
+	return b.String()
+}
+
+func inferredRuntimeDoc(name string) (RuntimeDoc, bool) {
+	modules := modulesForBuiltin(name)
+	if !eval.HasBuiltin(name) {
+		if builtinSignatureHints[name] == "" && len(modules) == 0 {
+			return RuntimeDoc{}, false
+		}
+	}
+	signature := builtinSignatureHints[name]
+	helpText := ""
+	if help, ok := eval.BuiltinHelpDescriptions[name]; ok {
+		helpText = strings.TrimSpace(help)
+	}
+	if signature == "" {
+		if parsedSignature, parsedPurpose := splitBuiltinHelp(name, helpText); parsedSignature != "" {
+			signature = parsedSignature
+			if builtinPurposeHints[name] == "" {
+				helpText = parsedPurpose
+			}
+		} else {
+			signature = name + "(...)"
+		}
+	}
+
+	kind := "builtin"
+	category := ""
+	if len(modules) > 0 {
+		category = moduleCategory(modules[0])
+		if category != "" {
+			kind = category + " builtin"
+		}
+	}
+
+	purpose := builtinPurposeHints[name]
+	if purpose == "" {
+		if helpText != "" {
+			purpose = helpText
+		}
+	}
+	if purpose == "" {
+		if len(modules) > 0 {
+			purpose = fmt.Sprintf("Registered SPL builtin exported by `%s`.", modules[0])
+			if category != "" {
+				purpose += " It belongs to the " + category + " helper set."
+			}
+		} else {
+			purpose = "Registered SPL builtin provided by the interpreter runtime. It is available globally in scripts."
+		}
+	}
+	if len(modules) > 0 {
+		purpose += fmt.Sprintf("\n\nAvailable via: `%s`.", strings.Join(modules, "`, `"))
+	}
+	returns := builtinReturnHints[name]
+	if returns == "" {
+		returns = "SPL value"
+	}
+	return RuntimeDoc{
+		Name:           name,
+		Kind:           kind,
+		Signature:      signature,
+		Interpretation: purpose,
+		Returns:        returns,
+		Example:        inferredExample(name, modules),
+	}, true
+}
+
+func splitBuiltinHelp(name, help string) (signature, purpose string) {
+	help = strings.TrimSpace(help)
+	if help == "" {
+		return "", ""
+	}
+	idx := strings.Index(help, ")")
+	if idx <= 0 {
+		return "", help
+	}
+	first := help[:idx+1]
+	if !strings.HasPrefix(first, name+"(") {
+		return "", help
+	}
+	return first, strings.TrimSpace(help[idx+1:])
+}
+
+func modulesForBuiltin(name string) []string {
+	modules := []string{}
+	seen := map[string]struct{}{}
+	for moduleName, exports := range knownStdModuleExports {
+		for _, export := range exports {
+			if export == name {
+				if _, ok := seen[moduleName]; !ok {
+					seen[moduleName] = struct{}{}
+					modules = append(modules, moduleName)
+				}
+				break
+			}
+		}
+	}
+	sort.Slice(modules, func(i, j int) bool {
+		ri := moduleDocRank(modules[i])
+		rj := moduleDocRank(modules[j])
+		if ri != rj {
+			return ri < rj
+		}
+		return modules[i] < modules[j]
+	})
+	return modules
+}
+
+func moduleDocRank(moduleName string) int {
+	switch moduleName {
+	case "std/core":
+		return 0
+	case "std/math", "std/string", "std/array", "std/hash", "std/time", "std/json", "std/csv", "std/crypto", "std/path", "std/random":
+		return 1
+	case "tools/files", "tools/archive", "tools/images", "tools/office", "tools/secrets", "tools/media", "tools/system", "tools/network":
+		return 2
+	default:
+		return 3
+	}
+}
+
+func moduleCategory(moduleName string) string {
+	if doc, ok := splStdModuleDocs[moduleName]; ok {
+		return doc.Category
+	}
+	return ""
+}
+
+func inferredExample(name string, modules []string) string {
+	if example := builtinExampleHints[name]; example != "" {
+		return example
+	}
+	if len(modules) > 0 {
+		alias := strings.TrimPrefix(modules[0], "std/")
+		if strings.Contains(alias, "/") {
+			alias = filepath.Base(alias)
+		}
+		signature := builtinSignatureHints[name]
+		call := name + "(...)"
+		if signature != "" {
+			call = signature
+		}
+		return fmt.Sprintf("import %q as %s;\nprint %s.%s;", modules[0], alias, alias, call)
+	}
+	return fmt.Sprintf("print %s(...);", name)
+}
+
+func StdModuleMarkdown(name string) string {
+	doc, ok := splStdModuleDocs[name]
+	if !ok {
+		return ""
+	}
+	var b strings.Builder
+	label := "standard module"
+	if strings.HasPrefix(doc.Name, "tools/") {
+		label = "tools module"
+	}
+	fmt.Fprintf(&b, "**%s** `%s`\n\n", label, doc.Name)
+	fmt.Fprintf(&b, "Category: %s\n\n", doc.Category)
+	b.WriteString(doc.Purpose)
+	if doc.Recommended && !strings.HasPrefix(doc.Name, "tools/") {
+		b.WriteString("\n\nUse this namespaced import in shared scripts so readers can see where helper functions come from.")
+	} else if strings.HasPrefix(doc.Name, "tools/") {
+		b.WriteString("\n\nDaily tool operations are preview-first by default; pass `apply: true` only when you want to mutate files or install dependencies.")
+	}
+	if len(doc.Exports) > 0 {
+		fmt.Fprintf(&b, "\n\nKey exports: `%s`.", strings.Join(doc.Exports, "`, `"))
 	}
 	if doc.Example != "" {
 		fmt.Fprintf(&b, "\n\nExample:\n```spl\n%s\n```", doc.Example)
@@ -1669,13 +2294,29 @@ func EvaluateSPL(path, src string, opts EvaluationOptions) EvaluationResult {
 }
 
 func importLocationAt(path, src string, line, col int) (Location, bool) {
+	if target, ok := importTargetAt(src, line, col); ok {
+		if _, isStd := splStdModuleDocs[target]; isStd {
+			return Location{}, false
+		}
+		if _, isStd := knownStdModules[target]; isStd {
+			return Location{}, false
+		}
+		if resolved, ok := resolveImportCandidate(path, target); ok {
+			return Location{Path: resolved, Line: 1, Column: 1, Name: target}, true
+		}
+		return Location{}, false
+	}
+	return Location{}, false
+}
+
+func importTargetAt(src string, line, col int) (string, bool) {
 	lines := strings.Split(src, "\n")
 	if line <= 0 || line > len(lines) {
-		return Location{}, false
+		return "", false
 	}
 	text := lines[line-1]
 	if !strings.Contains(text, "import") {
-		return Location{}, false
+		return "", false
 	}
 	idx := col - 1
 	if idx < 0 {
@@ -1685,12 +2326,10 @@ func importLocationAt(path, src string, line, col int) (Location, bool) {
 	for _, span := range spans {
 		if idx >= span.start && idx <= span.end {
 			target := text[span.start+1 : span.end]
-			if resolved, ok := resolveImportCandidate(path, target); ok {
-				return Location{Path: resolved, Line: 1, Column: 1, Name: target}, true
-			}
+			return target, true
 		}
 	}
-	return Location{}, false
+	return "", false
 }
 
 type quoteSpan struct {

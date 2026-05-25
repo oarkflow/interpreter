@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/oarkflow/interpreter"
+	"github.com/oarkflow/interpreter/pkg/tools"
 )
 
 func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
@@ -29,6 +30,18 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return runMod(args[1:], stdout, stderr)
 	case "config":
 		return runConfig(args[1:], stdout, stderr)
+	case "files":
+		return runFiles(args[1:], stdout, stderr)
+	case "archive":
+		return runArchive(args[1:], stdout, stderr)
+	case "image":
+		return runImage(args[1:], stdout, stderr)
+	case "secrets":
+		return runSecrets(args[1:], stdout, stderr)
+	case "media":
+		return runMedia(args[1:], stdout, stderr)
+	case "office":
+		return runOffice(args[1:], stdout, stderr)
 	case "symbols":
 		return runSymbols(args[1:], stdin, stdout, stderr)
 	case "complete":
@@ -98,6 +111,492 @@ func runConfig(args []string, stdout, stderr io.Writer) int {
 		return 0
 	default:
 		fmt.Fprintln(stderr, "usage: spltool config <init|show> [path]")
+		return 2
+	}
+}
+
+func runFiles(args []string, stdout, stderr io.Writer) int {
+	if len(args) == 0 {
+		fmt.Fprintln(stderr, "usage: spltool files <rename|move|copy|remove|organize|search|dedupe|checksum>")
+		return 2
+	}
+	switch args[0] {
+	case "rename":
+		fs := flag.NewFlagSet("files rename", flag.ContinueOnError)
+		fs.SetOutput(stderr)
+		match := fs.String("match", "*", "glob pattern")
+		template := fs.String("template", "{name}_{seq}.{ext}", "rename template")
+		apply := fs.Bool("apply", false, "apply changes")
+		jsonOut := fs.Bool("json", false, "emit JSON")
+		if err := fs.Parse(normalizeToolArgs(args[1:], "match", "template")); err != nil {
+			return 2
+		}
+		if len(fs.Args()) != 1 {
+			fmt.Fprintln(stderr, "usage: spltool files rename <dir> --match '*.jpg' --template '{date}_{seq}.{ext}' [--apply]")
+			return 2
+		}
+		ops, err := tools.BulkRename(fs.Args()[0], map[string]any{"match": *match, "template": *template, "apply": *apply}, tools.Hooks{})
+		if err != nil {
+			fmt.Fprintf(stderr, "rename failed: %v\n", err)
+			return 1
+		}
+		return printOperations(stdout, stderr, ops, *jsonOut)
+	case "move", "copy":
+		fs := flag.NewFlagSet("files "+args[0], flag.ContinueOnError)
+		fs.SetOutput(stderr)
+		apply := fs.Bool("apply", false, "apply changes")
+		jsonOut := fs.Bool("json", false, "emit JSON")
+		if err := fs.Parse(normalizeToolArgs(args[1:])); err != nil {
+			return 2
+		}
+		if len(fs.Args()) != 2 {
+			fmt.Fprintf(stderr, "usage: spltool files %s <src> <dst> [--apply]\n", args[0])
+			return 2
+		}
+		op := tools.CopyOrMove(fs.Args()[0], fs.Args()[1], args[0] == "move", *apply, tools.Hooks{})
+		return printOperations(stdout, stderr, []tools.Operation{op}, *jsonOut)
+	case "search":
+		fs := flag.NewFlagSet("files search", flag.ContinueOnError)
+		fs.SetOutput(stderr)
+		match := fs.String("match", "*", "glob pattern")
+		contains := fs.String("contains", "", "filename substring")
+		jsonOut := fs.Bool("json", false, "emit JSON")
+		if err := fs.Parse(normalizeToolArgs(args[1:], "match", "contains")); err != nil {
+			return 2
+		}
+		if len(fs.Args()) != 1 {
+			fmt.Fprintln(stderr, "usage: spltool files search <root> [--match '*.spl'] [--contains name]")
+			return 2
+		}
+		files, err := tools.Search(fs.Args()[0], map[string]any{"match": *match, "contains": *contains}, tools.Hooks{})
+		if err != nil {
+			fmt.Fprintf(stderr, "search failed: %v\n", err)
+			return 1
+		}
+		if *jsonOut {
+			return encodeJSON(stdout, stderr, files)
+		}
+		for _, file := range files {
+			fmt.Fprintf(stdout, "%s\t%d\n", file.Path, file.Size)
+		}
+		return 0
+	case "dedupe":
+		fs := flag.NewFlagSet("files dedupe", flag.ContinueOnError)
+		fs.SetOutput(stderr)
+		match := fs.String("match", "*", "glob pattern")
+		jsonOut := fs.Bool("json", false, "emit JSON")
+		if err := fs.Parse(normalizeToolArgs(args[1:], "match")); err != nil {
+			return 2
+		}
+		if len(fs.Args()) != 1 {
+			fmt.Fprintln(stderr, "usage: spltool files dedupe <root> [--match '*']")
+			return 2
+		}
+		ops, err := tools.Dedupe(fs.Args()[0], map[string]any{"match": *match}, tools.Hooks{})
+		if err != nil {
+			fmt.Fprintf(stderr, "dedupe failed: %v\n", err)
+			return 1
+		}
+		return printOperations(stdout, stderr, ops, *jsonOut)
+	case "remove":
+		fs := flag.NewFlagSet("files remove", flag.ContinueOnError)
+		fs.SetOutput(stderr)
+		recursive := fs.Bool("recursive", false, "remove directories recursively")
+		apply := fs.Bool("apply", false, "apply changes")
+		jsonOut := fs.Bool("json", false, "emit JSON")
+		if err := fs.Parse(normalizeToolArgs(args[1:])); err != nil {
+			return 2
+		}
+		if len(fs.Args()) != 1 {
+			fmt.Fprintln(stderr, "usage: spltool files remove <path> [--recursive] [--apply]")
+			return 2
+		}
+		op := tools.RemovePath(fs.Args()[0], map[string]any{"recursive": *recursive, "apply": *apply}, tools.Hooks{})
+		return printOperations(stdout, stderr, []tools.Operation{op}, *jsonOut)
+	case "organize":
+		fs := flag.NewFlagSet("files organize", flag.ContinueOnError)
+		fs.SetOutput(stderr)
+		match := fs.String("match", "*", "glob pattern")
+		apply := fs.Bool("apply", false, "apply changes")
+		jsonOut := fs.Bool("json", false, "emit JSON")
+		if err := fs.Parse(normalizeToolArgs(args[1:], "match")); err != nil {
+			return 2
+		}
+		if len(fs.Args()) != 2 {
+			fmt.Fprintln(stderr, "usage: spltool files organize <src-dir> <dst-dir> [--match '*'] [--apply]")
+			return 2
+		}
+		ops, err := tools.OrganizeByExt(fs.Args()[0], fs.Args()[1], map[string]any{"match": *match, "apply": *apply}, tools.Hooks{})
+		if err != nil {
+			fmt.Fprintf(stderr, "organize failed: %v\n", err)
+			return 1
+		}
+		return printOperations(stdout, stderr, ops, *jsonOut)
+	case "checksum":
+		fs := flag.NewFlagSet("files checksum", flag.ContinueOnError)
+		fs.SetOutput(stderr)
+		jsonOut := fs.Bool("json", false, "emit JSON")
+		if err := fs.Parse(normalizeToolArgs(args[1:])); err != nil {
+			return 2
+		}
+		if len(fs.Args()) != 1 {
+			fmt.Fprintln(stderr, "usage: spltool files checksum <path>")
+			return 2
+		}
+		sum, err := tools.FileChecksum(fs.Args()[0], tools.Hooks{})
+		if err != nil {
+			fmt.Fprintf(stderr, "checksum failed: %v\n", err)
+			return 1
+		}
+		if *jsonOut {
+			return encodeJSON(stdout, stderr, sum)
+		}
+		fmt.Fprintf(stdout, "%s  %s\n", sum["sha256"], sum["path"])
+		return 0
+	default:
+		fmt.Fprintf(stderr, "unknown files command %q\n", args[0])
+		return 2
+	}
+}
+
+func runArchive(args []string, stdout, stderr io.Writer) int {
+	if len(args) == 0 {
+		fmt.Fprintln(stderr, "usage: spltool archive <compress|extract|list>")
+		return 2
+	}
+	switch args[0] {
+	case "compress":
+		fs := flag.NewFlagSet("archive compress", flag.ContinueOnError)
+		fs.SetOutput(stderr)
+		format := fs.String("format", "", "zip, tar, or gzip")
+		apply := fs.Bool("apply", false, "apply changes")
+		jsonOut := fs.Bool("json", false, "emit JSON")
+		if err := fs.Parse(normalizeToolArgs(args[1:], "format")); err != nil {
+			return 2
+		}
+		if len(fs.Args()) != 2 {
+			fmt.Fprintln(stderr, "usage: spltool archive compress <src> <dst> [--format zip] [--apply]")
+			return 2
+		}
+		op := tools.Compress(fs.Args()[0], fs.Args()[1], map[string]any{"format": *format, "apply": *apply}, tools.Hooks{})
+		return printOperations(stdout, stderr, []tools.Operation{op}, *jsonOut)
+	case "extract":
+		fs := flag.NewFlagSet("archive extract", flag.ContinueOnError)
+		fs.SetOutput(stderr)
+		apply := fs.Bool("apply", false, "apply changes")
+		jsonOut := fs.Bool("json", false, "emit JSON")
+		if err := fs.Parse(normalizeToolArgs(args[1:])); err != nil {
+			return 2
+		}
+		if len(fs.Args()) != 2 {
+			fmt.Fprintln(stderr, "usage: spltool archive extract <src.zip> <dst> [--apply]")
+			return 2
+		}
+		op := tools.Extract(fs.Args()[0], fs.Args()[1], map[string]any{"apply": *apply}, tools.Hooks{})
+		return printOperations(stdout, stderr, []tools.Operation{op}, *jsonOut)
+	case "list":
+		fs := flag.NewFlagSet("archive list", flag.ContinueOnError)
+		fs.SetOutput(stderr)
+		jsonOut := fs.Bool("json", false, "emit JSON")
+		if err := fs.Parse(normalizeToolArgs(args[1:])); err != nil {
+			return 2
+		}
+		if len(fs.Args()) != 1 {
+			fmt.Fprintln(stderr, "usage: spltool archive list <archive.zip>")
+			return 2
+		}
+		files, err := tools.ArchiveList(fs.Args()[0], tools.Hooks{})
+		if err != nil {
+			fmt.Fprintf(stderr, "list failed: %v\n", err)
+			return 1
+		}
+		if *jsonOut {
+			return encodeJSON(stdout, stderr, files)
+		}
+		for _, f := range files {
+			fmt.Fprintf(stdout, "%s\t%d\n", f.Path, f.Size)
+		}
+		return 0
+	default:
+		fmt.Fprintf(stderr, "unknown archive command %q\n", args[0])
+		return 2
+	}
+}
+
+func runImage(args []string, stdout, stderr io.Writer) int {
+	if len(args) == 0 {
+		fmt.Fprintln(stderr, "usage: spltool image <convert|optimize|crop|resize|thumbnail|info>")
+		return 2
+	}
+	switch args[0] {
+	case "convert", "optimize":
+		fs := flag.NewFlagSet("image "+args[0], flag.ContinueOnError)
+		fs.SetOutput(stderr)
+		to := fs.String("to", "png", "target format")
+		quality := fs.Int("quality", 90, "JPEG quality")
+		apply := fs.Bool("apply", false, "apply changes")
+		jsonOut := fs.Bool("json", false, "emit JSON")
+		if err := fs.Parse(normalizeToolArgs(args[1:], "to", "quality")); err != nil {
+			return 2
+		}
+		if len(fs.Args()) != 2 {
+			fmt.Fprintf(stderr, "usage: spltool image %s <src-dir> <dst-dir> --to webp [--apply]\n", args[0])
+			return 2
+		}
+		ops, err := tools.ImageConvertBatch(fs.Args()[0], fs.Args()[1], map[string]any{"to": *to, "quality": *quality, "apply": *apply}, tools.Hooks{})
+		if err != nil {
+			fmt.Fprintf(stderr, "image %s failed: %v\n", args[0], err)
+			return 1
+		}
+		return printOperations(stdout, stderr, ops, *jsonOut)
+	case "crop":
+		fs := flag.NewFlagSet("image crop", flag.ContinueOnError)
+		fs.SetOutput(stderr)
+		x := fs.Int("x", 0, "left")
+		y := fs.Int("y", 0, "top")
+		width := fs.Int("width", 0, "width")
+		height := fs.Int("height", 0, "height")
+		apply := fs.Bool("apply", false, "apply changes")
+		jsonOut := fs.Bool("json", false, "emit JSON")
+		if err := fs.Parse(normalizeToolArgs(args[1:], "x", "y", "width", "height")); err != nil {
+			return 2
+		}
+		if len(fs.Args()) != 2 {
+			fmt.Fprintln(stderr, "usage: spltool image crop <src> <dst> --x 0 --y 0 --width 100 --height 100 [--apply]")
+			return 2
+		}
+		op := tools.CropImage(fs.Args()[0], fs.Args()[1], map[string]any{"x": *x, "y": *y, "width": *width, "height": *height, "apply": *apply}, tools.Hooks{})
+		return printOperations(stdout, stderr, []tools.Operation{op}, *jsonOut)
+	case "resize":
+		fs := flag.NewFlagSet("image resize", flag.ContinueOnError)
+		fs.SetOutput(stderr)
+		width := fs.Int("width", 0, "width")
+		height := fs.Int("height", 0, "height")
+		quality := fs.Int("quality", 90, "JPEG quality")
+		apply := fs.Bool("apply", false, "apply changes")
+		jsonOut := fs.Bool("json", false, "emit JSON")
+		if err := fs.Parse(normalizeToolArgs(args[1:], "width", "height", "quality")); err != nil {
+			return 2
+		}
+		if len(fs.Args()) != 2 {
+			fmt.Fprintln(stderr, "usage: spltool image resize <src> <dst> --width 800 [--height 600] [--apply]")
+			return 2
+		}
+		op := tools.ResizeImage(fs.Args()[0], fs.Args()[1], map[string]any{"width": *width, "height": *height, "quality": *quality, "apply": *apply}, tools.Hooks{})
+		return printOperations(stdout, stderr, []tools.Operation{op}, *jsonOut)
+	case "thumbnail":
+		fs := flag.NewFlagSet("image thumbnail", flag.ContinueOnError)
+		fs.SetOutput(stderr)
+		size := fs.Int("size", 256, "thumbnail size")
+		apply := fs.Bool("apply", false, "apply changes")
+		jsonOut := fs.Bool("json", false, "emit JSON")
+		if err := fs.Parse(normalizeToolArgs(args[1:], "size")); err != nil {
+			return 2
+		}
+		if len(fs.Args()) != 2 {
+			fmt.Fprintln(stderr, "usage: spltool image thumbnail <src> <dst> [--size 256] [--apply]")
+			return 2
+		}
+		op := tools.Thumbnail(fs.Args()[0], fs.Args()[1], map[string]any{"size": *size, "apply": *apply}, tools.Hooks{})
+		return printOperations(stdout, stderr, []tools.Operation{op}, *jsonOut)
+	case "info":
+		fs := flag.NewFlagSet("image info", flag.ContinueOnError)
+		fs.SetOutput(stderr)
+		jsonOut := fs.Bool("json", false, "emit JSON")
+		if err := fs.Parse(normalizeToolArgs(args[1:])); err != nil {
+			return 2
+		}
+		if len(fs.Args()) != 1 {
+			fmt.Fprintln(stderr, "usage: spltool image info <path>")
+			return 2
+		}
+		info, err := tools.ImageInfo(fs.Args()[0], tools.Hooks{})
+		if err != nil {
+			fmt.Fprintf(stderr, "image info failed: %v\n", err)
+			return 1
+		}
+		if *jsonOut {
+			return encodeJSON(stdout, stderr, info)
+		}
+		for k, v := range info {
+			fmt.Fprintf(stdout, "%s: %v\n", k, v)
+		}
+		return 0
+	default:
+		fmt.Fprintf(stderr, "unknown image command %q\n", args[0])
+		return 2
+	}
+}
+
+func runSecrets(args []string, stdout, stderr io.Writer) int {
+	if len(args) == 0 {
+		fmt.Fprintln(stderr, "usage: spltool secrets <generate|encrypt|decrypt>")
+		return 2
+	}
+	switch args[0] {
+	case "generate":
+		fs := flag.NewFlagSet("secrets generate", flag.ContinueOnError)
+		fs.SetOutput(stderr)
+		length := fs.Int("length", 24, "secret length")
+		token := fs.Bool("token", false, "generate URL-safe token")
+		if err := fs.Parse(normalizeToolArgs(args[1:], "length")); err != nil {
+			return 2
+		}
+		var value string
+		var err error
+		if *token {
+			value, err = tools.EncodeToken(*length)
+		} else {
+			value, err = tools.GenerateSecret(*length, "")
+		}
+		if err != nil {
+			fmt.Fprintf(stderr, "generate failed: %v\n", err)
+			return 1
+		}
+		fmt.Fprintln(stdout, value)
+		return 0
+	case "encrypt", "decrypt":
+		fs := flag.NewFlagSet("secrets "+args[0], flag.ContinueOnError)
+		fs.SetOutput(stderr)
+		pass := fs.String("passphrase", "", "passphrase")
+		apply := fs.Bool("apply", false, "apply changes")
+		jsonOut := fs.Bool("json", false, "emit JSON")
+		if err := fs.Parse(normalizeToolArgs(args[1:], "passphrase")); err != nil {
+			return 2
+		}
+		if len(fs.Args()) != 2 {
+			fmt.Fprintf(stderr, "usage: spltool secrets %s <src> <dst> --passphrase secret [--apply]\n", args[0])
+			return 2
+		}
+		var op tools.Operation
+		if args[0] == "encrypt" {
+			op = tools.EncryptFile(fs.Args()[0], fs.Args()[1], *pass, *apply, tools.Hooks{})
+		} else {
+			op = tools.DecryptFile(fs.Args()[0], fs.Args()[1], *pass, *apply, tools.Hooks{})
+		}
+		return printOperations(stdout, stderr, []tools.Operation{op}, *jsonOut)
+	default:
+		fmt.Fprintf(stderr, "unknown secrets command %q\n", args[0])
+		return 2
+	}
+}
+
+func runMedia(args []string, stdout, stderr io.Writer) int {
+	if len(args) == 0 {
+		fmt.Fprintln(stderr, "usage: spltool media <info|convert|ffmpeg-status|install-ffmpeg>")
+		return 2
+	}
+	switch args[0] {
+	case "info":
+		fs := flag.NewFlagSet("media info", flag.ContinueOnError)
+		fs.SetOutput(stderr)
+		jsonOut := fs.Bool("json", false, "emit JSON")
+		if err := fs.Parse(normalizeToolArgs(args[1:])); err != nil {
+			return 2
+		}
+		if len(fs.Args()) != 1 {
+			fmt.Fprintln(stderr, "usage: spltool media info <path>")
+			return 2
+		}
+		info, err := tools.MediaInfo(fs.Args()[0], tools.Hooks{})
+		if err != nil {
+			fmt.Fprintf(stderr, "media info failed: %v\n", err)
+			return 1
+		}
+		if *jsonOut {
+			return encodeJSON(stdout, stderr, info)
+		}
+		for k, v := range info {
+			fmt.Fprintf(stdout, "%s: %v\n", k, v)
+		}
+		return 0
+	case "convert":
+		fs := flag.NewFlagSet("media convert", flag.ContinueOnError)
+		fs.SetOutput(stderr)
+		codec := fs.String("codec", "", "ffmpeg codec")
+		crf := fs.String("crf", "", "ffmpeg CRF")
+		install := fs.Bool("install", false, "install ffmpeg if missing when --apply is set")
+		apply := fs.Bool("apply", false, "apply changes")
+		jsonOut := fs.Bool("json", false, "emit JSON")
+		if err := fs.Parse(normalizeToolArgs(args[1:], "codec", "crf")); err != nil {
+			return 2
+		}
+		if len(fs.Args()) != 2 {
+			fmt.Fprintln(stderr, "usage: spltool media convert <src> <dst> [--codec libx264] [--crf 23] [--apply]")
+			return 2
+		}
+		op := tools.MediaConvert(fs.Args()[0], fs.Args()[1], map[string]any{"codec": *codec, "crf": *crf, "install": *install, "apply": *apply}, tools.Hooks{})
+		return printOperations(stdout, stderr, []tools.Operation{op}, *jsonOut)
+	case "ffmpeg-status":
+		return encodeJSON(stdout, stderr, tools.FFmpegStatus())
+	case "install-ffmpeg":
+		fs := flag.NewFlagSet("media install-ffmpeg", flag.ContinueOnError)
+		fs.SetOutput(stderr)
+		apply := fs.Bool("apply", false, "install instead of previewing")
+		jsonOut := fs.Bool("json", false, "emit JSON")
+		if err := fs.Parse(normalizeToolArgs(args[1:])); err != nil {
+			return 2
+		}
+		op := tools.InstallFFmpeg(*apply)
+		return printOperations(stdout, stderr, []tools.Operation{op}, *jsonOut)
+	default:
+		fmt.Fprintf(stderr, "unknown media command %q\n", args[0])
+		return 2
+	}
+}
+
+func runOffice(args []string, stdout, stderr io.Writer) int {
+	if len(args) == 0 {
+		fmt.Fprintln(stderr, "usage: spltool office <text|read>")
+		return 2
+	}
+	switch args[0] {
+	case "text":
+		fs := flag.NewFlagSet("office text", flag.ContinueOnError)
+		fs.SetOutput(stderr)
+		if err := fs.Parse(normalizeToolArgs(args[1:])); err != nil {
+			return 2
+		}
+		if len(fs.Args()) != 1 {
+			fmt.Fprintln(stderr, "usage: spltool office text <path>")
+			return 2
+		}
+		text, err := tools.OfficeText(fs.Args()[0], tools.Hooks{})
+		if err != nil {
+			fmt.Fprintf(stderr, "office text failed: %v\n", err)
+			return 1
+		}
+		fmt.Fprint(stdout, text)
+		if !strings.HasSuffix(text, "\n") {
+			fmt.Fprintln(stdout)
+		}
+		return 0
+	case "read":
+		fs := flag.NewFlagSet("office read", flag.ContinueOnError)
+		fs.SetOutput(stderr)
+		jsonOut := fs.Bool("json", false, "emit JSON")
+		if err := fs.Parse(normalizeToolArgs(args[1:])); err != nil {
+			return 2
+		}
+		if len(fs.Args()) != 1 {
+			fmt.Fprintln(stderr, "usage: spltool office read <path> [--json]")
+			return 2
+		}
+		doc, err := tools.OfficeRead(fs.Args()[0], tools.Hooks{})
+		if err != nil {
+			fmt.Fprintf(stderr, "office read failed: %v\n", err)
+			return 1
+		}
+		if *jsonOut {
+			return encodeJSON(stdout, stderr, doc)
+		}
+		if text, ok := doc["text"].(string); ok {
+			fmt.Fprintln(stdout, text)
+			return 0
+		}
+		return encodeJSON(stdout, stderr, doc)
+	default:
+		fmt.Fprintf(stderr, "unknown office command %q\n", args[0])
 		return 2
 	}
 }
@@ -681,8 +1180,56 @@ func formatDiagnostic(d Diagnostic) string {
 }
 
 func printUsage(w io.Writer) {
-	fmt.Fprintln(w, "Usage: spltool <fmt|check|symbols|complete|hover|docs|test|session|conformance|config|mod|lsp> [flags] [files...]")
+	fmt.Fprintln(w, "Usage: spltool <fmt|check|files|archive|image|secrets|media|office|symbols|complete|hover|docs|test|session|conformance|config|mod|lsp> [flags] [files...]")
 	fmt.Fprintln(w, "Use '-' to read from stdin.")
+}
+
+func printOperations(stdout, stderr io.Writer, ops []tools.Operation, jsonOut bool) int {
+	if jsonOut {
+		return encodeJSON(stdout, stderr, ops)
+	}
+	code := 0
+	for _, op := range ops {
+		if op.Status == "failed" {
+			code = 1
+		}
+		line := strings.TrimSpace(fmt.Sprintf("%s %s %s -> %s", op.Status, op.Op, op.Src, op.Dst))
+		if op.Reason != "" {
+			line += " (" + op.Reason + ")"
+		}
+		if op.Error != "" {
+			line += " ERROR: " + op.Error
+		}
+		fmt.Fprintln(stdout, line)
+	}
+	return code
+}
+
+func normalizeToolArgs(args []string, valueFlags ...string) []string {
+	value := map[string]struct{}{}
+	for _, flag := range valueFlags {
+		value["-"+flag] = struct{}{}
+		value["--"+flag] = struct{}{}
+	}
+	flags := []string{}
+	positionals := []string{}
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		if strings.HasPrefix(arg, "-") && arg != "-" {
+			flags = append(flags, arg)
+			name := arg
+			if idx := strings.IndexByte(name, '='); idx >= 0 {
+				name = name[:idx]
+			}
+			if _, needsValue := value[name]; needsValue && !strings.Contains(arg, "=") && i+1 < len(args) {
+				i++
+				flags = append(flags, args[i])
+			}
+			continue
+		}
+		positionals = append(positionals, arg)
+	}
+	return append(flags, positionals...)
 }
 
 func encodeJSON(stdout, stderr io.Writer, v any) int {

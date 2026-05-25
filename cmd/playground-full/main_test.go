@@ -263,7 +263,7 @@ func TestIndexNoEmbeddedSecret(t *testing.T) {
 
 func TestBuiltinCodeExamplesContainCompleteExamples(t *testing.T) {
 	examples := builtinCodeExamples()
-	for _, name := range []string{"hello", "functions", "formatting", "artifacts", "file-values", "image-values", "json-csv-values", "write-ops", "modules", "collections", "error-handling", "loops", "math", "strings", "collections-advanced", "crypto", "time", "testing", "complete-tour"} {
+	for _, name := range []string{"hello", "functions", "formatting", "artifacts", "file-values", "image-values", "json-csv-values", "write-ops", "tools-files", "tools-images", "tools-media", "tools-secrets", "modules", "collections", "error-handling", "loops", "math", "strings", "collections-advanced", "crypto", "time", "testing", "complete-tour"} {
 		content, ok := examples[name]
 		if !ok {
 			t.Fatalf("expected code example %q", name)
@@ -296,6 +296,9 @@ func TestBuiltinCodeExamplesContainCompleteExamples(t *testing.T) {
 	if !strings.Contains(examples["json-csv-values"], `table_filter(`) || !strings.Contains(examples["json-csv-values"], `csv_decode(`) {
 		t.Fatalf("expected json-csv-values example to demonstrate table helpers, got %q", examples["json-csv-values"])
 	}
+	if !strings.Contains(examples["tools-files"], `bulk_rename(`) || !strings.Contains(examples["tools-images"], `image_convert_batch(`) || !strings.Contains(examples["tools-media"], `ffmpeg_status(`) || !strings.Contains(examples["tools-secrets"], `secret_generate(`) {
+		t.Fatalf("expected tools examples to surface daily tools builtins")
+	}
 }
 
 func TestExamplesAPIContainsCompleteCodeExamples(t *testing.T) {
@@ -317,7 +320,7 @@ func TestExamplesAPIContainsCompleteCodeExamples(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range []string{"collections", "error-handling", "complete-tour", "file-values", "image-values", "json-csv-values", "write-ops"} {
+	for _, name := range []string{"collections", "error-handling", "complete-tour", "file-values", "image-values", "json-csv-values", "write-ops", "tools-files", "tools-images", "tools-media", "tools-secrets"} {
 		if strings.TrimSpace(payload.Examples[name]) == "" {
 			t.Fatalf("expected API to include non-empty example %q", name)
 		}

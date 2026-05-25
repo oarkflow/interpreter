@@ -1,4 +1,8 @@
 // Additional collection builtin examples.
+import "std/math" as math;
+import "std/array" as array;
+import "std/hash" as hash;
+
 let ok = true;
 
 let arr = [1, 2, 3, 4, 5];
@@ -22,5 +26,26 @@ ok = ok && is_even(10) == true;
 ok = ok && is_odd(11) == true;
 ok = ok && any([null, false, 1]) == true;
 ok = ok && all([1, true, "x"]) == true;
+ok = ok && median([9, 1, 5]) == 5;
+ok = ok && round_to(stddev([2, 4, 4, 4, 5, 5, 7, 9]), 2) == 2.0;
+ok = ok && percentile([1, 2, 3, 4, 5], 50) == 3.0;
+ok = ok && len(unique([1, 1, 2, 2, 3])) == 3;
+ok = ok && len(take(arr, 2)) == 2;
+ok = ok && first(drop(arr, 2)) == 3;
+
+let people = [{"id": "a", "age": 30}, {"id": "b", "age": 20}];
+ok = ok && first(pluck(sort_by(people, "age"), "id")) == "b";
+ok = ok && get(index_by(people, "id"), "a")["age"] == 30;
+ok = ok && has_key(pick(h, ["a"]), "a") == true;
+ok = ok && has_key(omit(h, ["a"]), "a") == false;
+ok = ok && get(from_entries(entries({"x": 9})), "x") == 9;
+ok = ok && deep_equal(1, 1.0) == true;
+
+ok = ok && math.gcd(18, 24) == 6;
+ok = ok && math.round_to(math.percent(1, 4), 1) == 25.0;
+ok = ok && math.round_to(sqrt(2.0), 3) == 1.414;
+ok = ok && pow(2, -1) == 0.5;
+ok = ok && len(array.unique([1, 1, 2])) == 2;
+ok = ok && hash.get({"name": "spl"}, "name") == "spl";
 
 ok;

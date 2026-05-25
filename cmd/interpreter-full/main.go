@@ -8,6 +8,7 @@ import (
 	_ "github.com/oarkflow/interpreter/builtins/database"
 	_ "github.com/oarkflow/interpreter/builtins/images"
 	_ "github.com/oarkflow/interpreter/builtins/integrations"
+	_ "github.com/oarkflow/interpreter/builtins/tools"
 	_ "github.com/oarkflow/interpreter/config/yaml"
 	_ "github.com/oarkflow/interpreter/pkg/builtins/reactive"
 	_ "github.com/oarkflow/interpreter/pkg/builtins/scheduler"

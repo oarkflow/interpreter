@@ -1,0 +1,7 @@
+import "tools/office";
+
+let doc = office_read("testdata/data/people.csv");
+print sprintf("office rows: %d", len(doc.rows));
+
+let text = office_text("testdata/data/people.csv");
+print text;

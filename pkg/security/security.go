@@ -143,6 +143,7 @@ const (
 	CapabilityProcessExit     = "process_exit"
 	CapabilityScheduler       = "scheduler"
 	CapabilityServer          = "server"
+	CapabilitySystem          = "system"
 	CapabilityWatch           = "watch"
 )
 
@@ -179,6 +180,7 @@ func hostProtectedCapability(capability string) bool {
 		CapabilityProcessExit,
 		CapabilityScheduler,
 		CapabilityServer,
+		CapabilitySystem,
 		CapabilityWatch:
 		return true
 	default:

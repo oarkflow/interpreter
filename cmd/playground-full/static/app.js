@@ -46,6 +46,31 @@ let authenticated = false;
 let currentSidebar = 'examples';
 let serverRenderConfig = { mode: 'auto', max_bytes: 1048576, allow_urls: false, allow_url_hosts: [] };
 
+const splToolCompletions = [
+  'bulk_rename', 'file_search', 'file_locate', 'file_move_plan', 'file_copy_plan', 'file_dedupe',
+  'archive_compress', 'archive_extract', 'archive_list',
+  'image_convert_batch', 'image_optimize', 'image_crop_file',
+  'office_text', 'secret_generate', 'token_generate', 'file_encrypt', 'file_decrypt',
+  'media_info', 'media_convert', 'ffmpeg_status', 'ffmpeg_install',
+  'system_info', 'dns_lookup', 'tcp_check', 'http_probe'
+];
+
+const splToolModules = [
+  'tools/files', 'tools/archive', 'tools/images', 'tools/office',
+  'tools/secrets', 'tools/media', 'tools/system', 'tools/network'
+];
+
+const splToolHoverDocs = {
+  bulk_rename: 'bulk_rename(dir[, opts]) previews or applies bulk file renames. Options include match, template, and apply.',
+  file_search: 'file_search(root[, opts]) searches files by glob and optional filename substring.',
+  archive_compress: 'archive_compress(src, dst[, opts]) previews or creates zip, tar, or gzip archives.',
+  image_convert_batch: 'image_convert_batch(src_dir, dst_dir[, opts]) previews or converts image files in bulk.',
+  secret_generate: 'secret_generate([length][, alphabet]) returns a masked generated secret.',
+  media_convert: 'media_convert(src, dst[, opts]) previews or converts media with ffmpeg.',
+  ffmpeg_status: 'ffmpeg_status() reports ffmpeg and ffprobe availability.',
+  ffmpeg_install: 'ffmpeg_install([opts]) previews or runs the detected OS ffmpeg installer.'
+};
+
 const interpreterGuideSections = [
   {
     title: 'What SPL Is',
@@ -657,6 +682,45 @@ function initMonaco() {
             [/\/\/.*$/, 'comment'],
             [/[a-zA-Z_][\w]*/, 'identifier'],
           ],
+        },
+      });
+
+      monaco.languages.registerCompletionItemProvider('spl', {
+        triggerCharacters: ['_', '"', '/'],
+        provideCompletionItems(model, position) {
+          const word = model.getWordUntilPosition(position);
+          const range = {
+            startLineNumber: position.lineNumber,
+            endLineNumber: position.lineNumber,
+            startColumn: word.startColumn,
+            endColumn: word.endColumn,
+          };
+          const builtinSuggestions = splToolCompletions.map((label) => ({
+            label,
+            kind: monaco.languages.CompletionItemKind.Function,
+            detail: splToolHoverDocs[label] || 'SPL daily tools builtin',
+            insertText: label,
+            range,
+          }));
+          const moduleSuggestions = splToolModules.map((label) => ({
+            label,
+            kind: monaco.languages.CompletionItemKind.Module,
+            detail: 'SPL daily tools module',
+            insertText: label,
+            range,
+          }));
+          return { suggestions: builtinSuggestions.concat(moduleSuggestions) };
+        },
+      });
+
+      monaco.languages.registerHoverProvider('spl', {
+        provideHover(model, position) {
+          const word = model.getWordAtPosition(position);
+          if (!word || !splToolHoverDocs[word.word]) return null;
+          return {
+            range: new monaco.Range(position.lineNumber, word.startColumn, position.lineNumber, word.endColumn),
+            contents: [{ value: `**${word.word}**\n\n${splToolHoverDocs[word.word]}` }],
+          };
         },
       });
 

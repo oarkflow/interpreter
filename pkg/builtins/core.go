@@ -247,7 +247,7 @@ func objectToDisplayString(obj object.Object) string {
 	if s, ok := obj.(*object.String); ok {
 		return s.Value
 	}
-	return obj.Inspect()
+	return object.FormatPlain(obj)
 }
 
 // numericToFloat converts an Integer or Float object to float64.
@@ -1112,12 +1112,19 @@ func init() {
 				if len(args) != 2 {
 					return &object.String{Value: fmt.Sprintf("wrong number of arguments. got=%d, want=2", len(args))}
 				}
-				if args[0].Type() != object.INTEGER_OBJ || args[1].Type() != object.INTEGER_OBJ {
-					return &object.String{Value: fmt.Sprintf("arguments to `pow` must be INTEGER, got %s and %s", args[0].Type(), args[1].Type())}
+				base, baseIsInt, errObj := numberAsFloat(args[0], "base")
+				if errObj != nil {
+					return errObj
 				}
-				base := float64(args[0].(*object.Integer).Value)
-				exp := float64(args[1].(*object.Integer).Value)
-				return &object.Integer{Value: int64(math.Pow(base, exp))}
+				exp, expIsInt, errObj := numberAsFloat(args[1], "exp")
+				if errObj != nil {
+					return errObj
+				}
+				out := math.Pow(base, exp)
+				if baseIsInt && expIsInt && exp >= 0 && math.Trunc(out) == out {
+					return &object.Integer{Value: int64(out)}
+				}
+				return &object.Float{Value: out}
 			},
 		},
 		"sqrt": {
@@ -1125,11 +1132,15 @@ func init() {
 				if len(args) != 1 {
 					return &object.String{Value: fmt.Sprintf("wrong number of arguments. got=%d, want=1", len(args))}
 				}
-				if args[0].Type() != object.INTEGER_OBJ {
-					return &object.String{Value: fmt.Sprintf("argument to `sqrt` must be INTEGER, got %s", args[0].Type())}
+				val, isInt, errObj := numberAsFloat(args[0], "value")
+				if errObj != nil {
+					return errObj
 				}
-				val := float64(args[0].(*object.Integer).Value)
-				return &object.Integer{Value: int64(math.Sqrt(val))}
+				out := math.Sqrt(val)
+				if isInt {
+					return &object.Integer{Value: int64(out)}
+				}
+				return &object.Float{Value: out}
 			},
 		},
 		"min": {

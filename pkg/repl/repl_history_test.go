@@ -186,6 +186,44 @@ func TestSuggestionLinesIncludeFunctionSignature(t *testing.T) {
 	}
 }
 
+func TestToolsBuiltinsAppearInPaletteAndSuggestions(t *testing.T) {
+	oldNames := BuiltinNames
+	oldHelp := BuiltinHelpTextFn
+	BuiltinNames = func() map[string]struct{} {
+		return map[string]struct{}{
+			"bulk_rename":   {},
+			"ffmpeg_status": {},
+		}
+	}
+	BuiltinHelpTextFn = func(name string) string {
+		switch name {
+		case "bulk_rename":
+			return "bulk_rename(dir[, opts]) previews or applies bulk file renames"
+		case "ffmpeg_status":
+			return "ffmpeg_status() reports ffmpeg/ffprobe availability"
+		default:
+			return ""
+		}
+	}
+	defer func() {
+		BuiltinNames = oldNames
+		BuiltinHelpTextFn = oldHelp
+	}()
+
+	palette := ReplPalette("ffmpeg", nil, nil)
+	if !strings.Contains(palette, "ffmpeg_status") {
+		t.Fatalf("expected ffmpeg_status in palette, got %q", palette)
+	}
+
+	editor := &ReplEditor{Candidates: ReplCandidatesForEnv(nil)}
+	ctx := ReplCompletionContext{Prefix: "bulk", Ok: true}
+	lines := editor.SuggestionLines(ctx, editor.Candidates, 120)
+	joined := strings.Join(lines, "\n")
+	if !strings.Contains(joined, "bulk_rename") || !strings.Contains(joined, "previews or applies") {
+		t.Fatalf("expected tool builtin suggestion details, got %#v", lines)
+	}
+}
+
 func TestBuiltinCallTipShowsParameter(t *testing.T) {
 	oldHasBuiltin := HasBuiltinFn
 	oldHelp := BuiltinHelpTextFn

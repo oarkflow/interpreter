@@ -3,7 +3,6 @@ package repl
 import (
 	"fmt"
 	"os"
-	"sort"
 	"strings"
 	"unicode"
 
@@ -178,64 +177,7 @@ func LooksLikeDateString(s string) bool {
 // FormatObjectPlain produces a plain-text representation of an object,
 // suitable for REPL output.
 func FormatObjectPlain(obj object.Object) string {
-	return formatObjectPlainDepth(obj, 0)
-}
-
-func formatObjectPlainDepth(obj object.Object, depth int) string {
-	if obj == nil {
-		return "null"
-	}
-	switch v := obj.(type) {
-	case *object.OwnedValue:
-		return formatObjectPlainDepth(v.Inner, depth)
-	case *object.ImmutableValue:
-		return formatObjectPlainDepth(v.Inner, depth)
-	case *object.GeneratorValue:
-		return formatObjectPlainDepth(&object.Array{Elements: v.Elements}, depth)
-	case *object.Array:
-		return formatArrayPlain(v, depth)
-	case *object.Hash:
-		return formatHashPlain(v, depth)
-	case *object.Function:
-		return v.Inspect()
-	default:
-		return obj.Inspect()
-	}
-}
-
-func formatArrayPlain(arr *object.Array, depth int) string {
-	if arr == nil || len(arr.Elements) == 0 {
-		return "[]"
-	}
-	indent := strings.Repeat("  ", depth)
-	childIndent := strings.Repeat("  ", depth+1)
-	parts := make([]string, 0, len(arr.Elements))
-	for _, el := range arr.Elements {
-		parts = append(parts, childIndent+formatObjectPlainDepth(el, depth+1))
-	}
-	return "[\n" + strings.Join(parts, ",\n") + "\n" + indent + "]"
-}
-
-func formatHashPlain(h *object.Hash, depth int) string {
-	if h == nil || len(h.Pairs) == 0 {
-		return "{}"
-	}
-	indent := strings.Repeat("  ", depth)
-	childIndent := strings.Repeat("  ", depth+1)
-	keys := make([]string, 0, len(h.Pairs))
-	keyToPair := make(map[string]object.HashPair, len(h.Pairs))
-	for _, pair := range h.Pairs {
-		key := pair.Key.Inspect()
-		keys = append(keys, key)
-		keyToPair[key] = pair
-	}
-	sort.Strings(keys)
-	parts := make([]string, 0, len(keys))
-	for _, key := range keys {
-		pair := keyToPair[key]
-		parts = append(parts, childIndent+key+": "+formatObjectPlainDepth(pair.Value, depth+1))
-	}
-	return "{\n" + strings.Join(parts, ",\n") + "\n" + indent + "}"
+	return object.FormatPlain(obj)
 }
 
 // FormatObjectForDisplay returns a colourised representation of an object

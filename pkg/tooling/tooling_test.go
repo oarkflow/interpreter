@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/oarkflow/interpreter/pkg/eval"
 )
 
 func TestCheckSourceProducesStructuredDiagnostics(t *testing.T) {
@@ -248,6 +250,108 @@ func TestCheckSourceAcceptsBuiltinModuleImports(t *testing.T) {
 	for _, diag := range report.Diagnostics {
 		if diag.Code == "missing-import" || diag.Code == "undefined" {
 			t.Fatalf("builtin module import should be recognized: %#v", diag)
+		}
+	}
+}
+
+func TestStdModuleHoverExplainsPurpose(t *testing.T) {
+	src := `import "std/math" as math;
+print math.median([1, 2, 3]);`
+	hover := HoverMarkdown(nil, "sample.spl", src, 1, 10)
+	if !strings.Contains(hover, "standard module") || !strings.Contains(hover, "numeric computing") || !strings.Contains(hover, "Key exports") {
+		t.Fatalf("expected std module purpose hover, got:\n%s", hover)
+	}
+}
+
+func TestRuntimeBuiltinDocsWinCompletionDetails(t *testing.T) {
+	src := `print med`
+	items := WorkspaceCompletionItems(nil, "sample.spl", src, "med")
+	if len(items) == 0 {
+		t.Fatal("expected median completion")
+	}
+	var median CompletionItem
+	for _, item := range items {
+		if item.Label == "median" {
+			median = item
+			break
+		}
+	}
+	if median.Label == "" || !strings.Contains(median.Detail, "Signature: `median(array)`") || !strings.Contains(median.Detail, "middle numeric value") {
+		t.Fatalf("expected rich median completion docs, got %#v", median)
+	}
+	hover := HoverMarkdown(nil, "sample.spl", `print median([1, 2, 3]);`, 1, 8)
+	if !strings.Contains(hover, "Signature: `median(array)`") || !strings.Contains(hover, "Returns: Number or null") {
+		t.Fatalf("expected rich median hover docs, got:\n%s", hover)
+	}
+}
+
+func TestToolsModuleCompletionHoverAndDocs(t *testing.T) {
+	src := `import "tools/files" as files;
+files.bulk`
+	items := CompletionItems("tools.spl", src, "bulk")
+	foundRename := false
+	for _, item := range items {
+		if item.Label == "bulk_rename" {
+			foundRename = true
+			if !strings.Contains(item.Detail, "bulk_rename(dir[, opts])") {
+				t.Fatalf("expected rich bulk_rename completion docs, got %#v", item)
+			}
+		}
+	}
+	if !foundRename {
+		t.Fatalf("expected tools/files alias completion to include bulk_rename, got %#v", items)
+	}
+
+	hover := HoverMarkdown(nil, "tools.spl", `import "tools/media" as media;
+media.media_convert("input.mov", "output.mp4", {"apply": false});`, 2, 9)
+	if !strings.Contains(hover, "media_convert(src, dst[, opts])") || !strings.Contains(hover, "ffmpeg") || !strings.Contains(hover, "tools/media") {
+		t.Fatalf("expected media_convert tools hover docs, got:\n%s", hover)
+	}
+
+	for _, name := range []string{"ffmpeg_install", "archive_compress"} {
+		doc := RuntimeDocMarkdown(name)
+		if !strings.Contains(doc, "Signature: `") || !strings.Contains(doc, "Available via: `tools/") {
+			t.Fatalf("expected tools doc for %s, got:\n%s", name, doc)
+		}
+	}
+}
+
+func TestBuiltinDocsCoverCoreFallbacks(t *testing.T) {
+	hover := HoverMarkdown(nil, "sample.spl", `ok = clamp(20, 0, 10);`, 1, 7)
+	for _, want := range []string{"Signature: `clamp(value, min, max)`", "Constrains a numeric value", "Available via"} {
+		if !strings.Contains(hover, want) {
+			t.Fatalf("expected clamp hover to contain %q, got:\n%s", want, hover)
+		}
+	}
+	if strings.Contains(hover, "clamp(...) builtin function") {
+		t.Fatalf("clamp hover fell back to generic text:\n%s", hover)
+	}
+
+	lenHover := HoverMarkdown(nil, "sample.spl", `ok = len([1, 2, 3]);`, 1, 6)
+	for _, want := range []string{"Signature: `len(value)`", "Returns the number of bytes in a string, elements in an array, or pairs in a hash.", "Returns: Integer"} {
+		if !strings.Contains(lenHover, want) {
+			t.Fatalf("expected len hover to contain %q, got:\n%s", want, lenHover)
+		}
+	}
+	if strings.Contains(lenHover, "workflows") || strings.Contains(lenHover, "print array.len(...)") {
+		t.Fatalf("len hover still has vague fallback text:\n%s", lenHover)
+	}
+}
+
+func TestEveryRegisteredBuiltinHasUsefulEditorDocs(t *testing.T) {
+	for _, name := range eval.BuiltinNames() {
+		doc := RuntimeDocMarkdown(name)
+		if strings.TrimSpace(doc) == "" {
+			t.Fatalf("missing editor docs for builtin %q", name)
+		}
+		if strings.Contains(doc, name+"(...) builtin function") {
+			t.Fatalf("generic editor docs for builtin %q:\n%s", name, doc)
+		}
+		if !strings.Contains(doc, "Signature: `") {
+			t.Fatalf("builtin %q docs missing signature:\n%s", name, doc)
+		}
+		if strings.Contains(doc, "workflows") {
+			t.Fatalf("builtin %q docs contain vague workflow filler:\n%s", name, doc)
 		}
 	}
 }

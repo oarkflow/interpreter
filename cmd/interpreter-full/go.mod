@@ -8,6 +8,7 @@ require (
 	github.com/oarkflow/interpreter/builtins/database v0.0.0
 	github.com/oarkflow/interpreter/builtins/images v0.0.0
 	github.com/oarkflow/interpreter/builtins/integrations v0.0.0
+	github.com/oarkflow/interpreter/builtins/tools v0.0.0
 	github.com/oarkflow/interpreter/config/yaml v0.0.0
 )
 
@@ -58,5 +59,7 @@ replace github.com/oarkflow/interpreter/builtins/database => ../../builtins/data
 replace github.com/oarkflow/interpreter/builtins/images => ../../builtins/images
 
 replace github.com/oarkflow/interpreter/builtins/integrations => ../../builtins/integrations
+
+replace github.com/oarkflow/interpreter/builtins/tools => ../../builtins/tools
 
 replace github.com/oarkflow/interpreter/config/yaml => ../../config/yaml

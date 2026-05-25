@@ -130,7 +130,7 @@ func writeRuntimeObject(env *object.Environment, out io.Writer, val object.Objec
 	if val == nil {
 		return writeRuntimeOutput(env, out, "null\n")
 	}
-	return writeRuntimeOutput(env, out, val.Inspect()+"\n")
+	return writeRuntimeOutput(env, out, object.FormatPlain(val)+"\n")
 }
 
 // ---------------------------------------------------------------------------

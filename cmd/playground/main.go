@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/oarkflow/interpreter"
+	_ "github.com/oarkflow/interpreter/builtins/tools"
 	_ "github.com/oarkflow/interpreter/pkg/builtins/reactive"
 	_ "github.com/oarkflow/interpreter/pkg/builtins/scheduler"
 	_ "github.com/oarkflow/interpreter/pkg/builtins/server"
@@ -214,6 +215,60 @@ let tiny = image("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQ
 // image_convert_file("tmp/tiny-large.png", "tmp/tiny-large.jpg", "jpeg");
 
 print "Write helpers are documented here for CLI/REPL workflows.";`,
+		"tools-files": `// Daily file tools are preview-first. This example only reads repository files
+// and produces operation plans; it does not rename, move, or write anything.
+
+import "tools/files";
+
+let rename_plan = bulk_rename("testdata", {
+	"match": "*.spl",
+	"template": "{date}_{seq}.{ext}",
+	"apply": false
+});
+
+let matches = file_search("testdata", {
+	"match": "*.spl",
+	"contains": "tools"
+});
+
+print rename_plan;
+print matches;`,
+		"tools-images": `// Image tools expose batch operations for CLI/REPL workflows.
+// The browser playground blocks writes, so the mutating example stays commented.
+
+import "tools/images";
+
+// let convert_plan = image_convert_batch("photos", "web", {
+// 	"from": ["jpg", "png"],
+// 	"to": "png",
+// 	"apply": false
+// });
+
+print "Use image_convert_batch(..., {\"apply\": false}) to preview image chores.";`,
+		"tools-media": `// Media tools use ffmpeg/ffprobe when available.
+// Install and conversion operations are explicit and preview-first.
+
+import "tools/media";
+
+let status = ffmpeg_status();
+// let install_preview = ffmpeg_install({"apply": false});
+// let convert_preview = media_convert("input.mov", "output.mp4", {
+// 	"codec": "libx264",
+// 	"crf": "23",
+// 	"install": true,
+// 	"apply": false
+// });
+
+print status;`,
+		"tools-secrets": `// Secret tools return masked SECRET values by default.
+
+import "tools/secrets";
+
+let password = secret_generate(32);
+let token = token_generate(24);
+
+print secret_mask(password);
+print secret_mask(token);`,
 		"modules": `import "testdata/modules/math.spl" as math;
 import {label} from "testdata/modules/math.spl";
 

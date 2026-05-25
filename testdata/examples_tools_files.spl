@@ -1,0 +1,15 @@
+import "tools/files";
+
+let plan = bulk_rename("testdata", {
+  "match": "__no_matching_files__",
+  "template": "{date}_{seq}.{ext}",
+  "apply": false
+});
+
+print sprintf("planned file operations: %d", len(plan));
+
+let found = file_search("testdata", {"match": "examples_tools_*.spl"});
+print sprintf("found tool examples: %d", len(found));
+
+let checksum = file_checksum("testdata/examples_tools_files.spl");
+print checksum.sha256;

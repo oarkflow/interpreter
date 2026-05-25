@@ -17,6 +17,9 @@
     "onCommand:spl.sessionCheckpoint",
     "onCommand:spl.sessionRestore",
     "onCommand:spl.sessionInspect",
+    "onCommand:spl.toolsFfmpegStatus",
+    "onCommand:spl.toolsInstallFfmpeg",
+    "onCommand:spl.toolsPreviewBulkRename",
     "onCommand:spl.restartLanguageServer",
     "onCommand:spl.showOutput"
   ],
@@ -62,6 +65,18 @@
       {
         "command": "spl.sessionInspect",
         "title": "SPL: Session Inspect"
+      },
+      {
+        "command": "spl.toolsFfmpegStatus",
+        "title": "SPL: Tools FFmpeg Status"
+      },
+      {
+        "command": "spl.toolsInstallFfmpeg",
+        "title": "SPL: Tools Install FFmpeg"
+      },
+      {
+        "command": "spl.toolsPreviewBulkRename",
+        "title": "SPL: Tools Preview Bulk Rename"
       },
       {
         "command": "spl.restartLanguageServer",

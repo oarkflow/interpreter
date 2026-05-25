@@ -83,7 +83,16 @@ func TestDiscoveryMetaCommands(t *testing.T) {
 			t.Fatalf(":examples was not handled")
 		}
 	})
-	if !strings.Contains(out, "examples_runtime_workspace.spl") {
+	if !strings.Contains(out, "examples_runtime_workspace.spl") || !strings.Contains(out, "examples_tools_files.spl") || !strings.Contains(out, "examples_tools_media.spl") {
 		t.Fatalf("unexpected examples output: %q", out)
+	}
+
+	out = captureStdout(t, func() {
+		if !HandleReplMetaCommand(":tools", nil, nil) {
+			t.Fatalf(":tools was not handled")
+		}
+	})
+	if !strings.Contains(out, "tools/files") || !strings.Contains(out, "bulk_rename") || !strings.Contains(out, "ffmpeg_status") {
+		t.Fatalf("unexpected tools output: %q", out)
 	}
 }

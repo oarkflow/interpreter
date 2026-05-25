@@ -25,6 +25,18 @@ func TestEvalForPlaygroundCapturesOutputAndResult(t *testing.T) {
 	}
 }
 
+func TestEvalForPlaygroundFormatsNestedResultAndPrintOutput(t *testing.T) {
+	res := EvalForPlayground(`let ops = [{"status": "planned", "op": "rename"}]; print ops; ops;`, PlaygroundOptions{TimeoutMS: 2000})
+	if res.Error != "" {
+		t.Fatalf("unexpected error: %s", res.Error)
+	}
+	for _, got := range []string{res.Output, res.Result} {
+		if !strings.Contains(got, "[\n") || !strings.Contains(got, "status: planned") {
+			t.Fatalf("expected pretty nested output, got %q", got)
+		}
+	}
+}
+
 func TestEvalForPlaygroundReturnsParserErrors(t *testing.T) {
 	res := EvalForPlayground(`let x = ;`, PlaygroundOptions{TimeoutMS: 2000})
 	if res.Error == "" {
