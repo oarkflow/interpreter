@@ -1,4 +1,4 @@
-package main
+package tooling
 
 import (
 	"encoding/json"
@@ -10,9 +10,11 @@ import (
 	"strings"
 	"unicode"
 
-	"github.com/oarkflow/interpreter"
 	"github.com/oarkflow/interpreter/pkg/ast"
 	"github.com/oarkflow/interpreter/pkg/eval"
+	"github.com/oarkflow/interpreter/pkg/lexer"
+	"github.com/oarkflow/interpreter/pkg/parser"
+	"github.com/oarkflow/interpreter/pkg/pkgmgr"
 
 	// Keep editor tooling aligned with the first-party runtime packages shipped
 	// in this repository, not just the minimal CLI builtin set.
@@ -110,6 +112,14 @@ type HoverInfo struct {
 
 var parserLineColRe = regexp.MustCompile(`^Line (\d+)(?::(\d+))?`)
 
+var knownStdModules = map[string]struct{}{
+	"std/core":   {},
+	"std/fs":     {},
+	"std/render": {},
+	"std/test":   {},
+	"std/config": {},
+}
+
 func CheckSource(path, src string) Report {
 	return analyzeSource(path, src, false)
 }
@@ -129,8 +139,8 @@ func DiagnosticsJSON(diags []Diagnostic) ([]byte, error) {
 func analyzeSource(path, src string, format bool) Report {
 	report := Report{Path: path, OK: true}
 
-	l := interpreter.NewLexer(src)
-	p := interpreter.NewParser(l)
+	l := lexer.NewLexer(src)
+	p := parser.NewParser(l)
 	program := p.ParseProgram()
 	if len(p.Errors()) != 0 {
 		report.OK = false
@@ -216,13 +226,16 @@ func StaticDiagnostics(path, src string, program *ast.Program) []Diagnostic {
 		return nil
 	}
 	checker := &staticChecker{
-		path:          path,
-		src:           src,
-		scopes:        []map[string]Symbol{{}},
-		diags:         []Diagnostic{},
-		deprecated:    map[string]string{"puts": "prefer print or printf for new code"},
-		builtinNames:  builtinNameSet(),
-		declaredLines: map[string]int{},
+		path:           path,
+		src:            src,
+		scopes:         []map[string]Symbol{{}},
+		diags:          []Diagnostic{},
+		deprecated:     map[string]string{"puts": "prefer print or printf for new code"},
+		builtinNames:   builtinNameSet(),
+		declaredLines:  map[string]int{},
+		typeVariants:   map[string][]string{},
+		constructorFor: map[string]string{},
+		variableTypes:  map[string]string{},
 	}
 	checker.seedGlobals()
 	checker.walkProgram(program)
@@ -230,13 +243,16 @@ func StaticDiagnostics(path, src string, program *ast.Program) []Diagnostic {
 }
 
 type staticChecker struct {
-	path          string
-	src           string
-	scopes        []map[string]Symbol
-	diags         []Diagnostic
-	deprecated    map[string]string
-	builtinNames  map[string]struct{}
-	declaredLines map[string]int
+	path           string
+	src            string
+	scopes         []map[string]Symbol
+	diags          []Diagnostic
+	deprecated     map[string]string
+	builtinNames   map[string]struct{}
+	declaredLines  map[string]int
+	typeVariants   map[string][]string
+	constructorFor map[string]string
+	variableTypes  map[string]string
 }
 
 func (c *staticChecker) seedGlobals() {
@@ -252,15 +268,23 @@ func (c *staticChecker) pushScope() { c.scopes = append(c.scopes, map[string]Sym
 func (c *staticChecker) popScope()  { c.scopes = c.scopes[:len(c.scopes)-1] }
 
 func (c *staticChecker) declare(name, kind string) {
+	c.declareWithOptions(name, kind, true, true)
+}
+
+func (c *staticChecker) declarePatternBinding(name string) {
+	c.declareWithOptions(name, "variable", false, false)
+}
+
+func (c *staticChecker) declareWithOptions(name, kind string, warnDuplicate, warnOuter bool) {
 	if strings.TrimSpace(name) == "" {
 		return
 	}
 	line, col := findNamePosition(c.src, name)
 	scope := c.scopes[len(c.scopes)-1]
-	if _, ok := scope[name]; ok {
+	if existing, ok := scope[name]; ok && warnDuplicate && !isSeededGlobal(existing) {
 		c.warn("shadow", name, line, col, fmt.Sprintf("%q is already declared in this scope", name), "rename one binding or remove the duplicate declaration")
 	}
-	if _, ok := c.lookupOuter(name); ok && kind != "parameter" {
+	if existing, ok := c.lookupOuter(name); ok && warnOuter && kind != "parameter" && !isSeededGlobal(existing) {
 		c.warn("shadow", name, line, col, fmt.Sprintf("%q shadows an outer binding", name), "shadowing can make scripts harder to debug")
 	}
 	scope[name] = Symbol{Name: name, Kind: kind, Path: c.path, Line: line, Column: col}
@@ -347,6 +371,13 @@ func (c *staticChecker) walkStatement(stmt ast.Statement) {
 			}
 		}
 		c.walkExpression(s.Value)
+		if typ := c.inferExpressionType(s.Value); typ != "" {
+			for _, n := range names {
+				if n != nil {
+					c.variableTypes[n.Name] = typ
+				}
+			}
+		}
 	case *ast.DestructureLetStatement:
 		c.walkExpression(s.Value)
 		c.declarePatternBindings(s.Pattern)
@@ -411,6 +442,10 @@ func (c *staticChecker) walkStatement(stmt ast.Statement) {
 		for _, v := range s.Variants {
 			if v != nil && v.Name != nil {
 				c.declare(v.Name.Name, "constructor")
+				if s.Name != nil {
+					c.typeVariants[s.Name.Name] = append(c.typeVariants[s.Name.Name], v.Name.Name)
+					c.constructorFor[v.Name.Name] = s.Name.Name
+				}
 			}
 		}
 	case *ast.ClassStatement:
@@ -519,10 +554,14 @@ func (c *staticChecker) walkExpression(expr ast.Expression) {
 		c.walkExpression(e.Right)
 	case *ast.MatchExpression:
 		c.walkExpression(e.Value)
-		hasWildcard := false
+		hasFallback := false
+		constructorCases := map[string]struct{}{}
 		for _, mc := range e.Cases {
-			if _, ok := mc.Pattern.(*ast.WildcardPattern); ok {
-				hasWildcard = true
+			if mc.Guard == nil && c.isExhaustiveFallbackPattern(mc.Pattern) {
+				hasFallback = true
+			}
+			if mc.Guard == nil {
+				collectConstructorPatterns(mc.Pattern, constructorCases)
 			}
 			c.pushScope()
 			c.declareMatchPatternBindings(mc.Pattern)
@@ -530,7 +569,7 @@ func (c *staticChecker) walkExpression(expr ast.Expression) {
 			c.walkBlock(mc.Body)
 			c.popScope()
 		}
-		if len(e.Cases) > 0 && !hasWildcard {
+		if len(e.Cases) > 0 && !hasFallback && c.knownConstructorTypeMissingCases(e.Value, constructorCases) {
 			line := e.Cases[len(e.Cases)-1].Line
 			c.warn("match-exhaustiveness", "", line, 1, "match expression has no wildcard fallback", "add `case _ => { ... }` unless all variants are intentionally covered")
 		}
@@ -563,21 +602,21 @@ func (c *staticChecker) declareMatchPatternBindings(p ast.Pattern) {
 	switch p := p.(type) {
 	case *ast.BindingPattern:
 		if p.Name != nil && p.Name.Name != "_" {
-			c.declare(p.Name.Name, "variable")
+			c.declarePatternBinding(p.Name.Name)
 		}
 	case *ast.ArrayPattern:
 		for _, child := range p.Elements {
 			c.declareMatchPatternBindings(child)
 		}
 		if p.Rest != nil {
-			c.declare(p.Rest.Name, "variable")
+			c.declarePatternBinding(p.Rest.Name)
 		}
 	case *ast.ObjectPattern:
 		for _, child := range p.Patterns {
 			c.declareMatchPatternBindings(child)
 		}
 		if p.Rest != nil {
-			c.declare(p.Rest.Name, "variable")
+			c.declarePatternBinding(p.Rest.Name)
 		}
 	case *ast.OrPattern:
 		for _, child := range p.Patterns {
@@ -590,6 +629,62 @@ func (c *staticChecker) declareMatchPatternBindings(p ast.Pattern) {
 	case *ast.ConstructorPattern:
 		for _, child := range p.Args {
 			c.declareMatchPatternBindings(child)
+		}
+	}
+}
+
+func (c *staticChecker) inferExpressionType(expr ast.Expression) string {
+	switch e := expr.(type) {
+	case *ast.CallExpression:
+		if id, ok := e.Function.(*ast.Identifier); ok {
+			return c.constructorFor[id.Name]
+		}
+	case *ast.Identifier:
+		return c.variableTypes[e.Name]
+	}
+	return ""
+}
+
+func (c *staticChecker) isExhaustiveFallbackPattern(p ast.Pattern) bool {
+	switch p := p.(type) {
+	case *ast.WildcardPattern:
+		return true
+	case *ast.BindingPattern:
+		return p.TypeName == ""
+	case *ast.OrPattern:
+		for _, child := range p.Patterns {
+			if c.isExhaustiveFallbackPattern(child) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func (c *staticChecker) knownConstructorTypeMissingCases(value ast.Expression, seen map[string]struct{}) bool {
+	typ := c.inferExpressionType(value)
+	if typ == "" {
+		return false
+	}
+	variants := c.typeVariants[typ]
+	if len(variants) == 0 {
+		return false
+	}
+	for _, name := range variants {
+		if _, ok := seen[name]; !ok {
+			return true
+		}
+	}
+	return false
+}
+
+func collectConstructorPatterns(p ast.Pattern, seen map[string]struct{}) {
+	switch p := p.(type) {
+	case *ast.ConstructorPattern:
+		seen[p.Name] = struct{}{}
+	case *ast.OrPattern:
+		for _, child := range p.Patterns {
+			collectConstructorPatterns(child, seen)
 		}
 	}
 }
@@ -610,17 +705,69 @@ func (c *staticChecker) checkImport(s *ast.ImportStatement) {
 	if strings.Contains(sl.Value, "://") {
 		return
 	}
-	candidates := []string{sl.Value}
-	if c.path != "" && c.path != DefaultStdinPath() {
-		candidates = append([]string{filepath.Join(filepath.Dir(c.path), sl.Value)}, candidates...)
-	}
-	for _, candidate := range candidates {
-		if _, err := os.Stat(candidate); err == nil {
-			return
-		}
+	if importPathResolvable(sl.Value, c.path) {
+		return
 	}
 	line, col := findNamePosition(c.src, sl.Value)
 	c.warn("missing-import", sl.Value, line, col, fmt.Sprintf("import path %q was not found", sl.Value), "check the path, spl.mod alias, or SPL_MODULE_PATH")
+}
+
+func importPathResolvable(importPath, sourcePath string) bool {
+	importPath = strings.TrimSpace(importPath)
+	if importPath == "" {
+		return false
+	}
+	if _, ok := knownStdModules[importPath]; ok {
+		return true
+	}
+
+	moduleDir := ""
+	if sourcePath != "" && sourcePath != DefaultStdinPath() {
+		moduleDir = filepath.Dir(sourcePath)
+	}
+	if resolved, matched, err := pkgmgr.ResolveManifestImport(importPath, moduleDir, sourcePath); err == nil && matched {
+		if _, ok := knownStdModules[importPath]; ok {
+			return true
+		}
+		return pathExists(resolved)
+	}
+
+	candidates := []string{importPath}
+	if moduleDir != "" {
+		candidates = append([]string{filepath.Join(moduleDir, importPath)}, candidates...)
+	}
+	for _, base := range importSearchPaths() {
+		candidates = append(candidates, filepath.Join(base, importPath))
+	}
+	for _, candidate := range candidates {
+		if pathExists(candidate) {
+			return true
+		}
+	}
+	return false
+}
+
+func pathExists(path string) bool {
+	if _, err := os.Stat(path); err == nil {
+		return true
+	}
+	return false
+}
+
+func importSearchPaths() []string {
+	raw := strings.TrimSpace(os.Getenv("SPL_MODULE_PATH"))
+	if raw == "" {
+		return nil
+	}
+	parts := strings.Split(raw, string(os.PathListSeparator))
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 func builtinNameSet() map[string]struct{} {
@@ -628,10 +775,17 @@ func builtinNameSet() map[string]struct{} {
 	for _, name := range eval.BuiltinNames() {
 		out[name] = struct{}{}
 	}
+	for name := range eval.BuiltinHelpDescriptions {
+		out[name] = struct{}{}
+	}
 	for name := range splRuntimeDocs {
 		out[name] = struct{}{}
 	}
 	return out
+}
+
+func isSeededGlobal(sym Symbol) bool {
+	return sym.Kind == "builtin" || sym.Kind == "global"
 }
 
 func isLanguageWord(name string) bool {
@@ -679,8 +833,8 @@ func findNamePosition(src, name string) (int, int) {
 }
 
 func SymbolsForSource(path, src string) []Symbol {
-	l := interpreter.NewLexer(src)
-	p := interpreter.NewParser(l)
+	l := lexer.NewLexer(src)
+	p := parser.NewParser(l)
 	program := p.ParseProgram()
 	if len(p.Errors()) != 0 || program == nil {
 		return nil
@@ -868,6 +1022,10 @@ func wordAt(src string, line, col int) string {
 		end++
 	}
 	return string(runes[start:end])
+}
+
+func WordAt(src string, line, col int) string {
+	return wordAt(src, line, col)
 }
 
 func DocsMarkdown(path, src string) string {

@@ -9,6 +9,7 @@ import (
 	. "github.com/oarkflow/interpreter"
 	"github.com/oarkflow/interpreter/pkg/parser"
 	"github.com/oarkflow/interpreter/pkg/repl"
+	"github.com/oarkflow/interpreter/pkg/tooling"
 
 	_ "github.com/oarkflow/interpreter/pkg/builtins"
 	_ "github.com/oarkflow/interpreter/pkg/builtins/reactive"
@@ -67,6 +68,84 @@ func TestReplDocTextForBuiltinAndVariable(t *testing.T) {
 	}
 	if got := repl.ReplDocText("cfg", env); !strings.Contains(got, "cfg: HASH") || !strings.Contains(got, "port: 8080") {
 		t.Fatalf("unexpected variable doc: %q", got)
+	}
+}
+
+func TestReplWorkspaceCompletionsMergeWithSession(t *testing.T) {
+	dir := t.TempDir()
+	srcPath := filepath.Join(dir, "lib.spl")
+	src := "let workspaceValue = 1;\nlet workspaceAdd = function(a, b) { return a + b; };\n"
+	if err := os.WriteFile(srcPath, []byte(src), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	env := NewGlobalEnvironment(nil)
+	env.Set("sessionValue", &Integer{Value: 42})
+	editor := &repl.ReplEditor{
+		Env:        env,
+		Candidates: repl.ReplCandidatesForEnv(env),
+		Index:      tooling.NewWorkspaceIndex(dir),
+		SourcePath: "<repl>",
+	}
+	ctx := repl.ReplCompletionContext{Prefix: "workspace", Ok: true}
+	got := strings.Join(editor.CompletionsForContext(ctx), " ")
+	if !strings.Contains(got, "workspaceValue") || !strings.Contains(got, "workspaceAdd") {
+		t.Fatalf("expected workspace completions, got %s", got)
+	}
+	ctx = repl.ReplCompletionContext{Prefix: "session", Ok: true}
+	got = strings.Join(editor.CompletionsForContext(ctx), " ")
+	if !strings.Contains(got, "sessionValue") {
+		t.Fatalf("expected session completion, got %s", got)
+	}
+}
+
+func TestReplToolingMetaCommands(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "main.spl")
+	src := "let answer = 42;\nprint(answer);\n"
+	if err := os.WriteFile(path, []byte(src), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	editor := &repl.ReplEditor{
+		Index:      tooling.NewWorkspaceIndex(dir),
+		SourcePath: "<repl>",
+		Source:     src,
+	}
+	editor.Index.Update(editor.SourcePath, editor.Source)
+
+	out := captureReplStdout(t, func() {
+		if !repl.HandleReplMetaCommand(":symbols answer", editor, nil) {
+			t.Fatalf(":symbols was not handled")
+		}
+	})
+	if !strings.Contains(out, "answer") || !strings.Contains(out, "variable") {
+		t.Fatalf("unexpected symbols output: %q", out)
+	}
+
+	out = captureReplStdout(t, func() {
+		if !repl.HandleReplMetaCommand(":def answer", editor, nil) {
+			t.Fatalf(":def was not handled")
+		}
+	})
+	if !strings.Contains(out, "answer") || !strings.Contains(out, ":1:5") {
+		t.Fatalf("unexpected definition output: %q", out)
+	}
+
+	out = captureReplStdout(t, func() {
+		if !repl.HandleReplMetaCommand(":refs answer", editor, nil) {
+			t.Fatalf(":refs was not handled")
+		}
+	})
+	if strings.Count(out, "answer") < 2 {
+		t.Fatalf("unexpected references output: %q", out)
+	}
+
+	out = captureReplStdout(t, func() {
+		if !repl.HandleReplMetaCommand(":diagnostics let x = ;", editor, nil) {
+			t.Fatalf(":diagnostics was not handled")
+		}
+	})
+	if !strings.Contains(out, "error") || !strings.Contains(out, "expected") {
+		t.Fatalf("unexpected diagnostics output: %q", out)
 	}
 }
 

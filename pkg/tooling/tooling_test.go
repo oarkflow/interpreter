@@ -1,7 +1,9 @@
-package main
+package tooling
 
 import (
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -59,7 +61,9 @@ let x = 1;
 let x = 2;
 print missingName;
 function f() { return 1; print "dead"; }
-match (x) { case n: integer => { n; } }
+type Maybe = Present(value) | Absent();
+let maybe = Present(1);
+match (maybe) { case Present(n) => { n; } }
 `)
 	if !report.OK {
 		t.Fatalf("warnings should not fail check: %#v", report.Diagnostics)
@@ -71,6 +75,75 @@ match (x) { case n: integer => { n; } }
 	for _, want := range []string{"shadow", "undefined", "unreachable", "match-exhaustiveness"} {
 		if !strings.Contains(joined, want) {
 			t.Fatalf("expected %s warning in diagnostics:\n%s", want, joined)
+		}
+	}
+}
+
+func TestCheckSourceAvoidsKnownFalsePositiveWarnings(t *testing.T) {
+	src := `
+let tiny = "data:image/png;base64,abc";
+let original = image_load(tiny);
+let compact = table_select([], ["name"]);
+let x = 42;
+let classified = match (x) {
+	case value => value
+};
+type Result = Ok(value) | Err(message);
+let res = Ok(42);
+let out = match (res) {
+	case Ok(v) => v
+	case Err(e) => e
+};
+`
+	report := CheckSource("sample.spl", src)
+	for _, diag := range report.Diagnostics {
+		if diag.Code == "undefined" && strings.Contains(diag.Message, "image_load") {
+			t.Fatalf("image_load should be recognized as a documented builtin: %#v", diag)
+		}
+		if diag.Code == "shadow" && strings.Contains(diag.Message, "compact") {
+			t.Fatalf("declaring compact should not conflict with the builtin seed: %#v", diag)
+		}
+		if diag.Code == "shadow" && strings.Contains(diag.Message, "value") {
+			t.Fatalf("match binding should not warn as shadowing/noisy duplicate: %#v", diag)
+		}
+		if diag.Code == "match-exhaustiveness" {
+			t.Fatalf("binding fallback and covered ADT variants should not warn as non-exhaustive: %#v", diag)
+		}
+	}
+}
+
+func TestCheckSourceAcceptsStdManifestAndModulePathImports(t *testing.T) {
+	dir := t.TempDir()
+	depDir := filepath.Join(dir, "deps", "showpkg")
+	modulePathDir := filepath.Join(dir, "module-path")
+	if err := os.MkdirAll(depDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(modulePathDir, "extras"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(depDir, "math.spl"), []byte("export let answer = 42;"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(modulePathDir, "extras", "util.spl"), []byte("export let util = 1;"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	manifest := `{"module":"sample","dependencies":{"showpkg":"./deps/showpkg"}}`
+	if err := os.WriteFile(filepath.Join(dir, "spl.mod"), []byte(manifest), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("SPL_MODULE_PATH", modulePathDir)
+
+	src := strings.Join([]string{
+		`import "std/core" as core;`,
+		`import "showpkg/math.spl" as math;`,
+		`import "extras/util.spl" as util;`,
+		`print core.sprintf("%d", math.answer + util.util);`,
+	}, "\n")
+	report := CheckSource(filepath.Join(dir, "main.spl"), src)
+	for _, diag := range report.Diagnostics {
+		if diag.Code == "missing-import" {
+			t.Fatalf("expected import to resolve, got diagnostic: %#v", diag)
 		}
 	}
 }

@@ -6,6 +6,7 @@ VSCODE_EXTENSION_VERSION := 0.1.0
 VSCODE_EXTENSIONS_DIR ?= $(HOME)/.vscode/extensions
 VSCODE_EXTENSION_INSTALL_DIR := $(VSCODE_EXTENSIONS_DIR)/$(VSCODE_EXTENSION_ID)-$(VSCODE_EXTENSION_VERSION)
 CODE ?= code
+VSCODE_URL_SCHEME ?= vscode
 
 .PHONY: install-extension vscode-extension-install reload-vscode vscode-extension-compile vscode-extension-clean
 
@@ -24,7 +25,7 @@ vscode-extension-install: vscode-extension-compile
 		"$(VSCODE_EXTENSION_DIR)/out" \
 		"$(VSCODE_EXTENSION_DIR)/node_modules" \
 		"$(VSCODE_EXTENSION_INSTALL_DIR)/"
-	@echo "Installed $(VSCODE_EXTENSION_ID). Restart or reload VS Code if needed."
+	@echo "Installed $(VSCODE_EXTENSION_ID). Reloading VS Code window."
 
 vscode-extension-compile:
 	@cd "$(VSCODE_EXTENSION_DIR)" && npm install
@@ -32,7 +33,7 @@ vscode-extension-compile:
 
 reload-vscode:
 	@$(CODE) --reuse-window .
-	@$(CODE) --reuse-window "vscode://command/workbench.action.reloadWindow"
+	@open "$(VSCODE_URL_SCHEME)://command/workbench.action.reloadWindow"
 
 vscode-extension-clean:
 	@rm -rf "$(VSCODE_EXTENSION_DIR)/node_modules" "$(VSCODE_EXTENSION_DIR)/out"

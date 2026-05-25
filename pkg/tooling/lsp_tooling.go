@@ -1,8 +1,9 @@
-package main
+package tooling
 
 import (
 	"bytes"
 	"fmt"
+	"io"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -12,8 +13,9 @@ import (
 	"time"
 	"unicode"
 
-	"github.com/oarkflow/interpreter"
 	"github.com/oarkflow/interpreter/pkg/ast"
+	"github.com/oarkflow/interpreter/pkg/lexer"
+	"github.com/oarkflow/interpreter/pkg/parser"
 )
 
 var splIdentifierRe = regexp.MustCompile(`[A-Za-z_][A-Za-z0-9_]*`)
@@ -1192,8 +1194,8 @@ func operatorWordContext(line, word string, env map[string]hoverValue) string {
 }
 
 func parseProgramForHover(src string) *ast.Program {
-	l := interpreter.NewLexer(src)
-	p := interpreter.NewParser(l)
+	l := lexer.NewLexer(src)
+	p := parser.NewParser(l)
 	program := p.ParseProgram()
 	if len(p.Errors()) != 0 {
 		return nil
@@ -1458,6 +1460,10 @@ func completionDetail(item CompletionItem) string {
 	return item.Kind
 }
 
+func CompletionDetail(item CompletionItem) string {
+	return completionDetail(item)
+}
+
 func firstLine(s string) string {
 	if idx := strings.IndexByte(s, '\n'); idx >= 0 {
 		return s[:idx]
@@ -1605,6 +1611,10 @@ func charAtPosition(src string, line, col int) rune {
 	return runes[idx]
 }
 
+type ExecuteSPLFunc func(path, src string, opts EvaluationOptions, output io.Writer) (result string, err error)
+
+var ExecuteSPLFn ExecuteSPLFunc
+
 func EvaluateSPL(path, src string, opts EvaluationOptions) EvaluationResult {
 	start := time.Now()
 	profile := strings.ToLower(strings.TrimSpace(opts.Profile))
@@ -1630,25 +1640,27 @@ func EvaluateSPL(path, src string, opts EvaluationOptions) EvaluationResult {
 	if maxDepth <= 0 {
 		maxDepth = 128
 	}
+	opts.Profile = profile
+	opts.TimeoutMS = timeout.Milliseconds()
+	opts.MaxOutputBytes = maxOutput
+	opts.MaxSteps = maxSteps
+	opts.MaxDepth = maxDepth
 	var output bytes.Buffer
-	obj, err := interpreter.ExecWithOptions(src, nil, interpreter.ExecOptions{
-		Profile:                profile,
-		ModuleDir:              moduleDirForPath(path),
-		Timeout:                timeout,
-		MaxSteps:               maxSteps,
-		MaxDepth:               maxDepth,
-		MaxOutputBytes:         maxOutput,
-		Output:                 &output,
-		AllowInProcessFallback: true,
-	})
-	result := EvaluationResult{OK: err == nil, Path: path, Output: output.String(), Duration: time.Since(start).Milliseconds()}
+	result := EvaluationResult{Path: path, Duration: time.Since(start).Milliseconds()}
+	if ExecuteSPLFn == nil {
+		result.OK = false
+		result.Error = "SPL evaluation is not configured"
+		return result
+	}
+	inspect, err := ExecuteSPLFn(path, src, opts, &output)
+	result.OK = err == nil
+	result.Output = output.String()
+	result.Duration = time.Since(start).Milliseconds()
 	if err != nil {
 		result.Error = err.Error()
 		return result
 	}
-	if obj != nil {
-		result.Result = obj.Inspect()
-	}
+	result.Result = inspect
 	return result
 }
 
@@ -1747,6 +1759,10 @@ func cleanAbsPath(path string) string {
 	return filepath.Clean(path)
 }
 
+func CleanAbsPath(path string) string {
+	return cleanAbsPath(path)
+}
+
 func moduleDirForPath(path string) string {
 	if path == "" || path == DefaultStdinPath() {
 		return "."
@@ -1754,9 +1770,17 @@ func moduleDirForPath(path string) string {
 	return filepath.Dir(path)
 }
 
+func ModuleDirForPath(path string) string {
+	return moduleDirForPath(path)
+}
+
 func pathToURI(path string) string {
 	u := url.URL{Scheme: "file", Path: filepath.ToSlash(cleanAbsPath(path))}
 	return u.String()
+}
+
+func PathToURI(path string) string {
+	return pathToURI(path)
 }
 
 func uriToPath(uri string) string {
@@ -1772,6 +1796,10 @@ func uriToPath(uri string) string {
 		path = p
 	}
 	return cleanAbsPath(filepath.FromSlash(path))
+}
+
+func URIToPath(uri string) string {
+	return uriToPath(uri)
 }
 
 func prefixAt(src string, line, col int) string {
@@ -1794,6 +1822,10 @@ func prefixAt(src string, line, col int) string {
 	return string(runes[start:idx])
 }
 
+func PrefixAt(src string, line, col int) string {
+	return prefixAt(src, line, col)
+}
+
 func runeColumn(s string, byteOffset int) int {
 	if byteOffset <= 0 {
 		return 0
@@ -1804,9 +1836,17 @@ func runeColumn(s string, byteOffset int) int {
 	return len([]rune(s[:byteOffset]))
 }
 
+func RuneColumn(s string, byteOffset int) int {
+	return runeColumn(s, byteOffset)
+}
+
 func symbolSummary(sym Symbol) string {
 	if sym.Detail != "" {
 		return fmt.Sprintf("%s %s - %s", sym.Kind, sym.Name, sym.Detail)
 	}
 	return fmt.Sprintf("%s %s", sym.Kind, sym.Name)
+}
+
+func SymbolSummary(sym Symbol) string {
+	return symbolSummary(sym)
 }

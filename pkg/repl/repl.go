@@ -17,6 +17,7 @@ import (
 
 	"github.com/oarkflow/interpreter/pkg/object"
 	"github.com/oarkflow/interpreter/pkg/pkgmgr"
+	"github.com/oarkflow/interpreter/pkg/tooling"
 )
 
 // ---------------------------------------------------------------------------
@@ -133,6 +134,9 @@ type ReplEditor struct {
 	HistoryFile string
 	HistoryBase int
 	Candidates  []string
+	Index       *tooling.WorkspaceIndex
+	SourcePath  string
+	Source      string
 }
 
 const replHistoryFileName = ".interpreter_repl_history"
@@ -233,6 +237,7 @@ func RunReplInteractive(env *object.Environment) error {
 		}
 
 		EvalReplInput(input, env)
+		editor.RecordInput(input)
 	}
 }
 
@@ -1243,6 +1248,11 @@ func HandleReplMetaCommand(line string, editor *ReplEditor, env *object.Environm
 		ReplPrintLine("- :vars       list all variables in current environment")
 		ReplPrintLine("- :type <expr> show the type of an expression")
 		ReplPrintLine("- :doc <name> show builtin/object documentation")
+		ReplPrintLine("- :diagnostics [source] show parser/static diagnostics")
+		ReplPrintLine("- :symbols [query] list REPL/workspace symbols")
+		ReplPrintLine("- :def <name> show symbol definition")
+		ReplPrintLine("- :refs <name> show symbol references")
+		ReplPrintLine("- :format [source] format SPL source")
 		ReplPrintLine("- :methods <expr> list methods available on a value")
 		ReplPrintLine("- :fields <expr> list fields available on a value")
 		ReplPrintLine("- :ast <expr> print parsed AST representation")
@@ -1353,6 +1363,12 @@ func HandleReplMetaCommand(line string, editor *ReplEditor, env *object.Environm
 			env.Store = make(map[string]object.Object)
 			env.Mu.Unlock()
 		}
+		if editor != nil {
+			editor.Source = ""
+			if editor.Index != nil {
+				editor.Index.Remove(editor.SourcePath)
+			}
+		}
 		ReplPrintLine("environment reset")
 		return true
 	}
@@ -1374,7 +1390,66 @@ func HandleReplMetaCommand(line string, editor *ReplEditor, env *object.Environm
 	}
 	if strings.HasPrefix(trimmed, ":doc ") {
 		target := strings.TrimSpace(strings.TrimPrefix(trimmed, ":doc "))
+		if doc := replToolingDoc(target, editor); doc != "" {
+			replPrintBlock(doc)
+			return true
+		}
 		replPrintBlock(ReplDocText(target, env))
+		return true
+	}
+	if trimmed == ":diagnostics" || strings.HasPrefix(trimmed, ":diagnostics ") {
+		source := strings.TrimSpace(strings.TrimPrefix(trimmed, ":diagnostics"))
+		if source == "" && editor != nil {
+			source = editor.Source
+		}
+		if strings.TrimSpace(source) == "" {
+			ReplPrintLine("usage: :diagnostics <source> or run some REPL input first")
+			return true
+		}
+		replPrintDiagnostics(tooling.CheckSource(replSourcePath(editor), source).Diagnostics)
+		return true
+	}
+	if trimmed == ":symbols" || strings.HasPrefix(trimmed, ":symbols ") {
+		query := strings.ToLower(strings.TrimSpace(strings.TrimPrefix(trimmed, ":symbols")))
+		symbols := replSymbols(editor)
+		count := 0
+		for _, sym := range symbols {
+			if query != "" && !strings.Contains(strings.ToLower(sym.Name), query) {
+				continue
+			}
+			ReplPrintLine(fmt.Sprintf("%s %s  %s:%d:%d", sym.Kind, sym.Name, sym.Path, sym.Line, sym.Column))
+			count++
+		}
+		if count == 0 {
+			ReplPrintLine("no symbols found")
+		}
+		return true
+	}
+	if strings.HasPrefix(trimmed, ":def ") {
+		name := strings.TrimSpace(strings.TrimPrefix(trimmed, ":def "))
+		replPrintDefinition(name, editor)
+		return true
+	}
+	if strings.HasPrefix(trimmed, ":refs ") {
+		name := strings.TrimSpace(strings.TrimPrefix(trimmed, ":refs "))
+		replPrintReferences(name, editor)
+		return true
+	}
+	if trimmed == ":format" || strings.HasPrefix(trimmed, ":format ") {
+		source := strings.TrimSpace(strings.TrimPrefix(trimmed, ":format"))
+		if source == "" && editor != nil {
+			source = editor.Source
+		}
+		if strings.TrimSpace(source) == "" {
+			ReplPrintLine("usage: :format <source> or run some REPL input first")
+			return true
+		}
+		report := tooling.FormatSource(replSourcePath(editor), source)
+		if len(report.Diagnostics) > 0 {
+			replPrintDiagnostics(report.Diagnostics)
+			return true
+		}
+		replPrintBlock(strings.TrimRight(report.Formatted, "\n"))
 		return true
 	}
 	if strings.HasPrefix(trimmed, ":methods ") {
@@ -1474,6 +1549,9 @@ func HandleReplMetaCommand(line string, editor *ReplEditor, env *object.Environm
 			return true
 		}
 		ReplEvalSource(string(data), env, resolved, true)
+		if editor != nil && editor.Index != nil {
+			editor.Index.Update(resolved, string(data))
+		}
 		return true
 	}
 	if strings.HasPrefix(trimmed, ":reload") {
@@ -1515,6 +1593,183 @@ func HandleReplMetaCommand(line string, editor *ReplEditor, env *object.Environm
 	return false
 }
 
+func replSourcePath(editor *ReplEditor) string {
+	if editor != nil && strings.TrimSpace(editor.SourcePath) != "" {
+		return editor.SourcePath
+	}
+	return "<repl>"
+}
+
+func replPrintDiagnostics(diags []tooling.Diagnostic) {
+	if len(diags) == 0 {
+		ReplPrintLine("no diagnostics")
+		return
+	}
+	for _, d := range diags {
+		loc := ""
+		if d.Line > 0 {
+			loc = fmt.Sprintf("%s:%d:%d: ", d.Path, d.Line, d.Column)
+		}
+		ReplPrintLine(fmt.Sprintf("%s%s: %s", loc, d.Severity, d.Message))
+		if d.Hint != "" {
+			ReplPrintLine("  hint: " + d.Hint)
+		}
+		if d.Snippet != "" {
+			replPrintBlock("  " + strings.ReplaceAll(strings.TrimRight(d.Snippet, "\n"), "\n", "\n  "))
+		}
+	}
+}
+
+func replSymbols(editor *ReplEditor) []tooling.Symbol {
+	if editor == nil {
+		return nil
+	}
+	seen := map[string]struct{}{}
+	out := []tooling.Symbol{}
+	add := func(sym tooling.Symbol) {
+		key := fmt.Sprintf("%s\x00%s\x00%d\x00%d", sym.Path, sym.Name, sym.Line, sym.Column)
+		if _, ok := seen[key]; ok {
+			return
+		}
+		seen[key] = struct{}{}
+		out = append(out, sym)
+	}
+	if strings.TrimSpace(editor.Source) != "" {
+		for _, sym := range tooling.SymbolsForSource(replSourcePath(editor), editor.Source) {
+			add(sym)
+		}
+	}
+	if editor.Index != nil {
+		for _, sym := range editor.Index.AllSymbols() {
+			add(sym)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Name == out[j].Name {
+			return out[i].Path < out[j].Path
+		}
+		return out[i].Name < out[j].Name
+	})
+	return out
+}
+
+func replToolingDoc(target string, editor *ReplEditor) string {
+	if strings.TrimSpace(target) == "" {
+		return ""
+	}
+	if editor != nil {
+		path, src, line, col, ok := replFindWordPosition(target, editor)
+		if ok {
+			if hover := tooling.HoverMarkdown(editor.Index, path, src, line, col); hover != "" {
+				return hover
+			}
+		}
+	}
+	src := target
+	return tooling.HoverMarkdown(nil, "<repl-doc>", src, 1, 1)
+}
+
+func replPrintDefinition(name string, editor *ReplEditor) {
+	if strings.TrimSpace(name) == "" {
+		ReplPrintLine("usage: :def <name>")
+		return
+	}
+	if editor == nil || editor.Index == nil {
+		ReplPrintLine("workspace index is not available")
+		return
+	}
+	path, src, line, col, ok := replFindWordPosition(name, editor)
+	if ok {
+		if loc, found := editor.Index.Definition(path, src, line, col); found {
+			ReplPrintLine(fmt.Sprintf("%s: %s:%d:%d", loc.Name, loc.Path, loc.Line, loc.Column))
+			return
+		}
+	}
+	for _, sym := range replSymbols(editor) {
+		if sym.Name == name {
+			ReplPrintLine(fmt.Sprintf("%s: %s:%d:%d", sym.Name, sym.Path, sym.Line, sym.Column))
+			return
+		}
+	}
+	ReplPrintLine("definition not found")
+}
+
+func replPrintReferences(name string, editor *ReplEditor) {
+	if strings.TrimSpace(name) == "" {
+		ReplPrintLine("usage: :refs <name>")
+		return
+	}
+	if editor == nil || editor.Index == nil {
+		ReplPrintLine("workspace index is not available")
+		return
+	}
+	path, src, line, col, ok := replFindWordPosition(name, editor)
+	if !ok {
+		ReplPrintLine("reference source not found")
+		return
+	}
+	refs := editor.Index.References(path, src, line, col)
+	if len(refs) == 0 {
+		ReplPrintLine("no references found")
+		return
+	}
+	for _, ref := range refs {
+		ReplPrintLine(fmt.Sprintf("%s: %s:%d:%d", ref.Name, ref.Path, ref.Line, ref.Column))
+	}
+}
+
+func replFindWordPosition(name string, editor *ReplEditor) (string, string, int, int, bool) {
+	if editor == nil {
+		return "", "", 0, 0, false
+	}
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return "", "", 0, 0, false
+	}
+	if strings.TrimSpace(editor.Source) != "" {
+		if line, col, ok := findWordInSource(editor.Source, name); ok {
+			return replSourcePath(editor), editor.Source, line, col, true
+		}
+	}
+	if editor.Index != nil {
+		for path, doc := range editor.Index.Documents {
+			if line, col, ok := findWordInSource(doc.Source, name); ok {
+				return path, doc.Source, line, col, true
+			}
+		}
+	}
+	return "", "", 0, 0, false
+}
+
+func findWordInSource(src, word string) (int, int, bool) {
+	lines := strings.Split(src, "\n")
+	for i, line := range lines {
+		start := 0
+		for {
+			idx := strings.Index(line[start:], word)
+			if idx < 0 {
+				break
+			}
+			col := start + idx
+			beforeOK := col == 0 || !isIdentifierRune(rune(line[col-1]))
+			after := col + len(word)
+			afterOK := after >= len(line) || !isIdentifierRune(rune(line[after]))
+			if beforeOK && afterOK {
+				return i + 1, len([]rune(line[:col])) + 1, true
+			}
+			start = after
+			if start >= len(line) {
+				break
+			}
+		}
+	}
+	return 0, 0, false
+}
+
+func isIdentifierRune(r rune) bool {
+	return unicode.IsLetter(r) || unicode.IsDigit(r) || r == '_'
+}
+
 // ReplCandidates returns completion candidates without an environment.
 func ReplCandidates() []string {
 	return ReplCandidatesForEnv(nil)
@@ -1530,6 +1785,10 @@ func newReplEditor(in, out *os.File, candidates []string, env *object.Environmen
 		History:    make([]string, 0, 256),
 		HistoryPos: 0,
 		Candidates: candidates,
+		SourcePath: "<repl>",
+	}
+	if wd, err := os.Getwd(); err == nil {
+		editor.Index = tooling.NewWorkspaceIndex(wd)
 	}
 
 	if historyFile, err := replHistoryPath(); err == nil {
@@ -1546,6 +1805,20 @@ func newReplEditor(in, out *os.File, candidates []string, env *object.Environmen
 func (e *ReplEditor) close() {
 	if e.HistoryFile != "" {
 		_ = AppendHistoryEntries(e.HistoryFile, HistoryEntriesToPersist(e.History, e.HistoryBase))
+	}
+}
+
+func (e *ReplEditor) RecordInput(input string) {
+	if e == nil || strings.TrimSpace(input) == "" {
+		return
+	}
+	if strings.TrimSpace(e.Source) == "" {
+		e.Source = input
+	} else {
+		e.Source = strings.TrimRight(e.Source, "\n") + "\n" + input
+	}
+	if e.Index != nil {
+		e.Index.Update(e.SourcePath, e.Source)
 	}
 }
 
@@ -1649,7 +1922,7 @@ func (e *ReplEditor) readLine(prompt string) (string, error) {
 					_, _ = fmt.Fprint(e.Out, Paint(suffix, ColorGray))
 				}
 			}
-			if tip := ReplCallTip(line, cursor, e.Env); tip != "" {
+			if tip := e.InlineHint(line, cursor); tip != "" {
 				helperLines = ReplHintLines(tip, replEditorWidth(e))
 			}
 		}
@@ -1898,8 +2171,13 @@ func (e *ReplEditor) applyCompletion(buf []rune, cursor int, prompt string) ([]r
 	}
 
 	_, _ = fmt.Fprint(e.Out, "\r\n")
+	details := e.completionDetails(ctx)
 	for _, m := range matches {
-		_, _ = fmt.Fprintln(e.Out, m)
+		if detail := details[m]; detail != "" {
+			_, _ = fmt.Fprintf(e.Out, "%-24s %s\n", m, detail)
+		} else {
+			_, _ = fmt.Fprintln(e.Out, m)
+		}
 	}
 	if strings.HasPrefix(prompt, "..") {
 		_, _ = fmt.Fprint(e.Out, StyleContinuationPrompt(prompt))
@@ -1945,14 +2223,14 @@ func CompletionContext(buf []rune, cursor int) ReplCompletionContext {
 
 func (e *ReplEditor) CompletionsForContext(ctx ReplCompletionContext) []string {
 	if ctx.BaseExpr == "" || e.Env == nil {
-		return e.Candidates
+		return e.workspaceCompletionLabels(ctx, e.Candidates)
 	}
 	obj, errs := replEvalExpression(ctx.BaseExpr, e.Env)
 	if len(errs) != 0 || obj == nil {
-		return e.Candidates
+		return e.workspaceCompletionLabels(ctx, e.Candidates)
 	}
 	if IsErrorFn != nil && IsErrorFn(obj) {
-		return e.Candidates
+		return e.workspaceCompletionLabels(ctx, e.Candidates)
 	}
 	fields := ReplObjectFields(obj)
 	methods := ReplObjectMethods(obj)
@@ -1961,9 +2239,114 @@ func (e *ReplEditor) CompletionsForContext(ctx ReplCompletionContext) []string {
 	out = append(out, methods...)
 	sort.Strings(out)
 	if len(out) == 0 {
-		return e.Candidates
+		return e.workspaceCompletionLabels(ctx, e.Candidates)
 	}
 	return out
+}
+
+func (e *ReplEditor) workspaceCompletionLabels(ctx ReplCompletionContext, base []string) []string {
+	seen := map[string]struct{}{}
+	out := make([]string, 0, len(base)+16)
+	add := func(label string) {
+		label = strings.TrimSpace(label)
+		if label == "" {
+			return
+		}
+		if _, ok := seen[label]; ok {
+			return
+		}
+		seen[label] = struct{}{}
+		out = append(out, label)
+	}
+	for _, label := range base {
+		add(label)
+	}
+	if e != nil && e.Index != nil && ctx.BaseExpr == "" {
+		src, _, _ := e.toolingSourceForCursor("", 0)
+		for _, item := range tooling.WorkspaceCompletionItems(e.Index, e.SourcePath, src, ctx.Prefix) {
+			add(item.Label)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+func (e *ReplEditor) completionDetails(ctx ReplCompletionContext) map[string]string {
+	details := map[string]string{}
+	if e == nil || e.Index == nil || ctx.BaseExpr != "" {
+		return details
+	}
+	src, _, _ := e.toolingSourceForCursor("", 0)
+	for _, item := range tooling.WorkspaceCompletionItems(e.Index, e.SourcePath, src, ctx.Prefix) {
+		if item.Label == "" {
+			continue
+		}
+		detail := tooling.CompletionDetail(item)
+		if detail == "" {
+			detail = item.Kind
+		}
+		details[item.Label] = ReplCompactHint(markdownToPlain(detail), 96)
+	}
+	return details
+}
+
+func (e *ReplEditor) InlineHint(line string, cursor int) string {
+	if tip := ReplCallTip(line, cursor, e.Env); tip != "" {
+		return tip
+	}
+	if e == nil || e.Index == nil {
+		return ""
+	}
+	ctx := CompletionContext([]rune(line), cursor)
+	if ctx.Ok && ctx.Prefix != "" && ctx.BaseExpr == "" {
+		src, _, _ := e.toolingSourceForCursor(line, cursor)
+		for _, item := range tooling.WorkspaceCompletionItems(e.Index, e.SourcePath, src, ctx.Prefix) {
+			if item.Label == ctx.Prefix {
+				continue
+			}
+			detail := tooling.CompletionDetail(item)
+			if detail == "" {
+				detail = item.Detail
+			}
+			if detail != "" {
+				return ReplCompactHint(item.Label+" - "+markdownToPlain(detail), 140)
+			}
+			break
+		}
+	}
+	src, lno, col := e.toolingSourceForCursor(line, cursor)
+	if hover := tooling.HoverMarkdown(e.Index, e.SourcePath, src, lno, col); hover != "" {
+		return ReplCompactHint(markdownToPlain(hover), 140)
+	}
+	return ""
+}
+
+func (e *ReplEditor) toolingSourceForCursor(line string, cursor int) (string, int, int) {
+	prefix := ""
+	if e != nil {
+		prefix = strings.TrimRight(e.Source, "\n")
+	}
+	src := line
+	if prefix != "" {
+		if line != "" {
+			src = prefix + "\n" + line
+		} else {
+			src = prefix
+		}
+	}
+	lines := strings.Split(src, "\n")
+	lineNo := len(lines)
+	col := cursor + 1
+	if line == "" && len(lines) > 0 {
+		col = len([]rune(lines[len(lines)-1])) + 1
+	}
+	if lineNo < 1 {
+		lineNo = 1
+	}
+	if col < 1 {
+		col = 1
+	}
+	return src, lineNo, col
 }
 
 func ReplCallTip(line string, cursor int, env *object.Environment) string {
@@ -2053,6 +2436,29 @@ func ReplCompactHint(text string, maxRunes int) string {
 		return string(runes[:maxRunes])
 	}
 	return string(runes[:maxRunes-3]) + "..."
+}
+
+func markdownToPlain(text string) string {
+	replacer := strings.NewReplacer(
+		"```spl", " ",
+		"```", " ",
+		"**", "",
+		"`", "",
+		"###", "",
+		"##", "",
+		"#", "",
+		"\r", "\n",
+	)
+	text = replacer.Replace(text)
+	lines := strings.Split(text, "\n")
+	out := make([]string, 0, len(lines))
+	for _, line := range lines {
+		line = strings.TrimSpace(strings.TrimPrefix(line, "- "))
+		if line != "" {
+			out = append(out, line)
+		}
+	}
+	return strings.Join(out, " ")
 }
 
 func ReplHintLines(text string, width int) []string {
