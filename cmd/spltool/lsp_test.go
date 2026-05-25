@@ -22,6 +22,9 @@ func TestLSPInitializeAndDiagnosticsFlow(t *testing.T) {
 	if !strings.Contains(string(raw), "completionProvider") {
 		t.Fatalf("expected capabilities, got %s", raw)
 	}
+	if strings.Contains(string(raw), "executeCommandProvider") {
+		t.Fatalf("server must not advertise VS Code extension-owned commands, got %s", raw)
+	}
 
 	uri := pathToURI(filepath.Join(dir, "bad.spl"))
 	s.dispatch("textDocument/didOpen", mustRaw(map[string]any{

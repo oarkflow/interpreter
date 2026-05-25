@@ -215,7 +215,6 @@ func (s *lspServer) initialize(params json.RawMessage) (any, error) {
 			"documentSymbolProvider":     true,
 			"workspaceSymbolProvider":    true,
 			"documentFormattingProvider": true,
-			"executeCommandProvider":     map[string]any{"commands": []string{"spl.evaluateFile", "spl.evaluateSelection"}},
 		},
 		"serverInfo": map[string]any{"name": "spltool-lsp", "version": "0.1.0"},
 	}, nil

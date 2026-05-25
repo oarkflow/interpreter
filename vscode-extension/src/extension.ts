@@ -27,8 +27,6 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   output = vscode.window.createOutputChannel('SPL');
   context.subscriptions.push(output);
 
-  await startLanguageServer(context);
-
   context.subscriptions.push(
     vscode.commands.registerCommand('spl.runFile', runCurrentFile),
     vscode.commands.registerCommand('spl.evaluateSelection', evaluateSelection),
@@ -40,6 +38,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     }),
     vscode.commands.registerCommand('spl.showOutput', () => output.show())
   );
+
+  await ensureLanguageServer(context);
 }
 
 export async function deactivate(): Promise<void> {
@@ -50,6 +50,9 @@ export async function deactivate(): Promise<void> {
 }
 
 async function startLanguageServer(context: vscode.ExtensionContext): Promise<void> {
+  if (client) {
+    return;
+  }
   const serverOptions: ServerOptions = () => {
     const terminalOptions = resolveServerCommand(context);
     output.appendLine(`Starting SPL language server: ${terminalOptions.command} ${terminalOptions.args.join(' ')}`);
@@ -80,8 +83,24 @@ async function restartLanguageServer(context: vscode.ExtensionContext): Promise<
     await client.stop();
     client = undefined;
   }
-  await startLanguageServer(context);
-  vscode.window.setStatusBarMessage('SPL language server restarted', 2500);
+  await ensureLanguageServer(context);
+  if (client) {
+    vscode.window.setStatusBarMessage('SPL language server restarted', 2500);
+  }
+}
+
+async function ensureLanguageServer(context: vscode.ExtensionContext): Promise<void> {
+  if (client) {
+    return;
+  }
+  try {
+    await startLanguageServer(context);
+  } catch (err) {
+    client = undefined;
+    const message = err instanceof Error ? err.message : String(err);
+    output.appendLine(`Failed to start SPL language server: ${message}`);
+    void vscode.window.showWarningMessage('SPL language server failed to start. Run "SPL: Show Output" for details.');
+  }
 }
 
 function resolveServerCommand(context: vscode.ExtensionContext): { command: string; args: string[]; cwd: string } {

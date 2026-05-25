@@ -15,6 +15,7 @@ import (
 	"github.com/oarkflow/interpreter/pkg/lexer"
 	"github.com/oarkflow/interpreter/pkg/parser"
 	"github.com/oarkflow/interpreter/pkg/pkgmgr"
+	"github.com/oarkflow/interpreter/pkg/token"
 
 	// Keep editor tooling aligned with the first-party runtime packages shipped
 	// in this repository, not just the minimal CLI builtin set.
@@ -253,6 +254,10 @@ func StaticDiagnostics(path, src string, program *ast.Program) []Diagnostic {
 		deprecated:     map[string]string{"puts": "prefer print or printf for new code"},
 		builtinNames:   builtinNameSet(),
 		declaredLines:  map[string]int{},
+		declPositions:  lexicalDeclarationPositions(src),
+		declCursors:    map[string]int{},
+		namePositions:  lexicalNamePositions(src),
+		nameCursors:    map[string]int{},
 		typeVariants:   map[string][]string{},
 		constructorFor: map[string]string{},
 		variableTypes:  map[string]string{},
@@ -270,6 +275,10 @@ type staticChecker struct {
 	deprecated     map[string]string
 	builtinNames   map[string]struct{}
 	declaredLines  map[string]int
+	declPositions  map[string][]sourcePosition
+	declCursors    map[string]int
+	namePositions  map[string][]sourcePosition
+	nameCursors    map[string]int
 	typeVariants   map[string][]string
 	constructorFor map[string]string
 	variableTypes  map[string]string
@@ -299,7 +308,7 @@ func (c *staticChecker) declareWithOptions(name, kind string, warnDuplicate, war
 	if strings.TrimSpace(name) == "" {
 		return
 	}
-	line, col := findNamePosition(c.src, name)
+	line, col := c.nextDeclarationPosition(name)
 	scope := c.scopes[len(c.scopes)-1]
 	if existing, ok := scope[name]; ok && warnDuplicate && !isSeededGlobal(existing) {
 		c.warn("shadow", name, line, col, fmt.Sprintf("%q is already declared in this scope", name), "rename one binding or remove the duplicate declaration")
@@ -336,8 +345,36 @@ func (c *staticChecker) use(name string) {
 	if _, ok := c.lookup(name); ok {
 		return
 	}
-	line, col := findNamePosition(c.src, name)
+	line, col := c.nextNamePosition(name)
 	c.warn("undefined", name, line, col, fmt.Sprintf("undefined identifier %q", name), "declare it with let/const, import it, or check the spelling")
+}
+
+func (c *staticChecker) nextNamePosition(name string) (int, int) {
+	positions := c.namePositions[name]
+	if len(positions) == 0 {
+		return findNamePosition(c.src, name)
+	}
+	cursor := c.nameCursors[name]
+	if cursor >= len(positions) {
+		cursor = len(positions) - 1
+	}
+	c.nameCursors[name] = cursor + 1
+	pos := positions[cursor]
+	return pos.line, pos.column
+}
+
+func (c *staticChecker) nextDeclarationPosition(name string) (int, int) {
+	positions := c.declPositions[name]
+	if len(positions) == 0 {
+		return c.nextNamePosition(name)
+	}
+	cursor := c.declCursors[name]
+	if cursor >= len(positions) {
+		cursor = len(positions) - 1
+	}
+	c.declCursors[name] = cursor + 1
+	pos := positions[cursor]
+	return pos.line, pos.column
 }
 
 func (c *staticChecker) warn(code, name string, line, col int, msg, hint string) {
@@ -438,10 +475,10 @@ func (c *staticChecker) walkStatement(stmt ast.Statement) {
 		c.walkExpression(s.Iterable)
 		c.pushScope()
 		if s.KeyName != nil {
-			c.declare(s.KeyName.Name, "variable")
+			c.declareWithOptions(s.KeyName.Name, "variable", true, false)
 		}
 		if s.ValueName != nil {
-			c.declare(s.ValueName.Name, "variable")
+			c.declareWithOptions(s.ValueName.Name, "variable", true, false)
 		}
 		c.walkBlock(s.Body)
 		c.popScope()
@@ -524,7 +561,9 @@ func (c *staticChecker) walkExpression(expr ast.Expression) {
 		c.walkBlock(e.Alternative)
 	case *ast.FunctionLiteral:
 		if e.Name != nil {
-			c.declare(e.Name.Name, "function")
+			if _, exists := c.scopes[len(c.scopes)-1][e.Name.Name]; !exists {
+				c.declare(e.Name.Name, "function")
+			}
 		}
 		c.pushScope()
 		for _, p := range e.Parameters {
@@ -710,35 +749,76 @@ func collectConstructorPatterns(p ast.Pattern, seen map[string]struct{}) {
 }
 
 func (c *staticChecker) checkImport(s *ast.ImportStatement) {
-	if s.Alias != nil {
-		c.declare(s.Alias.Name, "module")
-	}
-	for _, n := range s.Names {
-		if n != nil {
-			c.declare(n.Name, "import")
-		}
-	}
 	sl, ok := s.Path.(*ast.StringLiteral)
 	if !ok {
+		if s.Alias != nil {
+			c.declare(s.Alias.Name, "module")
+		}
+		for _, n := range s.Names {
+			if n != nil {
+				c.declare(n.Name, "import")
+			}
+		}
 		return
 	}
 	if strings.Contains(sl.Value, "://") {
+		if s.Alias != nil {
+			c.declare(s.Alias.Name, "module")
+		}
+		for _, n := range s.Names {
+			if n != nil {
+				c.declare(n.Name, "import")
+			}
+		}
 		return
 	}
-	if importPathResolvable(sl.Value, c.path) {
+	resolved, isStd, ok := resolveImportPathForTooling(sl.Value, c.path)
+	if !ok {
+		line, col := findNamePosition(c.src, sl.Value)
+		c.warn("missing-import", sl.Value, line, col, fmt.Sprintf("import path %q was not found", sl.Value), "check the path, spl.mod alias, or SPL_MODULE_PATH")
 		return
 	}
-	line, col := findNamePosition(c.src, sl.Value)
-	c.warn("missing-import", sl.Value, line, col, fmt.Sprintf("import path %q was not found", sl.Value), "check the path, spl.mod alias, or SPL_MODULE_PATH")
+	if s.Alias != nil {
+		c.declare(s.Alias.Name, "module")
+	}
+	exports := map[string]Symbol{}
+	if !isStd && resolved != "" {
+		exports = exportedSymbolsFromFile(resolved, map[string]struct{}{c.path: {}})
+	}
+	if len(s.Names) > 0 {
+		for _, n := range s.Names {
+			if n == nil {
+				continue
+			}
+			c.declare(n.Name, "import")
+			if !isStd && len(exports) > 0 {
+				if _, ok := exports[n.Name]; !ok {
+					line, col := c.nextNamePosition(n.Name)
+					c.warn("missing-import", n.Name, line, col, fmt.Sprintf("module %q does not export %q", sl.Value, n.Name), "export it from the module or fix the imported name")
+				}
+			}
+		}
+		return
+	}
+	if s.Alias == nil {
+		for name := range exports {
+			c.declareWithOptions(name, "import", true, true)
+		}
+	}
 }
 
 func importPathResolvable(importPath, sourcePath string) bool {
+	_, _, ok := resolveImportPathForTooling(importPath, sourcePath)
+	return ok
+}
+
+func resolveImportPathForTooling(importPath, sourcePath string) (string, bool, bool) {
 	importPath = strings.TrimSpace(importPath)
 	if importPath == "" {
-		return false
+		return "", false, false
 	}
 	if _, ok := knownStdModules[importPath]; ok {
-		return true
+		return "", true, true
 	}
 
 	moduleDir := ""
@@ -747,9 +827,12 @@ func importPathResolvable(importPath, sourcePath string) bool {
 	}
 	if resolved, matched, err := pkgmgr.ResolveManifestImport(importPath, moduleDir, sourcePath); err == nil && matched {
 		if _, ok := knownStdModules[importPath]; ok {
-			return true
+			return "", true, true
 		}
-		return pathExists(resolved)
+		if pathExists(resolved) {
+			return resolved, false, true
+		}
+		return "", false, false
 	}
 
 	candidates := []string{importPath}
@@ -761,10 +844,97 @@ func importPathResolvable(importPath, sourcePath string) bool {
 	}
 	for _, candidate := range candidates {
 		if pathExists(candidate) {
-			return true
+			return candidate, false, true
 		}
 	}
-	return false
+	return "", false, false
+}
+
+func exportedSymbolsFromFile(path string, stack map[string]struct{}) map[string]Symbol {
+	exports := map[string]Symbol{}
+	if strings.TrimSpace(path) == "" {
+		return exports
+	}
+	abs, err := filepath.Abs(path)
+	if err == nil {
+		path = abs
+	}
+	if _, loading := stack[path]; loading {
+		return exports
+	}
+	stack[path] = struct{}{}
+	defer delete(stack, path)
+
+	content, err := os.ReadFile(path)
+	if err != nil {
+		return exports
+	}
+	l := lexer.NewLexer(string(content))
+	p := parser.NewParser(l)
+	program := p.ParseProgram()
+	if len(p.Errors()) != 0 || program == nil {
+		return exports
+	}
+	for _, stmt := range program.Statements {
+		exportStmt, ok := stmt.(*ast.ExportStatement)
+		if !ok || exportStmt.Declaration == nil {
+			continue
+		}
+		for _, sym := range exportedSymbolsFromDeclaration(path, string(content), exportStmt.Declaration) {
+			exports[sym.Name] = sym
+		}
+	}
+	return exports
+}
+
+func exportedSymbolsFromDeclaration(path, src string, stmt ast.Statement) []Symbol {
+	switch s := stmt.(type) {
+	case *ast.LetStatement:
+		names := s.Names
+		if len(names) == 0 && s.Name != nil {
+			names = []*ast.Identifier{s.Name}
+		}
+		symbols := make([]Symbol, 0, len(names))
+		for _, n := range names {
+			if n == nil {
+				continue
+			}
+			kind := "variable"
+			detail := n.Name
+			if fn, ok := s.Value.(*ast.FunctionLiteral); ok {
+				kind = "function"
+				detail = signatureForFunctionLiteral(n.Name, fn)
+			}
+			line, col := findNamePosition(src, n.Name)
+			symbols = append(symbols, Symbol{Name: n.Name, Kind: kind, Path: path, Line: line, Column: col, Detail: detail})
+		}
+		return symbols
+	case *ast.DestructureLetStatement:
+		names := map[string]struct{}{}
+		collectDestructurePatternNames(s.Pattern, names)
+		symbols := make([]Symbol, 0, len(names))
+		for name := range names {
+			line, col := findNamePosition(src, name)
+			symbols = append(symbols, Symbol{Name: name, Kind: "variable", Path: path, Line: line, Column: col, Detail: name})
+		}
+		return symbols
+	default:
+		return nil
+	}
+}
+
+func collectDestructurePatternNames(p *ast.DestructurePattern, names map[string]struct{}) {
+	if p == nil {
+		return
+	}
+	for _, n := range p.Names {
+		if n != nil {
+			names[n.Name] = struct{}{}
+		}
+	}
+	if p.RestName != nil {
+		names[p.RestName.Name] = struct{}{}
+	}
 }
 
 func pathExists(path string) bool {
@@ -839,15 +1009,132 @@ func firstStatementToken(stmt ast.Statement) string {
 	}
 }
 
+type sourcePosition struct {
+	line   int
+	column int
+}
+
+type lexicalToken struct {
+	typ     token.TokenType
+	literal string
+	pos     sourcePosition
+}
+
+func lexicalTokens(src string) []lexicalToken {
+	tokens := []lexicalToken{}
+	l := lexer.NewLexer(src)
+	for {
+		tok := l.NextToken()
+		if tok.Type == token.EOF {
+			break
+		}
+		if tok.Type == token.ILLEGAL || tok.Literal == "" {
+			continue
+		}
+		tokens = append(tokens, lexicalToken{
+			typ:     tok.Type,
+			literal: tok.Literal,
+			pos:     sourcePosition{line: tok.Line, column: tok.Column},
+		})
+	}
+	return tokens
+}
+
+func lexicalNamePositions(src string) map[string][]sourcePosition {
+	positions := map[string][]sourcePosition{}
+	for _, tok := range lexicalTokens(src) {
+		positions[tok.literal] = append(positions[tok.literal], tok.pos)
+	}
+	return positions
+}
+
+func lexicalDeclarationPositions(src string) map[string][]sourcePosition {
+	positions := map[string][]sourcePosition{}
+	tokens := lexicalTokens(src)
+	add := func(tok lexicalToken) {
+		if tok.typ == token.IDENT {
+			positions[tok.literal] = append(positions[tok.literal], tok.pos)
+		}
+	}
+	for i := 0; i < len(tokens); i++ {
+		switch tokens[i].typ {
+		case token.LET, token.CONST:
+			for j := i + 1; j < len(tokens); j++ {
+				switch tokens[j].typ {
+				case token.ASSIGN, token.SEMICOLON, token.LBRACE:
+					j = len(tokens)
+				default:
+					add(tokens[j])
+				}
+			}
+		case token.FUNCTION:
+			paramStart := i + 1
+			if paramStart < len(tokens) && tokens[paramStart].typ == token.IDENT {
+				add(tokens[paramStart])
+				paramStart++
+			}
+			for paramStart < len(tokens) && tokens[paramStart].typ != token.LPAREN {
+				paramStart++
+			}
+			if paramStart < len(tokens) && tokens[paramStart].typ == token.LPAREN {
+				depth := 0
+				for j := paramStart; j < len(tokens); j++ {
+					switch tokens[j].typ {
+					case token.LPAREN:
+						depth++
+					case token.RPAREN:
+						depth--
+						if depth == 0 {
+							j = len(tokens)
+						}
+					case token.IDENT:
+						if depth == 1 {
+							add(tokens[j])
+						}
+					}
+				}
+			}
+		case token.FOR:
+			for j := i + 1; j < len(tokens); j++ {
+				if tokens[j].typ == token.IN {
+					break
+				}
+				if tokens[j].typ == token.LBRACE || tokens[j].typ == token.SEMICOLON {
+					break
+				}
+				add(tokens[j])
+			}
+		case token.IDENT:
+			if tokens[i].literal != "type" {
+				continue
+			}
+			for j := i + 1; j < len(tokens); j++ {
+				switch tokens[j].typ {
+				case token.SEMICOLON, token.LBRACE:
+					j = len(tokens)
+				default:
+					add(tokens[j])
+				}
+			}
+		case token.IMPORT:
+			for j := i + 1; j < len(tokens); j++ {
+				if tokens[j].typ == token.SEMICOLON {
+					break
+				}
+				add(tokens[j])
+			}
+		}
+	}
+	return positions
+}
+
 func findNamePosition(src, name string) (int, int) {
 	if name == "" {
 		return 0, 0
 	}
-	lines := strings.Split(src, "\n")
-	for i, line := range lines {
-		if idx := strings.Index(line, name); idx >= 0 {
-			return i + 1, idx + 1
-		}
+	positions := lexicalNamePositions(src)
+	if matches := positions[name]; len(matches) > 0 {
+		return matches[0].line, matches[0].column
 	}
 	return 0, 0
 }
@@ -963,6 +1250,58 @@ func SymbolsForSource(path, src string) []Symbol {
 	return syms
 }
 
+func VisibleSymbolsForSource(path, src string) []Symbol {
+	syms := SymbolsForSource(path, src)
+	syms = append(syms, importedSymbolsForSource(path, src)...)
+	sort.Slice(syms, func(i, j int) bool {
+		if syms[i].Name == syms[j].Name {
+			return syms[i].Path < syms[j].Path
+		}
+		return syms[i].Name < syms[j].Name
+	})
+	return syms
+}
+
+func importedSymbolsForSource(path, src string) []Symbol {
+	l := lexer.NewLexer(src)
+	p := parser.NewParser(l)
+	program := p.ParseProgram()
+	if len(p.Errors()) != 0 || program == nil {
+		return nil
+	}
+	out := []Symbol{}
+	for _, stmt := range program.Statements {
+		importStmt, ok := stmt.(*ast.ImportStatement)
+		if !ok || importStmt.Alias != nil {
+			continue
+		}
+		sl, ok := importStmt.Path.(*ast.StringLiteral)
+		if !ok || strings.Contains(sl.Value, "://") {
+			continue
+		}
+		resolved, isStd, ok := resolveImportPathForTooling(sl.Value, path)
+		if !ok || isStd || resolved == "" {
+			continue
+		}
+		exports := exportedSymbolsFromFile(resolved, map[string]struct{}{})
+		if len(importStmt.Names) == 0 {
+			for _, sym := range exports {
+				out = append(out, sym)
+			}
+			continue
+		}
+		for _, n := range importStmt.Names {
+			if n == nil {
+				continue
+			}
+			if sym, ok := exports[n.Name]; ok {
+				out = append(out, sym)
+			}
+		}
+	}
+	return out
+}
+
 func signatureForFunctionLiteral(name string, fn *ast.FunctionLiteral) string {
 	parts := make([]string, 0, len(fn.Parameters))
 	for i, p := range fn.Parameters {
@@ -992,7 +1331,7 @@ func CompletionItems(path, src, prefix string) []CompletionItem {
 			items = append(items, CompletionItem{Label: name, Kind: "builtin", Detail: eval.BuiltinHelpText(name)})
 		}
 	}
-	for _, sym := range SymbolsForSource(path, src) {
+	for _, sym := range VisibleSymbolsForSource(path, src) {
 		if strings.HasPrefix(sym.Name, prefix) {
 			items = append(items, CompletionItem{Label: sym.Name, Kind: sym.Kind, Detail: sym.Detail})
 		}
@@ -1015,7 +1354,7 @@ func HoverAt(path, src string, line, col int) HoverInfo {
 	if eval.HasBuiltin(word) {
 		return HoverInfo{Name: word, Kind: "builtin", Detail: eval.BuiltinHelpText(word), Line: line, Column: col}
 	}
-	for _, sym := range SymbolsForSource(path, src) {
+	for _, sym := range VisibleSymbolsForSource(path, src) {
 		if sym.Name == word {
 			return HoverInfo{Name: sym.Name, Kind: sym.Kind, Detail: sym.Detail, Line: sym.Line, Column: sym.Column}
 		}

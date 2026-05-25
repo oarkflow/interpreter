@@ -253,7 +253,7 @@ func (idx *WorkspaceIndex) Definition(path, src string, line, col int) (Location
 	if word == "" {
 		return Location{}, false
 	}
-	for _, sym := range SymbolsForSource(path, src) {
+	for _, sym := range VisibleSymbolsForSource(path, src) {
 		if sym.Name == word {
 			return Location{Path: sym.Path, Line: sym.Line, Column: sym.Column, Name: sym.Name}, true
 		}

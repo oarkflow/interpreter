@@ -84,21 +84,43 @@ func (l *Lexer) skipComment() {
 		for l.ch != '\n' && l.ch != 0 {
 			l.readChar()
 		}
+	} else if l.ch == '#' {
+		for l.ch != '\n' && l.ch != 0 {
+			l.readChar()
+		}
 	} else if l.ch == '/' && l.peekChar() == '*' {
 		l.readChar() // consume '/'
 		l.readChar() // consume '*'
+		depth := 1
 		for {
 			if l.ch == 0 {
 				break // unterminated comment
 			}
+			if l.ch == '/' && l.peekChar() == '*' {
+				depth++
+				l.readChar()
+				l.readChar()
+				continue
+			}
 			if l.ch == '*' && l.peekChar() == '/' {
 				l.readChar() // consume '*'
 				l.readChar() // consume '/'
-				break
+				depth--
+				if depth == 0 {
+					break
+				}
+				continue
 			}
 			l.readChar()
 		}
 	}
+}
+
+func (l *Lexer) startsWithAtCurrent(s string) bool {
+	if s == "" || l.position+len(s) > len(l.input) {
+		return false
+	}
+	return l.input[l.position:l.position+len(s)] == s
 }
 
 func (l *Lexer) readIdentifier() string {
@@ -212,6 +234,84 @@ func (l *Lexer) readString(quote byte) string {
 	return out.String()
 }
 
+func (l *Lexer) readTripleQuotedString(quote byte) string {
+	var out strings.Builder
+	l.readChar() // consume first quote
+	l.readChar() // consume second quote
+	l.readChar() // consume third quote
+	for l.ch != 0 {
+		if l.ch == quote && l.peekChar() == quote && l.readPosition+1 < len(l.input) && l.input[l.readPosition+1] == quote {
+			l.readChar()
+			l.readChar()
+			l.readChar()
+			break
+		}
+		out.WriteByte(l.ch)
+		l.readChar()
+	}
+	return out.String()
+}
+
+func (l *Lexer) readHeredocString() string {
+	var out strings.Builder
+	l.readChar() // consume first <
+	l.readChar() // consume second <
+	for l.ch == ' ' || l.ch == '\t' {
+		l.readChar()
+	}
+	if l.ch == '-' {
+		l.readChar()
+	}
+	markerStart := l.position
+	for isLetter(l.ch) || isDigit(l.ch) || l.ch == '_' {
+		l.readChar()
+	}
+	marker := l.input[markerStart:l.position]
+	if marker == "" {
+		return ""
+	}
+	for l.ch != '\n' && l.ch != 0 {
+		l.readChar()
+	}
+	if l.ch == '\n' {
+		l.readChar()
+	}
+	for l.ch != 0 {
+		if l.startsWithAtCurrent(marker) {
+			afterMarker := l.position + len(marker)
+			if afterMarker >= len(l.input) || l.input[afterMarker] == '\n' || l.input[afterMarker] == '\r' {
+				for i := 0; i < len(marker); i++ {
+					l.readChar()
+				}
+				if l.ch == '\r' {
+					l.readChar()
+				}
+				if l.ch == '\n' {
+					l.readChar()
+				}
+				break
+			}
+		}
+		out.WriteByte(l.ch)
+		l.readChar()
+	}
+	return out.String()
+}
+
+func (l *Lexer) isHeredocStart() bool {
+	if l.ch != '<' || l.peekChar() != '<' {
+		return false
+	}
+	i := l.readPosition + 1
+	for i < len(l.input) && (l.input[i] == ' ' || l.input[i] == '\t') {
+		i++
+	}
+	if i < len(l.input) && l.input[i] == '-' {
+		i++
+	}
+	return i < len(l.input) && isLetter(l.input[i])
+}
+
 func (l *Lexer) readTemplateLiteral() string {
 	var out strings.Builder
 	l.readChar() // consume opening backtick
@@ -270,7 +370,7 @@ func (l *Lexer) NextToken() token.Token {
 
 	for {
 		l.skipWhitespace()
-		if l.ch == '/' && (l.peekChar() == '/' || l.peekChar() == '*') {
+		if l.ch == '#' || (l.ch == '/' && (l.peekChar() == '/' || l.peekChar() == '*')) {
 			l.skipComment()
 			continue
 		}
@@ -352,6 +452,11 @@ func (l *Lexer) NextToken() token.Token {
 			l.readChar()
 			tok = token.Token{Type: token.LTE, Literal: "<="}
 		} else if l.peekChar() == '<' {
+			if l.isHeredocStart() {
+				tok.Type = token.STRING
+				tok.Literal = l.readHeredocString()
+				return tok
+			}
 			l.readChar()
 			if l.peekChar() == '=' {
 				l.readChar()
@@ -469,6 +574,10 @@ func (l *Lexer) NextToken() token.Token {
 		tok.Literal = l.readTemplateLiteral()
 	case '"', '\'':
 		tok.Type = token.STRING
+		if l.peekChar() == l.ch && l.readPosition+1 < len(l.input) && l.input[l.readPosition+1] == l.ch {
+			tok.Literal = l.readTripleQuotedString(l.ch)
+			return tok
+		}
 		tok.Literal = l.readString(l.ch)
 	case 0:
 		tok.Literal = ""

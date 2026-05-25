@@ -92,6 +92,80 @@ match (maybe) { case Present(n) => { n; } }
 	}
 }
 
+func TestCheckSourceIgnoresCommentedCodeForStaticWarnings(t *testing.T) {
+	src := `
+/*
+let n = 1;
+let n = 2;
+let greetPerson = function(name) { return name; };
+let greetPerson = function(other) { return other; };
+print missingName;
+*/
+// let sameLine = 1; let sameLine = 2; print alsoMissing;
+let ok = 1;
+print ok;
+`
+	report := CheckSource("sample.spl", src)
+	if !report.OK {
+		t.Fatalf("comments should not produce parse errors: %#v", report.Diagnostics)
+	}
+	for _, diag := range report.Diagnostics {
+		if diag.Code == "shadow" || diag.Code == "undefined" {
+			t.Fatalf("commented code should not be validated, got diagnostic: %#v", diag)
+		}
+	}
+}
+
+func TestCheckSourceWarningLocationsSkipComments(t *testing.T) {
+	src := `
+// let greetPerson = 1;
+let greetPerson = function(name) { return name; };
+let greetPerson = function(other) { return other; };
+`
+	report := CheckSource("sample.spl", src)
+	found := false
+	for _, diag := range report.Diagnostics {
+		if diag.Code == "shadow" && strings.Contains(diag.Message, "greetPerson") {
+			found = true
+			if strings.Contains(diag.Snippet, "//") || diag.Line == 2 {
+				t.Fatalf("warning location should point to code, not comment: %#v", diag)
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("expected duplicate declaration warning, got %#v", report.Diagnostics)
+	}
+}
+
+func TestCheckSourceAllowsShortForInLoopBindings(t *testing.T) {
+	src := `
+let n = 10;
+let nums = [1, 2, 3];
+for (n in nums) { print n; }
+`
+	report := CheckSource("sample.spl", src)
+	for _, diag := range report.Diagnostics {
+		if diag.Code == "shadow" && strings.Contains(diag.Message, `"n"`) {
+			t.Fatalf("for-in loop binding should not warn as noisy shadowing: %#v", diag)
+		}
+	}
+}
+
+func TestCheckSourceNamedFunctionDeclarationIsSingleBinding(t *testing.T) {
+	src := `
+function greetPerson(name) {
+	return "Hello, " + name;
+}
+print greetPerson("World");
+`
+	report := CheckSource("sample.spl", src)
+	for _, diag := range report.Diagnostics {
+		if diag.Code == "shadow" && strings.Contains(diag.Message, "greetPerson") {
+			t.Fatalf("named function declaration should not be reported as duplicate: %#v", diag)
+		}
+	}
+}
+
 func TestCheckSourceAvoidsKnownFalsePositiveWarnings(t *testing.T) {
 	src := `
 let tiny = "data:image/png;base64,abc";
@@ -158,6 +232,75 @@ func TestCheckSourceAcceptsStdManifestAndModulePathImports(t *testing.T) {
 		if diag.Code == "missing-import" {
 			t.Fatalf("expected import to resolve, got diagnostic: %#v", diag)
 		}
+	}
+}
+
+func TestCheckSourceResolvesBareImportExports(t *testing.T) {
+	dir := t.TempDir()
+	commonPath := filepath.Join(dir, "common.spl")
+	mathPath := filepath.Join(dir, "math.spl")
+	if err := os.WriteFile(commonPath, []byte("export const offset = 2;"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	src := `import "common.spl";
+
+export let answer = 40 + offset;
+`
+	if err := os.WriteFile(mathPath, []byte(src), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	report := CheckSource(mathPath, src)
+	for _, diag := range report.Diagnostics {
+		if diag.Code == "undefined" && strings.Contains(diag.Message, "offset") {
+			t.Fatalf("bare import should declare exported offset, got diagnostic: %#v", diag)
+		}
+	}
+}
+
+func TestCheckSourceResolvesNamedImportExports(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "common.spl"), []byte("export const offset = 2;"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	src := `import {offset} from "common.spl";
+let answer = 40 + offset;
+`
+	report := CheckSource(filepath.Join(dir, "math.spl"), src)
+	for _, diag := range report.Diagnostics {
+		if diag.Code == "undefined" && strings.Contains(diag.Message, "offset") {
+			t.Fatalf("named import should declare exported offset, got diagnostic: %#v", diag)
+		}
+		if diag.Code == "missing-import" {
+			t.Fatalf("named import should resolve existing export, got diagnostic: %#v", diag)
+		}
+	}
+}
+
+func TestImportedExportsAreVisibleToEditorFeatures(t *testing.T) {
+	dir := t.TempDir()
+	commonPath := filepath.Join(dir, "common.spl")
+	mathPath := filepath.Join(dir, "math.spl")
+	if err := os.WriteFile(commonPath, []byte("export const offset = 2;"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	src := `import "common.spl";
+let answer = 40 + offset;
+`
+	if err := os.WriteFile(mathPath, []byte(src), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	items := CompletionItems(mathPath, src, "off")
+	if len(items) == 0 || items[0].Label != "offset" {
+		t.Fatalf("expected imported offset completion, got %#v", items)
+	}
+	hover := HoverAt(mathPath, src, 2, 19)
+	if hover.Name != "offset" || hover.Kind != "variable" {
+		t.Fatalf("expected hover for imported offset, got %#v", hover)
+	}
+	idx := NewWorkspaceIndex(dir)
+	loc, ok := idx.Definition(mathPath, src, 2, 19)
+	if !ok || loc.Path != commonPath || loc.Name != "offset" {
+		t.Fatalf("expected definition in common.spl, got ok=%v loc=%#v", ok, loc)
 	}
 }
 
