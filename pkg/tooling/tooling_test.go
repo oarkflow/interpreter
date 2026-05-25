@@ -153,6 +153,24 @@ for (n in nums) { print n; }
 	}
 }
 
+func TestCheckSourceTreatsUnderscoreAsDiscardBinding(t *testing.T) {
+	src := `
+let db = null;
+let _, createErr = db_exec(db, "CREATE TABLE items (name TEXT)");
+let _, _ = db_exec(db, "INSERT INTO items(name) VALUES(?)", ["apples"]);
+let _, _ = db_exec(db, "INSERT INTO items(name) VALUES(?)", ["pears"]);
+`
+	report := CheckSource("sample.spl", src)
+	for _, diag := range report.Diagnostics {
+		if diag.Code == "shadow" && strings.Contains(diag.Message, `"_"`) {
+			t.Fatalf("underscore discard should not warn as duplicate declaration: %#v", diag)
+		}
+		if diag.Code == "undefined" && strings.Contains(diag.Message, `"_"`) {
+			t.Fatalf("underscore discard should not warn as undefined: %#v", diag)
+		}
+	}
+}
+
 func TestCheckSourceNamedFunctionDeclarationIsSingleBinding(t *testing.T) {
 	src := `
 function greetPerson(name) {

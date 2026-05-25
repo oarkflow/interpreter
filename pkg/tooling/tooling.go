@@ -357,6 +357,9 @@ func (c *staticChecker) declareWithOptions(name, kind string, warnDuplicate, war
 	if strings.TrimSpace(name) == "" {
 		return
 	}
+	if isDiscardIdentifier(name) {
+		return
+	}
 	line, col := c.nextDeclarationPosition(name)
 	scope := c.scopes[len(c.scopes)-1]
 	if existing, ok := scope[name]; ok && warnDuplicate && !isSeededGlobal(existing) {
@@ -388,7 +391,7 @@ func (c *staticChecker) lookupOuter(name string) (Symbol, bool) {
 }
 
 func (c *staticChecker) use(name string) {
-	if strings.TrimSpace(name) == "" || isLanguageWord(name) {
+	if strings.TrimSpace(name) == "" || isDiscardIdentifier(name) || isLanguageWord(name) {
 		return
 	}
 	if _, ok := c.lookup(name); ok {
@@ -479,7 +482,7 @@ func (c *staticChecker) walkStatement(stmt ast.Statement) {
 		c.walkExpression(s.Value)
 		if typ := c.inferExpressionType(s.Value); typ != "" {
 			for _, n := range names {
-				if n != nil {
+				if n != nil && !isDiscardIdentifier(n.Name) {
 					c.variableTypes[n.Name] = typ
 				}
 			}
@@ -1031,6 +1034,10 @@ func builtinNameSet() map[string]struct{} {
 
 func isSeededGlobal(sym Symbol) bool {
 	return sym.Kind == "builtin" || sym.Kind == "global"
+}
+
+func isDiscardIdentifier(name string) bool {
+	return name == "_"
 }
 
 func isLanguageWord(name string) bool {

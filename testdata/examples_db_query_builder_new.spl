@@ -16,6 +16,29 @@ let _, _ = db_exec(db, "INSERT INTO items(name, qty, kind) VALUES(?, ?, ?)", ["a
 let _, _ = db_exec(db, "INSERT INTO items(name, qty, kind) VALUES(?, ?, ?)", ["desk", 8, "furniture"]);
 let _, _ = db_exec(db, "INSERT INTO items(name, qty, kind) VALUES(?, ?, ?)", ["bananas", 6, "fruit"]);
 
+print "--- Transactions ---";
+let tx, txErr = db_begin(db);
+if (txErr != null) { throw txErr; }
+
+let _, txInsertErr = db_exec(tx, "INSERT INTO items(name, qty, kind) VALUES(?, ?, ?)", ["temporary", 99, "draft"]);
+if (txInsertErr != null) { throw txInsertErr; }
+
+let rolledBack, rollbackErr = db_rollback(tx);
+if (rollbackErr != null) { throw rollbackErr; }
+print "Rolled back temporary insert:";
+print rolledBack;
+
+let commitTx, commitTxErr = db_begin(db);
+if (commitTxErr != null) { throw commitTxErr; }
+
+let _, commitInsertErr = db_exec(commitTx, "INSERT INTO items(name, qty, kind) VALUES(:name, :qty, :kind)", {"name": "oranges", "qty": 5, "kind": "fruit"});
+if (commitInsertErr != null) { throw commitInsertErr; }
+
+let committed, commitErr = db_commit(commitTx);
+if (commitErr != null) { throw commitErr; }
+print "Committed oranges insert:";
+print committed;
+
 print "--- Standard builder ---";
 let q = query(db, "items")
     .select("name", "qty", "kind")
