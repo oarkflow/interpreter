@@ -36,6 +36,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     vscode.commands.registerCommand('spl.toolsFfmpegStatus', () => runSpltoolTask(context, 'Tools FFmpeg Status', ['media', 'ffmpeg-status'])),
     vscode.commands.registerCommand('spl.toolsInstallFfmpeg', () => runSpltoolTask(context, 'Tools Install FFmpeg', ['media', 'install-ffmpeg', '--apply'])),
     vscode.commands.registerCommand('spl.toolsPreviewBulkRename', () => previewBulkRename(context)),
+    vscode.commands.registerCommand('spl.insertNativeOSExample', insertNativeOSExample),
     vscode.commands.registerCommand('spl.restartLanguageServer', async () => {
       await restartLanguageServer(context);
     }),
@@ -178,6 +179,12 @@ async function requestEvaluation(uri: vscode.Uri, text: string): Promise<Evaluat
       profile: config.get<string>('evaluation.profile', 'untrusted'),
       timeoutMs: config.get<number>('evaluation.timeoutMs', 1500),
       maxOutputBytes: config.get<number>('evaluation.maxOutputBytes', 65536),
+      maxExecOutputBytes: config.get<number>('evaluation.maxExecOutputBytes', 65536),
+      allowedCapabilities: normalizedStringList(config.get<string[]>('evaluation.allowedCapabilities', [])),
+      allowedExecCommands: normalizedStringList(config.get<string[]>('evaluation.allowedExecCommands', [])),
+      allowedNativeModules: normalizedStringList(config.get<string[]>('evaluation.allowedNativeModules', ['native/os'])),
+      deniedNativeModules: normalizedStringList(config.get<string[]>('evaluation.deniedNativeModules', [])),
+      allowedFileReadPaths: workspaceFolderPaths(uri),
     },
   });
 }
@@ -275,6 +282,39 @@ async function previewBulkRename(context: vscode.ExtensionContext): Promise<void
     return;
   }
   await runSpltoolTask(context, 'Tools Preview Bulk Rename', ['files', 'rename', folder[0].fsPath, '--match', match, '--template', template, '--json']);
+}
+
+async function insertNativeOSExample(): Promise<void> {
+  const editor = activeSPLEditor();
+  if (!editor) {
+    return;
+  }
+  const snippet = new vscode.SnippetString([
+    'import "native/os" as os;',
+    '',
+    'let result = os.run("${1:go}", [${2:"version"}], {',
+    '  "timeout_ms": ${3:1500},',
+    '  "max_output_bytes": ${4:65536}',
+    '});',
+    '',
+    'if (result["ok"]) {',
+    '  print result["stdout"];',
+    '} else {',
+    '  print result["stderr"];',
+    '  print result["error"];',
+    '}',
+    '',
+  ].join('\n'));
+  await editor.insertSnippet(snippet);
+}
+
+function normalizedStringList(values: readonly string[] | undefined): string[] {
+  return Array.from(new Set((values ?? []).map((value) => value.trim()).filter(Boolean)));
+}
+
+function workspaceFolderPaths(uri: vscode.Uri): string[] {
+  const folder = vscode.workspace.getWorkspaceFolder(uri);
+  return folder ? [folder.uri.fsPath] : [];
 }
 
 async function runSpltoolTask(context: vscode.ExtensionContext, label: string, args: string[]): Promise<void> {

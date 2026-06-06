@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -499,9 +500,6 @@ func (s *lspServer) sessionForPath(path string, opts EvaluationOptions, output i
 	if strings.TrimSpace(key) == "" {
 		key = "<memory>"
 	}
-	if sess := s.sessions[key]; sess != nil {
-		return sess, nil
-	}
 	timeout := time.Duration(opts.TimeoutMS) * time.Millisecond
 	if timeout <= 0 {
 		timeout = 1500 * time.Millisecond
@@ -522,12 +520,20 @@ func (s *lspServer) sessionForPath(path string, opts EvaluationOptions, output i
 	if profile == "" {
 		profile = "untrusted"
 	}
+	securityPolicy, sandboxCfg, profile := evaluationPolicy(profile, path, opts)
+	key = evaluationSessionKey(key, profile, opts)
+	if sess := s.sessions[key]; sess != nil {
+		return sess, nil
+	}
 	rt, err := interpreter.NewRuntime(interpreter.RuntimeOptions{
 		Profile:                profile,
 		ModuleDir:              ModuleDirForPath(path),
+		Security:               securityPolicy,
+		Sandbox:                sandboxCfg,
 		MaxSteps:               maxSteps,
 		MaxDepth:               maxDepth,
 		MaxOutputBytes:         maxOutput,
+		MaxExecOutputBytes:     opts.MaxExecOutputBytes,
 		Timeout:                timeout,
 		Output:                 output,
 		AllowInProcessFallback: true,
@@ -541,6 +547,8 @@ func (s *lspServer) sessionForPath(path string, opts EvaluationOptions, output i
 		ModuleDir:      ModuleDirForPath(path),
 		SourcePath:     path,
 		Output:         output,
+		Security:       securityPolicy,
+		Sandbox:        sandboxCfg,
 		MaxSteps:       maxSteps,
 		MaxDepth:       maxDepth,
 		MaxOutputBytes: maxOutput,
@@ -554,6 +562,125 @@ func (s *lspServer) sessionForPath(path string, opts EvaluationOptions, output i
 	return sess, nil
 }
 
+func evaluationSessionKey(path string, profile string, opts EvaluationOptions) string {
+	parts := []string{
+		path,
+		"profile=" + profile,
+		"cap=" + strings.Join(normalizeTokens(opts.AllowedCapabilities), ","),
+		"exec=" + strings.Join(normalizeTokens(opts.AllowedExecCommands), ","),
+		"nativeAllow=" + strings.Join(normalizeTokens(opts.AllowedNativeModules), ","),
+		"nativeDeny=" + strings.Join(normalizeTokens(opts.DeniedNativeModules), ","),
+		"read=" + strings.Join(opts.AllowedFileReadPaths, ","),
+		"write=" + strings.Join(opts.AllowedFileWritePaths, ","),
+	}
+	return strings.Join(parts, "|")
+}
+
+func normalizeTokens(values []string) []string {
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.ToLower(strings.TrimSpace(value))
+		if value != "" {
+			out = append(out, value)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+func evaluationPolicy(profile string, path string, opts EvaluationOptions) (*interpreter.SecurityPolicy, *interpreter.SandboxConfig, string) {
+	moduleDir := ModuleDirForPath(path)
+	if profile == "native" {
+		profile = "untrusted"
+		opts.AllowedCapabilities = appendUniqueToken(opts.AllowedCapabilities, "exec")
+		opts.AllowedNativeModules = appendUniqueToken(opts.AllowedNativeModules, "native/os")
+	}
+	policy, sandboxCfg, err := interpreter.CapabilityPreset(profile, moduleDir)
+	if err != nil {
+		profile = "untrusted"
+		policy, sandboxCfg, _ = interpreter.CapabilityPreset(profile, moduleDir)
+	}
+	if policy == nil {
+		policy = &interpreter.SecurityPolicy{}
+	}
+	if len(opts.AllowedCapabilities) > 0 {
+		policy.AllowedCapabilities = append([]string(nil), opts.AllowedCapabilities...)
+		policy.DeniedCapabilities = removeTokens(policy.DeniedCapabilities, opts.AllowedCapabilities)
+		sandboxCfg.AllowedCapabilities = append([]string(nil), opts.AllowedCapabilities...)
+		sandboxCfg.DeniedCapabilities = removeTokens(sandboxCfg.DeniedCapabilities, opts.AllowedCapabilities)
+	}
+	if len(opts.AllowedExecCommands) > 0 {
+		policy.AllowedExecCommands = append([]string(nil), opts.AllowedExecCommands...)
+		sandboxCfg.AllowedExecCommands = append([]string(nil), opts.AllowedExecCommands...)
+	}
+	if len(opts.AllowedNativeModules) > 0 {
+		policy.AllowedNativeModules = append([]string(nil), opts.AllowedNativeModules...)
+		sandboxCfg.AllowedNativeModules = append([]string(nil), opts.AllowedNativeModules...)
+	}
+	if len(opts.DeniedNativeModules) > 0 {
+		policy.DeniedNativeModules = append([]string(nil), opts.DeniedNativeModules...)
+		sandboxCfg.DeniedNativeModules = append([]string(nil), opts.DeniedNativeModules...)
+	}
+	if len(opts.AllowedFileReadPaths) > 0 {
+		policy.AllowedFileReadPaths = append([]string(nil), opts.AllowedFileReadPaths...)
+		sandboxCfg.AllowedFileReadPaths = append([]string(nil), opts.AllowedFileReadPaths...)
+	}
+	if len(opts.AllowedFileWritePaths) > 0 {
+		policy.AllowedFileWritePaths = append([]string(nil), opts.AllowedFileWritePaths...)
+		sandboxCfg.AllowedFileWritePaths = append([]string(nil), opts.AllowedFileWritePaths...)
+	}
+	return policy, &sandboxCfg, profile
+}
+
+func appendUniqueToken(values []string, token string) []string {
+	token = strings.ToLower(strings.TrimSpace(token))
+	if token == "" {
+		return values
+	}
+	for _, value := range values {
+		if strings.ToLower(strings.TrimSpace(value)) == token {
+			return values
+		}
+	}
+	return append(values, token)
+}
+
+func removeTokens(values []string, remove []string) []string {
+	if len(values) == 0 || len(remove) == 0 {
+		return values
+	}
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		if !containsToken(remove, value) {
+			out = append(out, value)
+		}
+	}
+	return out
+}
+
+func containsToken(values []string, token string) bool {
+	token = strings.ToLower(strings.TrimSpace(token))
+	for _, value := range values {
+		if strings.ToLower(strings.TrimSpace(value)) == token {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *lspServer) activeSessionForPath(path string, output io.Writer) (*interpreter.Session, error) {
+	key := path
+	if strings.TrimSpace(key) == "" {
+		key = "<memory>"
+	}
+	for sessionKey, sess := range s.sessions {
+		if sessionKey == key || strings.HasPrefix(sessionKey, key+"|") {
+			return sess, nil
+		}
+	}
+	return s.sessionForPath(path, EvaluationOptions{}, output)
+}
+
 func (s *lspServer) sessionCheckpoint(params json.RawMessage) any {
 	var p struct {
 		URI  string `json:"uri"`
@@ -561,7 +688,7 @@ func (s *lspServer) sessionCheckpoint(params json.RawMessage) any {
 	}
 	_ = json.Unmarshal(params, &p)
 	path, _ := s.document(p.URI)
-	sess, err := s.sessionForPath(path, EvaluationOptions{}, io.Discard)
+	sess, err := s.activeSessionForPath(path, io.Discard)
 	if err != nil {
 		return map[string]any{"ok": false, "error": err.Error()}
 	}
@@ -579,7 +706,7 @@ func (s *lspServer) sessionRestore(params json.RawMessage) any {
 	}
 	_ = json.Unmarshal(params, &p)
 	path, _ := s.document(p.URI)
-	sess, err := s.sessionForPath(path, EvaluationOptions{}, io.Discard)
+	sess, err := s.activeSessionForPath(path, io.Discard)
 	if err != nil {
 		return map[string]any{"ok": false, "error": err.Error()}
 	}
@@ -595,7 +722,7 @@ func (s *lspServer) sessionInspect(params json.RawMessage) any {
 	}
 	_ = json.Unmarshal(params, &p)
 	path, _ := s.document(p.URI)
-	sess, err := s.sessionForPath(path, EvaluationOptions{}, io.Discard)
+	sess, err := s.activeSessionForPath(path, io.Discard)
 	if err != nil {
 		return map[string]any{"ok": false, "error": err.Error()}
 	}

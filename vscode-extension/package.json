@@ -20,6 +20,7 @@
     "onCommand:spl.toolsFfmpegStatus",
     "onCommand:spl.toolsInstallFfmpeg",
     "onCommand:spl.toolsPreviewBulkRename",
+    "onCommand:spl.insertNativeOSExample",
     "onCommand:spl.restartLanguageServer",
     "onCommand:spl.showOutput"
   ],
@@ -43,6 +44,12 @@
         "language": "spl",
         "scopeName": "source.spl",
         "path": "./syntaxes/spl.tmLanguage.json"
+      }
+    ],
+    "snippets": [
+      {
+        "language": "spl",
+        "path": "./snippets/spl.json"
       }
     ],
     "commands": [
@@ -79,6 +86,10 @@
         "title": "SPL: Tools Preview Bulk Rename"
       },
       {
+        "command": "spl.insertNativeOSExample",
+        "title": "SPL: Insert Native OS Example"
+      },
+      {
         "command": "spl.restartLanguageServer",
         "title": "SPL: Restart Language Server"
       },
@@ -108,10 +119,12 @@
         "spl.evaluation.profile": {
           "type": "string",
           "enum": [
-            "untrusted"
+            "untrusted",
+            "native",
+            "trusted"
           ],
           "default": "untrusted",
-          "description": "Evaluation profile. Editor evaluation always uses the untrusted runtime."
+          "description": "Evaluation profile. Use native only when you also configure explicit native/exec allowlists."
         },
         "spl.evaluation.timeoutMs": {
           "type": "number",
@@ -124,6 +137,46 @@
           "default": 65536,
           "minimum": 1024,
           "description": "Maximum captured output for manual SPL evaluation commands."
+        },
+        "spl.evaluation.maxExecOutputBytes": {
+          "type": "number",
+          "default": 65536,
+          "minimum": 1024,
+          "description": "Maximum captured native command stdout/stderr for manual SPL evaluation commands."
+        },
+        "spl.evaluation.allowedCapabilities": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "Capability allowlist passed to manual evaluation. For native/os command execution include `exec`, or use profile `native`."
+        },
+        "spl.evaluation.allowedExecCommands": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "Executable names allowed during manual native/os evaluation, for example `go`, `echo`, or `git`."
+        },
+        "spl.evaluation.allowedNativeModules": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [
+            "native/os"
+          ],
+          "description": "Native modules allowed during manual evaluation."
+        },
+        "spl.evaluation.deniedNativeModules": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "Native modules denied during manual evaluation."
         }
       }
     }

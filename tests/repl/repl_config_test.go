@@ -76,7 +76,7 @@ func TestReplConfigListAndSetRuntime(t *testing.T) {
 			t.Fatalf(":config was not handled")
 		}
 	})
-	if !strings.Contains(out, "Key") || !strings.Contains(out, "execution.profile") || !strings.Contains(out, "runtime.max_steps") {
+	if !strings.Contains(out, "Key") || !strings.Contains(out, "execution.profile") || !strings.Contains(out, "runtime.max_steps") || !strings.Contains(out, "security.allow_native") {
 		t.Fatalf("expected tabular config output, got %q", out)
 	}
 
@@ -103,6 +103,30 @@ func TestReplConfigListAndSetRuntime(t *testing.T) {
 	if env.RenderConfig == nil || env.RenderConfig.Mode != "metadata" {
 		t.Fatalf("expected render config to be applied, got %#v", env.RenderConfig)
 	}
+
+	out = captureReplStdout(t, func() {
+		if !repl.HandleReplMetaCommand(":config set security.allow_native native/os", nil, env) {
+			t.Fatalf(":config set security.allow_native was not handled")
+		}
+	})
+	if !strings.Contains(out, "security.allow_native = native/os") {
+		t.Fatalf("unexpected native allow output: %q", out)
+	}
+	if env.SecurityPolicy == nil || len(env.SecurityPolicy.AllowedNativeModules) != 1 || env.SecurityPolicy.AllowedNativeModules[0] != "native/os" {
+		t.Fatalf("expected native allow policy to be applied, got %#v", env.SecurityPolicy)
+	}
+
+	out = captureReplStdout(t, func() {
+		if !repl.HandleReplMetaCommand(":config set security.deny_native native/os", nil, env) {
+			t.Fatalf(":config set security.deny_native was not handled")
+		}
+	})
+	if !strings.Contains(out, "security.deny_native = native/os") {
+		t.Fatalf("unexpected native deny output: %q", out)
+	}
+	if env.SecurityPolicy == nil || len(env.SecurityPolicy.DeniedNativeModules) != 1 || env.SecurityPolicy.DeniedNativeModules[0] != "native/os" {
+		t.Fatalf("expected native deny policy to be applied, got %#v", env.SecurityPolicy)
+	}
 }
 
 func TestReplConfigUntrustedProfileDeniesExec(t *testing.T) {
@@ -124,5 +148,28 @@ func TestReplConfigUntrustedProfileDeniesExec(t *testing.T) {
 	})
 	if !strings.Contains(strings.ToLower(out), "exec denied") {
 		t.Fatalf("expected exec denial, got %q", out)
+	}
+}
+
+func TestReplNativeOSImportEnablesCommandLineFallback(t *testing.T) {
+	env := NewGlobalEnvironment(nil)
+	out := captureReplStdout(t, func() {
+		repl.ReplEvalSource(`import "native/os"`, env, "<repl>", true)
+		repl.ReplEvalSource(`echo "Hellow"`, env, "<repl>", true)
+	})
+	if !strings.Contains(out, "Hellow") {
+		t.Fatalf("expected native echo output, got %q", out)
+	}
+	if strings.Contains(out, "identifier not found: echo") {
+		t.Fatalf("native command fallback did not handle echo: %q", out)
+	}
+
+	env = NewGlobalEnvironment(nil)
+	out = captureReplStdout(t, func() {
+		repl.ReplEvalSource(`import "native/os" as os`, env, "<repl>", true)
+		repl.ReplEvalSource(`echo "Hellow"`, env, "<repl>", true)
+	})
+	if !strings.Contains(out, "Hellow") || strings.Contains(out, "identifier not found: echo") {
+		t.Fatalf("expected alias import to enable native command fallback, got %q", out)
 	}
 }

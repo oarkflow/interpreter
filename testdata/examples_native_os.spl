@@ -1,0 +1,57 @@
+// Native OS adapter examples.
+//
+// Trusted smoke run:
+//   go run ./cmd/interpreter testdata/examples_native_os.spl
+//
+// Untrusted profile with explicit native command access:
+//   go run ./cmd/interpreter --profile untrusted --allow-cap exec --allow-exec go testdata/examples_native_os.spl
+//
+// Disable execution entirely:
+//   SPL_DISABLE_EXEC=1 go run ./cmd/interpreter testdata/examples_native_os.spl
+
+import "std/core" as core;
+import "native/os" as os;
+
+print "=== native/os examples ===";
+
+let platform = os.platform();
+print core.sprintf("host: os=%s arch=%s cwd=%s", platform.os, platform.arch, platform.cwd);
+print core.sprintf("path separators: file=%s list=%s", platform.path_separator, platform.path_list_sep);
+print core.sprintf("shell hint: %s", platform.shell);
+
+let caps = os.capabilities();
+print core.sprintf("capabilities: native_os=%v exec=%v fs_write=%v env_write=%v", caps.native_os, caps.exec, caps.filesystem_write, caps.env_write);
+
+let commands = os.list({"limit": 8});
+print core.sprintf("first allowed commands from PATH (%d):", len(commands));
+puts(commands);
+
+let go_path = os.which("go");
+if (go_path != null) {
+  print "go executable: " + go_path;
+
+  let result = os.run("go", ["version"], {
+    "timeout_ms": 3000,
+    "max_output_bytes": 4096
+  });
+
+  print core.sprintf("go version ok=%v exit=%d timed_out=%v truncated=%v", result.ok, result.exit_code, result.timed_out, result.truncated);
+  if (trim(result.stdout) != "") {
+    print "stdout: " + trim(result.stdout);
+  }
+  if (trim(result.stderr) != "") {
+    print "stderr: " + trim(result.stderr);
+  }
+} else {
+  print "go executable not available or not allowed by policy; skipping os.run example";
+}
+
+// Direct executable invocation is used by default. Shell syntax such as pipes,
+// redirection, glob expansion, and command substitution is intentionally not
+// interpreted by os.run.
+//
+// In the REPL only, importing native/os also enables command-style lines:
+//   >> import "native/os" as os
+//   >> echo "hello from the host"
+
+print "native/os examples complete";

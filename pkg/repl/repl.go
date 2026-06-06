@@ -71,6 +71,19 @@ var LineContextFn func(source string, line, column int) string
 // LoadConfigObjectFromPathFn loads a config file.
 var LoadConfigObjectFromPathFn func(path, format string) (object.Object, error)
 
+type NativeCommandResult struct {
+	Stdout    string
+	Stderr    string
+	ExitCode  int
+	OK        bool
+	TimedOut  bool
+	Cancelled bool
+	Truncated bool
+	Error     string
+}
+
+var RunNativeCommandLineFn func(env *object.Environment, command string, args []string) NativeCommandResult
+
 // ---------------------------------------------------------------------------
 // Token type constants – must be set by the host package for continuation
 // detection.
@@ -203,6 +216,8 @@ type ReplConfig struct {
 	AllowedCapabilities    []string
 	DeniedCapabilities     []string
 	AllowedExecCommands    []string
+	AllowedNativeModules   []string
+	DeniedNativeModules    []string
 	AllowedNetworkHosts    []string
 	AllowedDBDrivers       []string
 	AllowedDBDSNPatterns   []string
@@ -466,6 +481,9 @@ func ReplEvalSource(input string, env *object.Environment, sourcePath string, pr
 		return
 	}
 	if !res.OK {
+		if handled := maybeRunNativeCommandLine(input, env, res.Result); handled {
+			return
+		}
 		if res.Result != nil {
 			fmt.Println(FormatRuntimeErrorForDisplay(res.Result, input))
 		} else if res.Error != "" {
@@ -476,6 +494,166 @@ func ReplEvalSource(input string, env *object.Environment, sourcePath string, pr
 	if printResult && res.Result != nil && res.Result.Type() != object.NULL_OBJ {
 		fmt.Println(FormatObjectForDisplayWithEnv(res.Result, env))
 	}
+}
+
+func maybeRunNativeCommandLine(input string, env *object.Environment, result object.Object) bool {
+	if RunNativeCommandLineFn == nil || !nativeOSImportedForCommandLine(env) {
+		return false
+	}
+	missing := missingIdentifierName(result)
+	if missing == "" {
+		return false
+	}
+	command, args, ok := parseReplNativeCommandLine(input)
+	if !ok || command != missing {
+		return false
+	}
+	res := RunNativeCommandLineFn(env, command, args)
+	if res.Stdout != "" {
+		fmt.Print(res.Stdout)
+		if !strings.HasSuffix(res.Stdout, "\n") {
+			fmt.Println()
+		}
+	}
+	if res.Stderr != "" {
+		fmt.Print(res.Stderr)
+		if !strings.HasSuffix(res.Stderr, "\n") {
+			fmt.Println()
+		}
+	}
+	if !res.OK {
+		msg := strings.TrimSpace(res.Error)
+		if msg == "" {
+			msg = fmt.Sprintf("command exited with status %d", res.ExitCode)
+		}
+		if res.TimedOut {
+			msg = "command timed out"
+		} else if res.Cancelled {
+			msg = "command cancelled"
+		}
+		fmt.Println(Paint("ERROR: "+msg, ColorBold+ColorRed))
+	}
+	return true
+}
+
+func nativeOSImportedForCommandLine(env *object.Environment) bool {
+	if env == nil {
+		return false
+	}
+	if nativeOSExportsInEnv(env) {
+		return true
+	}
+	obj, ok := env.Get("os")
+	if !ok {
+		return false
+	}
+	h, ok := obj.(*object.Hash)
+	if !ok {
+		return false
+	}
+	for _, name := range []string{"run", "which", "list", "platform", "capabilities"} {
+		key := (&object.String{Value: name}).HashKey()
+		pair, ok := h.Pairs[key]
+		if !ok || pair.Value == nil || pair.Value.Type() != object.BUILTIN_OBJ {
+			return false
+		}
+	}
+	return true
+}
+
+func nativeOSExportsInEnv(env *object.Environment) bool {
+	for _, name := range []string{"run", "which", "list", "platform", "capabilities"} {
+		obj, ok := env.Get(name)
+		if !ok || obj == nil || obj.Type() != object.BUILTIN_OBJ {
+			return false
+		}
+	}
+	return true
+}
+
+func missingIdentifierName(result object.Object) string {
+	errObj, ok := result.(*object.Error)
+	if !ok || errObj == nil {
+		return ""
+	}
+	msg := strings.TrimSpace(errObj.Message)
+	const prefix = "identifier not found:"
+	if !strings.HasPrefix(strings.ToLower(msg), prefix) {
+		return ""
+	}
+	return strings.TrimSpace(msg[len(prefix):])
+}
+
+func parseReplNativeCommandLine(input string) (string, []string, bool) {
+	line := strings.TrimSpace(input)
+	if line == "" || strings.Contains(line, "\n") || strings.HasPrefix(line, ":") {
+		return "", nil, false
+	}
+	if strings.ContainsAny(line, ";{}[]()=<>|&") {
+		return "", nil, false
+	}
+	parts, ok := splitReplCommandWords(line)
+	if !ok || len(parts) == 0 || !isReplCommandName(parts[0]) {
+		return "", nil, false
+	}
+	return parts[0], parts[1:], true
+}
+
+func splitReplCommandWords(line string) ([]string, bool) {
+	words := []string{}
+	var current strings.Builder
+	var quote rune
+	escaped := false
+	for _, r := range line {
+		if escaped {
+			current.WriteRune(r)
+			escaped = false
+			continue
+		}
+		if r == '\\' {
+			escaped = true
+			continue
+		}
+		if quote != 0 {
+			if r == quote {
+				quote = 0
+			} else {
+				current.WriteRune(r)
+			}
+			continue
+		}
+		if r == '\'' || r == '"' {
+			quote = r
+			continue
+		}
+		if unicode.IsSpace(r) {
+			if current.Len() > 0 {
+				words = append(words, current.String())
+				current.Reset()
+			}
+			continue
+		}
+		current.WriteRune(r)
+	}
+	if escaped || quote != 0 {
+		return nil, false
+	}
+	if current.Len() > 0 {
+		words = append(words, current.String())
+	}
+	return words, true
+}
+
+func isReplCommandName(name string) bool {
+	if name == "" {
+		return false
+	}
+	for _, r := range name {
+		if !(unicode.IsLetter(r) || unicode.IsDigit(r) || r == '_' || r == '-' || r == '.' || r == '/') {
+			return false
+		}
+	}
+	return true
 }
 
 func PrintWelcome(env *object.Environment) {
@@ -599,6 +777,7 @@ func ReplTipsText() string {
 		"Type object. then Tab to see fields and methods for a runtime value.",
 		"Type a builtin call like read_json( to see a signature hint.",
 		"Daily chores live in tools/* modules; start with import \"tools/files\" and keep apply false until the preview plan looks right.",
+		"Native host commands live in import \"native/os\"; for command-style lines, or import \"native/os\" as os; for os.run(...).",
 		"Use :checkpoint name, :restore name, and :replay for session workflows.",
 		"Use :diagnostics, :symbols, :def, :refs, and :format for editor-like tooling.",
 		"Use :metrics and :events after running code to inspect runtime behavior.",
@@ -612,6 +791,7 @@ func ReplExamplesText() string {
 		"testdata/examples_runtime_workspace.spl",
 		"testdata/examples_session_replay.spl",
 		"testdata/examples_json_csv_values.spl",
+		"testdata/examples_native_os.spl",
 		"testdata/examples_tools_files.spl",
 		"testdata/examples_tools_media.spl",
 		"testdata/examples_resource_limits.spl",
@@ -627,6 +807,7 @@ func ReplExamplesText() string {
 	}
 	b.WriteString("\nFrom the shell:\n")
 	b.WriteString("  go run ./cmd/interpreter testdata/examples_json_csv_values.spl\n")
+	b.WriteString("  go run ./cmd/interpreter testdata/examples_native_os.spl\n")
 	b.WriteString("  go run ./cmd/interpreter-full testdata/examples_tools_media.spl\n")
 	b.WriteString("  go run ./cmd/spltool session run --json --checkpoint baseline testdata/examples_runtime_workspace.spl")
 	return b.String()
@@ -641,12 +822,21 @@ func ReplToolsText() string {
 		"  tools/office   office_text, office_read",
 		"  tools/secrets  secret_generate, token_generate, file_encrypt, file_decrypt",
 		"  tools/media    media_info, media_convert, ffmpeg_status, ffmpeg_install",
+		"  native/os      run, which, list, platform, capabilities",
 		"",
 		"Preview-first examples:",
 		"  import \"tools/files\";",
 		"  bulk_rename(\"photos\", {\"match\": \"*.jpg\", \"template\": \"{date}_{seq}.{ext}\", \"apply\": false});",
 		"  import \"tools/media\";",
 		"  media_convert(\"input.mov\", \"output.mp4\", {\"install\": true, \"apply\": false});",
+		"",
+		"Native OS examples:",
+		"  :config set security.allow_capabilities exec",
+		"  :config set security.allow_exec go",
+		"  import \"native/os\";",
+		"  echo \"hello from the host\"",
+		"  import \"native/os\" as os;",
+		"  os.run(\"go\", [\"version\"]);",
 	}, "\n")
 }
 
@@ -893,6 +1083,8 @@ func defaultReplConfig(env *object.Environment) *ReplConfig {
 			cfg.AllowedCapabilities = append([]string(nil), p.AllowedCapabilities...)
 			cfg.DeniedCapabilities = append([]string(nil), p.DeniedCapabilities...)
 			cfg.AllowedExecCommands = append([]string(nil), p.AllowedExecCommands...)
+			cfg.AllowedNativeModules = append([]string(nil), p.AllowedNativeModules...)
+			cfg.DeniedNativeModules = append([]string(nil), p.DeniedNativeModules...)
 			cfg.AllowedNetworkHosts = append([]string(nil), p.AllowedNetworkHosts...)
 			cfg.AllowedDBDrivers = append([]string(nil), p.AllowedDBDrivers...)
 			cfg.AllowedDBDSNPatterns = append([]string(nil), p.AllowedDBDSNPatterns...)
@@ -956,6 +1148,8 @@ func ApplyReplConfig(env *object.Environment, cfg *ReplConfig) {
 		AllowedCapabilities:   append([]string(nil), cfg.AllowedCapabilities...),
 		DeniedCapabilities:    append([]string(nil), cfg.DeniedCapabilities...),
 		AllowedExecCommands:   append([]string(nil), cfg.AllowedExecCommands...),
+		AllowedNativeModules:  append([]string(nil), cfg.AllowedNativeModules...),
+		DeniedNativeModules:   append([]string(nil), cfg.DeniedNativeModules...),
 		AllowedNetworkHosts:   append([]string(nil), cfg.AllowedNetworkHosts...),
 		AllowedDBDrivers:      append([]string(nil), cfg.AllowedDBDrivers...),
 		AllowedDBDSNPatterns:  append([]string(nil), cfg.AllowedDBDSNPatterns...),
@@ -1062,6 +1256,8 @@ func ReplConfigTable(env *object.Environment) string {
 		{"security.allow_capabilities", strings.Join(cfg.AllowedCapabilities, ","), "capability allowlist"},
 		{"security.deny_capabilities", strings.Join(cfg.DeniedCapabilities, ","), "capability denylist"},
 		{"security.allow_exec", strings.Join(cfg.AllowedExecCommands, ","), "allowed commands"},
+		{"security.allow_native", strings.Join(cfg.AllowedNativeModules, ","), "allowed native modules"},
+		{"security.deny_native", strings.Join(cfg.DeniedNativeModules, ","), "denied native modules"},
 		{"security.allow_network", strings.Join(cfg.AllowedNetworkHosts, ","), "allowed hosts"},
 		{"security.allow_db_drivers", strings.Join(cfg.AllowedDBDrivers, ","), "allowed DB drivers"},
 		{"security.allow_db_dsn", strings.Join(cfg.AllowedDBDSNPatterns, ","), "allowed DSN patterns"},
@@ -1255,6 +1451,10 @@ func replConfigValue(cfg *ReplConfig, key string) (string, error) {
 		return strings.Join(cfg.DeniedCapabilities, ","), nil
 	case "security.allow_exec":
 		return strings.Join(cfg.AllowedExecCommands, ","), nil
+	case "security.allow_native":
+		return strings.Join(cfg.AllowedNativeModules, ","), nil
+	case "security.deny_native":
+		return strings.Join(cfg.DeniedNativeModules, ","), nil
 	case "security.allow_network":
 		return strings.Join(cfg.AllowedNetworkHosts, ","), nil
 	case "security.allow_db_drivers":
@@ -1329,6 +1529,10 @@ func setReplConfigValue(cfg *ReplConfig, key, raw string) error {
 		cfg.DeniedCapabilities = parseReplCSV(raw)
 	case "security.allow_exec":
 		cfg.AllowedExecCommands = parseReplCSV(raw)
+	case "security.allow_native":
+		cfg.AllowedNativeModules = parseReplCSV(raw)
+	case "security.deny_native":
+		cfg.DeniedNativeModules = parseReplCSV(raw)
 	case "security.allow_network":
 		cfg.AllowedNetworkHosts = parseReplCSV(raw)
 	case "security.allow_db_drivers":

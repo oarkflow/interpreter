@@ -15,14 +15,12 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"math"
 	"math/big"
 	mrand "math/rand"
 	"net/url"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -65,8 +63,9 @@ func (g *GeneratorValue) Inspect() string {
 }
 
 type cappedBuffer struct {
-	buf   bytes.Buffer
-	limit int64
+	buf       bytes.Buffer
+	limit     int64
+	truncated bool
 }
 
 func (b *cappedBuffer) Write(p []byte) (int, error) {
@@ -82,6 +81,7 @@ func (b *cappedBuffer) Write(p []byte) (int, error) {
 	remaining := int(b.limit - int64(b.buf.Len()))
 	if remaining < len(p) {
 		_, _ = b.buf.Write(p[:remaining])
+		b.truncated = true
 		return len(p), nil
 	}
 	return b.buf.Write(p)
@@ -92,6 +92,10 @@ func (b *cappedBuffer) Bytes() []byte {
 		return nil
 	}
 	return b.buf.Bytes()
+}
+
+func (b *cappedBuffer) Truncated() bool {
+	return b != nil && b.truncated
 }
 
 // ---------------------------------------------------------------------------
@@ -2293,9 +2297,6 @@ func init() {
 					return &object.String{Value: fmt.Sprintf("command must be STRING, got %s", args[0].Type())}
 				}
 				cmdName := args[0].(*object.String).Value
-				if err := security.CheckExecAllowed(cmdName); err != nil {
-					return &object.String{Value: fmt.Sprintf("ERROR: %s", err)}
-				}
 
 				timeoutArgMs := int64(0)
 				argEnd := len(args)
@@ -2317,26 +2318,11 @@ func init() {
 					cmdArgs = append(cmdArgs, args[i].(*object.String).Value)
 				}
 
-				ctx, cancel := runtimeContextWithTimeout(env, timeoutDur)
-				defer cancel()
-				cmd := exec.CommandContext(ctx, cmdName, cmdArgs...)
-
-				var outputBuf cappedBuffer
-				outputBuf.limit = execOutputLimit(env)
-				cmd.Stdout = &outputBuf
-				cmd.Stderr = &outputBuf
-				err := cmd.Run()
-				output := outputBuf.Bytes()
-				if err != nil {
-					if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-						return &object.String{Value: fmt.Sprintf("ERROR: command timed out after %dms\n%s", timeoutDur/time.Millisecond, string(output))}
-					}
-					if errors.Is(ctx.Err(), context.Canceled) {
-						return &object.String{Value: fmt.Sprintf("ERROR: command cancelled\n%s", string(output))}
-					}
-					return &object.String{Value: fmt.Sprintf("ERROR: %s\n%s", err, string(output))}
-				}
-				return &object.String{Value: string(output)}
+				result := runNativeCommand(env, cmdName, cmdArgs, nativeCommandOptions{
+					Timeout:       timeoutDur,
+					CheckDisabled: false,
+				})
+				return legacyExecString(result, timeoutDur)
 			},
 		},
 

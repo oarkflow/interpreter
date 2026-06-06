@@ -92,7 +92,7 @@ func TestDiscoveryMetaCommands(t *testing.T) {
 			t.Fatalf(":tools was not handled")
 		}
 	})
-	if !strings.Contains(out, "tools/files") || !strings.Contains(out, "bulk_rename") || !strings.Contains(out, "ffmpeg_status") {
+	if !strings.Contains(out, "tools/files") || !strings.Contains(out, "bulk_rename") || !strings.Contains(out, "ffmpeg_status") || !strings.Contains(out, "native/os") || !strings.Contains(out, "os.run") {
 		t.Fatalf("unexpected tools output: %q", out)
 	}
 }

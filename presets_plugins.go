@@ -6,6 +6,7 @@ import (
 	"sync"
 	"time"
 
+	builtinspkg "github.com/oarkflow/interpreter/pkg/builtins"
 	"github.com/oarkflow/interpreter/pkg/eval"
 	"github.com/oarkflow/interpreter/pkg/object"
 	"github.com/oarkflow/interpreter/pkg/security"
@@ -167,6 +168,7 @@ func init() {
 	_ = RegisterStdBuiltinModule("tools/media", "media_info", "media_convert", "ffmpeg_status", "ffmpeg_install")
 	_ = RegisterStdBuiltinModule("tools/system", "system_info")
 	_ = RegisterStdBuiltinModule("tools/network", "dns_lookup", "tcp_check", "http_probe")
+	_ = RegisterStdModule("native/os", builtinspkg.NativeOSModule())
 	_ = RegisterStdBuiltinModule("cryptoextra", "bcrypt_hash", "bcrypt_verify")
 	_ = RegisterStdBuiltinModule("yaml", "config_load", "config_parse")
 	_ = RegisterStdBuiltinModule("config/yaml", "config_load", "config_parse")

@@ -5,6 +5,7 @@
 // - String Manipulation
 // - Control Flow (Loops, Conditionals)
 // - System Integration (Env, IO, Exec)
+// - Native OS Adapter (import "native/os")
 // - NEW: Modern Features (Const, Dot Notation, Array Methods)
 
 print "=== 1. Basic Functions & Closures ===";
@@ -121,9 +122,35 @@ print "Current Timestamp: " + to_string(ts);
 print "Script Arguments (ARGS):";
 puts(ARGS);
 
+print "\n=== 6. Native OS Adapter ===";
 
-print "\n=== 6. File I/O ===";
-let filename = "demo_temp.txt";
+import "native/os" as os;
+
+let host = os.platform();
+print "Host platform: " + host.os + "/" + host.arch;
+print "Working directory: " + host.cwd;
+
+let native_caps = os.capabilities();
+print "Native exec allowed: " + to_string(native_caps.exec);
+
+let allowed_commands = os.list({"limit": 5});
+print "First allowed native commands:";
+puts(allowed_commands);
+
+let go_path = os.which("go");
+if (go_path != null) {
+    let go_result = os.run("go", ["version"], {
+        "timeout_ms": 3000,
+        "max_output_bytes": 4096
+    });
+    print "go version exit code: " + to_string(go_result.exit_code);
+    print "go version stdout: " + trim(go_result.stdout);
+} else {
+    print "go is not available or not allowed by the active policy.";
+}
+
+print "\n=== 7. File I/O ===";
+let filename = "testdata/demo_temp.txt";
 write_file(filename, "This is a temporary file content.");
 
 if (file_exists(filename)) {
@@ -138,13 +165,13 @@ if (file_exists(filename)) {
     print "Error: File was not created.";
 }
 
-print "\n=== 7. Modern Features (New) ===";
+print "\n=== 8. Modern Features (New) ===";
 
-// 7.1 Const Support
+// 8.1 Const Support
 const PI = 3.14159;
 print "Const PI: " + to_string(PI);
 
-// 7.2 Dot Notation Property Access
+// 8.2 Dot Notation Property Access
 let config = {
     "host": "localhost",
     "port": 8080
@@ -152,7 +179,7 @@ let config = {
 print "Config Host (Dot Access): " + config.host;
 print "Config Port (Dot Access): " + to_string(config.port);
 
-// 7.3 Array Methods (Map, Filter, Find, Push)
+// 8.3 Array Methods (Map, Filter, Find, Push)
 let nums = [1, 2, 3, 4, 5];
 print "Original Numbers: " + to_string(nums);
 

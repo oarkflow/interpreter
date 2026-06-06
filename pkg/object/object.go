@@ -988,6 +988,8 @@ type SecurityPolicy struct {
 	DeniedImportPaths     []string
 	AllowedImportPackages []string
 	DeniedImportPackages  []string
+	AllowedNativeModules  []string
+	DeniedNativeModules   []string
 	DenyDynamicImports    bool
 }
 

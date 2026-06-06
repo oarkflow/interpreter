@@ -74,6 +74,8 @@ type SandboxConfig struct {
 	DeniedImportPaths     []string
 	AllowedImportPackages []string
 	DeniedImportPackages  []string
+	AllowedNativeModules  []string
+	DeniedNativeModules   []string
 	DenyDynamicImports    bool
 }
 
@@ -232,6 +234,8 @@ func sandboxSecurityPolicy(cfg SandboxConfig) *object.SecurityPolicy {
 		DeniedImportPaths:     append([]string(nil), cfg.DeniedImportPaths...),
 		AllowedImportPackages: append([]string(nil), cfg.AllowedImportPackages...),
 		DeniedImportPackages:  append([]string(nil), cfg.DeniedImportPackages...),
+		AllowedNativeModules:  append([]string(nil), cfg.AllowedNativeModules...),
+		DeniedNativeModules:   append([]string(nil), cfg.DeniedNativeModules...),
 		DenyDynamicImports:    cfg.DenyDynamicImports,
 	}
 }

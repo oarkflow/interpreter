@@ -1,0 +1,48 @@
+{
+  "Native OS import": {
+    "prefix": "native-os-import",
+    "body": [
+      "import \"native/os\" as os;"
+    ],
+    "description": "Import the policy-gated native OS adapter."
+  },
+  "Native OS run": {
+    "prefix": "native-os-run",
+    "body": [
+      "import \"native/os\" as os;",
+      "",
+      "let result = os.run(\"${1:go}\", [${2:\"version\"}], {",
+      "  \"timeout_ms\": ${3:1500},",
+      "  \"max_output_bytes\": ${4:65536}",
+      "});",
+      "",
+      "if (result[\"ok\"]) {",
+      "  print result[\"stdout\"];",
+      "} else {",
+      "  print result[\"stderr\"];",
+      "  print result[\"error\"];",
+      "}"
+    ],
+    "description": "Run an allowed native command with structured stdout/stderr/status."
+  },
+  "Native OS platform": {
+    "prefix": "native-os-platform",
+    "body": [
+      "import \"native/os\" as os;",
+      "",
+      "let info = os.platform();",
+      "print info;"
+    ],
+    "description": "Inspect host OS, architecture, cwd, separators, and shell hints."
+  },
+  "Native OS capabilities": {
+    "prefix": "native-os-capabilities",
+    "body": [
+      "import \"native/os\" as os;",
+      "",
+      "let caps = os.capabilities();",
+      "print caps;"
+    ],
+    "description": "Inspect native OS capability availability under the active policy."
+  }
+}

@@ -45,6 +45,8 @@ func LoadSecurityPolicyFromEnv() *SecurityPolicy {
 		DeniedImportPaths:     parseCSVEnv("SPL_IMPORT_PATH_DENY"),
 		AllowedImportPackages: parseCSVEnv("SPL_IMPORT_PACKAGE_ALLOW"),
 		DeniedImportPackages:  parseCSVEnv("SPL_IMPORT_PACKAGE_DENY"),
+		AllowedNativeModules:  parseCSVEnv("SPL_NATIVE_ALLOW"),
+		DeniedNativeModules:   parseCSVEnv("SPL_NATIVE_DENY"),
 		DenyDynamicImports:    parseBoolEnvDefault("SPL_IMPORT_DENY_DYNAMIC", false),
 	}
 }
@@ -404,6 +406,24 @@ func CheckImportAllowed(importPath string, resolvedPath string) error {
 		return fmt.Errorf("import path not allowed by policy")
 	}
 	return CheckFileReadAllowed(resolvedPath)
+}
+
+func CheckNativeModuleAllowed(moduleName string) error {
+	p := ActiveSecurityPolicy()
+	if p == nil {
+		return nil
+	}
+	name := strings.ToLower(strings.TrimSpace(moduleName))
+	if name == "" {
+		return fmt.Errorf("empty native module")
+	}
+	if ContainsToken(p.DeniedNativeModules, name) {
+		return fmt.Errorf("native module denied by policy: %s", moduleName)
+	}
+	if len(p.AllowedNativeModules) > 0 && !ContainsToken(p.AllowedNativeModules, name) {
+		return fmt.Errorf("native module not allowed by policy: %s", moduleName)
+	}
+	return nil
 }
 
 func ExitAllowed() error {

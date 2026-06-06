@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/oarkflow/interpreter/pkg/ast"
+	builtinspkg "github.com/oarkflow/interpreter/pkg/builtins"
 	"github.com/oarkflow/interpreter/pkg/config"
 	"github.com/oarkflow/interpreter/pkg/eval"
 	"github.com/oarkflow/interpreter/pkg/lexer"
@@ -54,6 +55,19 @@ func initReplBridge() {
 	}
 	repl.ResolveImportPathFn = func(path string, env *object.Environment) (string, error) {
 		return resolveImportPath(path, env)
+	}
+	repl.RunNativeCommandLineFn = func(env *object.Environment, command string, args []string) repl.NativeCommandResult {
+		result := builtinspkg.RunNativeCommandForRepl(env, command, args)
+		return repl.NativeCommandResult{
+			Stdout:    result.Stdout,
+			Stderr:    result.Stderr,
+			ExitCode:  result.ExitCode,
+			OK:        result.OK,
+			TimedOut:  result.TimedOut,
+			Cancelled: result.Cancelled,
+			Truncated: result.Truncated,
+			Error:     result.Error,
+		}
 	}
 
 	repl.TOKEN_EOF = int(token.EOF)

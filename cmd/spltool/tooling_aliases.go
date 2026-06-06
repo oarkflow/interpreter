@@ -2,6 +2,7 @@ package main
 
 import (
 	"io"
+	"strings"
 	"time"
 
 	"github.com/oarkflow/interpreter"
@@ -55,13 +56,21 @@ var (
 func init() {
 	tooling.ExecuteSPLFn = func(path, src string, opts tooling.EvaluationOptions, output io.Writer) (string, error) {
 		timeout := time.Duration(opts.TimeoutMS) * time.Millisecond
+		profile := strings.ToLower(strings.TrimSpace(opts.Profile))
+		if profile == "" {
+			profile = "untrusted"
+		}
+		securityPolicy, sandboxCfg, profile := evaluationPolicy(profile, path, opts)
 		obj, err := interpreter.ExecWithOptions(src, nil, interpreter.ExecOptions{
-			Profile:                opts.Profile,
+			Profile:                profile,
 			ModuleDir:              tooling.ModuleDirForPath(path),
+			Security:               securityPolicy,
+			Sandbox:                sandboxCfg,
 			Timeout:                timeout,
 			MaxSteps:               opts.MaxSteps,
 			MaxDepth:               opts.MaxDepth,
 			MaxOutputBytes:         opts.MaxOutputBytes,
+			MaxExecOutputBytes:     opts.MaxExecOutputBytes,
 			Output:                 output,
 			AllowInProcessFallback: true,
 		})

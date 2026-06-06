@@ -169,6 +169,7 @@ var splStdModuleDocs = map[string]StdModuleDoc{
 	"tools/media":   {"tools/media", "audio/video chores", "Groups ffmpeg-backed media probing, conversion, status, and install helpers. Conversion previews by default.", []string{"media_info", "media_convert", "ffmpeg_status", "ffmpeg_install"}, "import \"tools/media\" as media;\nprint media.ffmpeg_status();", true},
 	"tools/system":  {"tools/system", "system inspection", "Groups safe host/runtime inspection helpers gated by the system capability.", []string{"system_info"}, "import \"tools/system\" as system;\nprint system.system_info();", true},
 	"tools/network": {"tools/network", "network checks", "Groups DNS, TCP, and HTTP probe helpers gated by network policy.", []string{"dns_lookup", "tcp_check", "http_probe"}, "import \"tools/network\" as net;\nprint net.dns_lookup(\"example.com\");", true},
+	"native/os":     {"native/os", "native OS adapter", "Exposes policy-gated direct command execution, command discovery, platform metadata, and capability inspection without defining every OS function in SPL.", []string{"run", "which", "list", "platform", "capabilities"}, "import \"native/os\" as os;\nlet result = os.run(\"go\", [\"version\"]);", true},
 }
 
 var builtinSignatureHints = map[string]string{
@@ -274,6 +275,11 @@ var builtinSignatureHints = map[string]string{
 	"dns_lookup":          "dns_lookup(host)",
 	"tcp_check":           "tcp_check(address[, timeout_ms])",
 	"http_probe":          "http_probe(url[, timeout_ms])",
+	"run":                 "run(command, args[, opts])",
+	"which":               "which(command)",
+	"list":                "list([opts])",
+	"platform":            "platform()",
+	"capabilities":        "capabilities()",
 }
 
 var builtinPurposeHints = map[string]string{
@@ -379,6 +385,11 @@ var builtinPurposeHints = map[string]string{
 	"dns_lookup":          "Resolves host addresses under the active network policy.",
 	"tcp_check":           "Checks TCP connectivity to an address under the active network policy.",
 	"http_probe":          "Sends an HTTP HEAD probe under the active network policy.",
+	"run":                 "Runs an allowed executable directly and returns structured stdout, stderr, status, timeout, and truncation details.",
+	"which":               "Resolves an allowed executable from PATH.",
+	"list":                "Lists executable names from PATH after applying exec policy.",
+	"platform":            "Returns host OS, architecture, cwd, separators, and shell hints.",
+	"capabilities":        "Reports currently available native OS, exec, filesystem, network, system, and environment capabilities.",
 }
 
 var builtinReturnHints = map[string]string{
@@ -484,6 +495,11 @@ var builtinReturnHints = map[string]string{
 	"dns_lookup":          "Array of strings",
 	"tcp_check":           "Hash",
 	"http_probe":          "Hash",
+	"run":                 "Hash",
+	"which":               "String or null",
+	"list":                "Array of strings",
+	"platform":            "Hash",
+	"capabilities":        "Hash",
 }
 
 var builtinExampleHints = map[string]string{
@@ -596,11 +612,18 @@ type WorkspaceIndex struct {
 }
 
 type EvaluationOptions struct {
-	Profile        string `json:"profile,omitempty"`
-	TimeoutMS      int64  `json:"timeoutMs,omitempty"`
-	MaxOutputBytes int64  `json:"maxOutputBytes,omitempty"`
-	MaxSteps       int64  `json:"maxSteps,omitempty"`
-	MaxDepth       int    `json:"maxDepth,omitempty"`
+	Profile               string   `json:"profile,omitempty"`
+	TimeoutMS             int64    `json:"timeoutMs,omitempty"`
+	MaxOutputBytes        int64    `json:"maxOutputBytes,omitempty"`
+	MaxExecOutputBytes    int64    `json:"maxExecOutputBytes,omitempty"`
+	MaxSteps              int64    `json:"maxSteps,omitempty"`
+	MaxDepth              int      `json:"maxDepth,omitempty"`
+	AllowedCapabilities   []string `json:"allowedCapabilities,omitempty"`
+	AllowedExecCommands   []string `json:"allowedExecCommands,omitempty"`
+	AllowedNativeModules  []string `json:"allowedNativeModules,omitempty"`
+	DeniedNativeModules   []string `json:"deniedNativeModules,omitempty"`
+	AllowedFileReadPaths  []string `json:"allowedFileReadPaths,omitempty"`
+	AllowedFileWritePaths []string `json:"allowedFileWritePaths,omitempty"`
 }
 
 type EvaluationResult struct {
@@ -1004,7 +1027,7 @@ func moduleDocRank(moduleName string) int {
 		return 0
 	case "std/math", "std/string", "std/array", "std/hash", "std/time", "std/json", "std/csv", "std/crypto", "std/path", "std/random":
 		return 1
-	case "tools/files", "tools/archive", "tools/images", "tools/office", "tools/secrets", "tools/media", "tools/system", "tools/network":
+	case "tools/files", "tools/archive", "tools/images", "tools/office", "tools/secrets", "tools/media", "tools/system", "tools/network", "native/os":
 		return 2
 	default:
 		return 3
@@ -2250,7 +2273,7 @@ func EvaluateSPL(path, src string, opts EvaluationOptions) EvaluationResult {
 	if profile == "" {
 		profile = "untrusted"
 	}
-	if profile != "untrusted" {
+	if profile != "untrusted" && profile != "native" && profile != "trusted" {
 		profile = "untrusted"
 	}
 	timeout := time.Duration(opts.TimeoutMS) * time.Millisecond

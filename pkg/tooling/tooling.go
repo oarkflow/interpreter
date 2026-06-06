@@ -163,6 +163,7 @@ var knownStdModuleExports = map[string][]string{
 	"tools/media":   {"media_info", "media_convert", "ffmpeg_status", "ffmpeg_install"},
 	"tools/system":  {"system_info"},
 	"tools/network": {"dns_lookup", "tcp_check", "http_probe"},
+	"native/os":     {"run", "which", "list", "platform", "capabilities"},
 	"cryptoextra":   {"bcrypt_hash", "bcrypt_verify"},
 	"yaml":          {"config_load", "config_parse"},
 	"config/yaml":   {"config_load", "config_parse"},

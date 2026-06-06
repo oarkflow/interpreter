@@ -8,10 +8,11 @@
 
 import "std/core" as core;
 import "std/fs" as fs;
+import "native/os" as native;
 
 print "=== production profile smoke ===";
 
-let content, err = fs.read_file("testdata/test_io.txt");
+let content, err = fs.read_file("test_io.txt");
 if (err != null) {
   throw err;
 }
@@ -19,10 +20,15 @@ if (err != null) {
 print core.sprintf("read-only file access ok, bytes=%d", len(content));
 print core.sprintf("string helpers still work: %s", trim("  production  ").upper());
 
+let native_caps = native.capabilities();
+print core.sprintf("native/os visible=%v exec_allowed=%v", native_caps.native_os, native_caps.exec);
+
 // These are intentionally commented out. Run one at a time to verify the
 // untrusted profile blocks risky host access.
 //
 // throw exec("echo", "blocked");
+// throw native.run("go", ["version"]);
+// throw native.which("go");
 // let ok, writeErr = fs.write_file("blocked.txt", "should not be written");
 // if (writeErr != null) { throw writeErr; }
 // let outside, outsideErr = fs.read_file("/etc/passwd");
@@ -31,6 +37,12 @@ print core.sprintf("string helpers still work: %s", trim("  production  ").upper
 // Expected checks:
 //   go run ./cmd/interpreter --profile untrusted /tmp/deny_exec.spl
 //     -> exec denied by host protection policy
+//
+//   go run ./cmd/interpreter --profile untrusted /tmp/deny_native_os.spl
+//     -> exec denied by host protection policy
+//
+//   go run ./cmd/interpreter --profile untrusted --allow-cap exec --allow-exec go testdata/examples_native_os.spl
+//     -> native/os may run only the explicitly allowed "go" executable
 //
 //   go run ./cmd/interpreter --profile untrusted /tmp/deny_write.spl
 //     -> capability denied by host protection policy: filesystem_write

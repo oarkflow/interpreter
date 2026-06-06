@@ -356,6 +356,34 @@ func TestLSPSafeEvaluationUsesUntrustedLimits(t *testing.T) {
 	}
 }
 
+func TestLSPNativeOSEvaluationUsesExplicitPolicy(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "native.spl")
+	uri := pathToURI(path)
+	var out, errb bytes.Buffer
+	s := newLSPServer(strings.NewReader(""), &out, &errb)
+	s.dispatch("initialize", mustRaw(map[string]any{"rootUri": pathToURI(dir)}))
+
+	result, _ := s.dispatch("spl/evaluate", mustRaw(map[string]any{
+		"uri": uri,
+		"text": `import "native/os" as os;
+let result = os.run("echo", ["Hellow"]);
+result["stdout"];`,
+		"options": map[string]any{
+			"profile":              "native",
+			"timeoutMs":            500,
+			"maxOutputBytes":       1024,
+			"maxExecOutputBytes":   1024,
+			"allowedExecCommands":  []string{"echo"},
+			"allowedNativeModules": []string{"native/os"},
+		},
+	}))
+	raw, _ := json.Marshal(result)
+	if !strings.Contains(string(raw), `"ok":true`) || !strings.Contains(string(raw), "Hellow") {
+		t.Fatalf("unexpected native evaluation result: %s", raw)
+	}
+}
+
 func TestRunLSPInfoMentionsStdio(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	code := run([]string{"lsp"}, strings.NewReader(""), &stdout, &stderr)

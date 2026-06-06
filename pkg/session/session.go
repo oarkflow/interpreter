@@ -831,9 +831,15 @@ func securityPolicyFromSandbox(cfg sandbox.SandboxConfig) *object.SecurityPolicy
 		AllowedCapabilities:   append([]string(nil), cfg.AllowedCapabilities...),
 		DeniedCapabilities:    append([]string(nil), cfg.DeniedCapabilities...),
 		AllowedExecCommands:   append([]string(nil), cfg.AllowedExecCommands...),
+		DeniedExecCommands:    append([]string(nil), cfg.DeniedExecCommands...),
 		AllowedNetworkHosts:   append([]string(nil), cfg.AllowedNetworkHosts...),
+		DeniedNetworkHosts:    append([]string(nil), cfg.DeniedNetworkHosts...),
 		AllowedFileReadPaths:  append([]string(nil), cfg.AllowedFileReadPaths...),
+		DeniedFileReadPaths:   append([]string(nil), cfg.DeniedFileReadPaths...),
 		AllowedFileWritePaths: append([]string(nil), cfg.AllowedFileWritePaths...),
+		DeniedFileWritePaths:  append([]string(nil), cfg.DeniedFileWritePaths...),
+		AllowedNativeModules:  append([]string(nil), cfg.AllowedNativeModules...),
+		DeniedNativeModules:   append([]string(nil), cfg.DeniedNativeModules...),
 	}
 }
 
