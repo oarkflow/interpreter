@@ -816,7 +816,7 @@ func ReplExamplesText() string {
 func ReplToolsText() string {
 	return strings.Join([]string{
 		"Daily tech chore modules:",
-		"  tools/files    bulk_rename, file_search, file_organize, file_checksum, file_remove_plan",
+		"  tools/files    bulk_rename, file_search, file_finder, file_organize, file_checksum, file_remove_plan",
 		"  tools/archive  archive_compress, archive_extract, archive_list",
 		"  tools/images   image_convert_batch, image_info_file, image_resize_file, image_thumbnail, image_crop_file",
 		"  tools/office   office_text, office_read",
@@ -827,6 +827,8 @@ func ReplToolsText() string {
 		"Preview-first examples:",
 		"  import \"tools/files\";",
 		"  bulk_rename(\"photos\", {\"match\": \"*.jpg\", \"template\": \"{date}_{seq}.{ext}\", \"apply\": false});",
+		"  file_search(\"testdata\", {\"ext\": \"spl\", \"content\": \"print\", \"sort\": \"name\", \"limit\": 5});",
+		"  file_finder(\"testdata\").files().regex(\"^examples_.*\\\\.spl$\").content_regex(\"print\\\\s+\").limit(5).exec();",
 		"  import \"tools/media\";",
 		"  media_convert(\"input.mov\", \"output.mp4\", {\"install\": true, \"apply\": false});",
 		"",

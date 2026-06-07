@@ -155,7 +155,7 @@ var knownStdModuleExports = map[string][]string{
 	"database":      {"db_connect", "db_query", "db_exec", "db_begin", "db_commit", "db_rollback", "db_tables", "db_close", "query", "lazy_query"},
 	"images":        {"image_load", "image_resize", "image_crop", "image_rotate", "image_convert", "image_save", "image_info", "image_render", "image_resize_file", "image_convert_file"},
 	"integrations":  {"http_request", "http_get", "http_post", "webhook", "smtp_send", "ftp_list", "ftp_get", "ftp_put", "sftp_list", "sftp_get", "sftp_put"},
-	"tools/files":   {"bulk_rename", "file_search", "file_locate", "file_move_plan", "file_copy_plan", "file_dedupe", "file_remove_plan", "file_organize", "file_checksum"},
+	"tools/files":   {"bulk_rename", "file_search", "file_locate", "file_finder", "file_move_plan", "file_copy_plan", "file_dedupe", "file_remove_plan", "file_organize", "file_checksum"},
 	"tools/archive": {"archive_compress", "archive_extract", "archive_list"},
 	"tools/images":  {"image_convert_batch", "image_optimize", "image_crop_file", "image_resize_file", "image_thumbnail", "image_info_file"},
 	"tools/office":  {"office_text", "office_read"},

@@ -47,7 +47,7 @@ let currentSidebar = 'examples';
 let serverRenderConfig = { mode: 'auto', max_bytes: 1048576, allow_urls: false, allow_url_hosts: [] };
 
 const splToolCompletions = [
-  'bulk_rename', 'file_search', 'file_locate', 'file_move_plan', 'file_copy_plan', 'file_dedupe',
+  'bulk_rename', 'file_search', 'file_locate', 'file_finder', 'file_move_plan', 'file_copy_plan', 'file_dedupe',
   'archive_compress', 'archive_extract', 'archive_list',
   'image_convert_batch', 'image_optimize', 'image_crop_file',
   'office_text', 'secret_generate', 'token_generate', 'file_encrypt', 'file_decrypt',
@@ -62,7 +62,8 @@ const splToolModules = [
 
 const splToolHoverDocs = {
   bulk_rename: 'bulk_rename(dir[, opts]) previews or applies bulk file renames. Options include match, template, and apply.',
-  file_search: 'file_search(root[, opts]) searches files by glob and optional filename substring.',
+  file_search: 'file_search(root[, opts]) searches files or directories by glob, literal, or regex patterns plus name, path, extension, content, size, time, sort, and limit filters.',
+  file_finder: 'file_finder(root) creates a chainable finder: .files().regex("^examples_.*\\\\.spl$").content_regex("print\\\\s+").limit(5).exec().',
   archive_compress: 'archive_compress(src, dst[, opts]) previews or creates zip, tar, or gzip archives.',
   image_convert_batch: 'image_convert_batch(src_dir, dst_dir[, opts]) previews or converts image files in bulk.',
   secret_generate: 'secret_generate([length][, alphabet]) returns a masked generated secret.',

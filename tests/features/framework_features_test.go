@@ -1,9 +1,14 @@
 package interpreter_test
 
 import (
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	. "github.com/oarkflow/interpreter"
+	_ "github.com/oarkflow/interpreter/builtins/tools"
 	_ "github.com/oarkflow/interpreter/pkg/builtins/scheduler"
 	"github.com/oarkflow/interpreter/pkg/eval"
 )
@@ -48,6 +53,91 @@ let decoded = query(db, "items").select("name", "qty").decode_match("{name: item
 		}
 	default:
 		t.Fatalf("unexpected decoded type: %T", decoded)
+	}
+}
+
+func TestQueryBuilderCommonFilters(t *testing.T) {
+	if !eval.HasBuiltin("db_connect") {
+		t.Skip("database builtins are optional")
+	}
+	res, err := ExecWithOptions(`
+let db, err = db_connect("sqlite", ":memory:");
+if (err != null) { throw err; }
+let _, createErr = db_exec(db, "CREATE TABLE items (name TEXT, qty INTEGER, kind TEXT, tag TEXT)");
+if (createErr != null) { throw createErr; }
+let _, _ = db_exec(db, "INSERT INTO items(name, qty, kind, tag) VALUES(?, ?, ?, ?)", ["apples", 3, "fruit", null]);
+let _, _ = db_exec(db, "INSERT INTO items(name, qty, kind, tag) VALUES(?, ?, ?, ?)", ["desk", 8, "furniture", "home"]);
+let _, _ = db_exec(db, "INSERT INTO items(name, qty, kind, tag) VALUES(?, ?, ?, ?)", ["bananas", 6, "fruit", "yellow"]);
+
+let q = query(db, "items")
+	.where_in("kind", ["fruit"])
+	.where_between("qty", 3, 6)
+	.where_like("name", "%a%")
+	.where_filter({"kind": "fruit", "ignored": null})
+	.where_not_null("name")
+	.where_null("tag")
+	.order_by("qty ASC");
+let rows, qerr = q.exec();
+if (qerr != null) { throw qerr; }
+{"sql": q.sql(), "count": len(rows), "first": rows[0].name};
+`, nil, ExecOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	h, ok := res.(*Hash)
+	if !ok {
+		t.Fatalf("expected hash result, got %T", res)
+	}
+	count, _ := HashGet(h, "count")
+	if count.(*Integer).Value != 1 {
+		t.Fatalf("unexpected filtered count: %s", count.Inspect())
+	}
+	first, _ := HashGet(h, "first")
+	if first.(*String).Value != "apples" {
+		t.Fatalf("unexpected first row: %s", first.Inspect())
+	}
+	sql, _ := HashGet(h, "sql")
+	for _, want := range []string{"IN (?)", "BETWEEN ? AND ?", "LIKE ?", "IS NULL", "IS NOT NULL"} {
+		if !strings.Contains(sql.(*String).Value, want) {
+			t.Fatalf("expected SQL to contain %q, got %q", want, sql.(*String).Value)
+		}
+	}
+}
+
+func TestFileSearchAndFinderBuiltins(t *testing.T) {
+	dir, err := os.MkdirTemp(".", "finder-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(dir)
+	alpha := filepath.Join(dir, "alpha.txt")
+	beta := filepath.Join(dir, "beta.log")
+	if err := os.WriteFile(alpha, []byte("hello finder"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(beta, []byte("log data"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	script := fmt.Sprintf(`
+let quick = file_search(%q, {"ext": "txt", "content": "finder"});
+let chained = file_finder(%q).files().regex("^alpha.*\\.txt$").content_regex("find(er)").sort("name").limit(1).exec();
+{"quick": len(quick), "chained": chained[0].name};
+`, dir, dir)
+	res, err := ExecWithOptions(script, nil, ExecOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	h, ok := res.(*Hash)
+	if !ok {
+		t.Fatalf("expected hash result, got %T", res)
+	}
+	quick, _ := HashGet(h, "quick")
+	if quick.(*Integer).Value != 1 {
+		t.Fatalf("unexpected quick result count: %s", quick.Inspect())
+	}
+	chained, _ := HashGet(h, "chained")
+	if chained.(*String).Value != "alpha.txt" {
+		t.Fatalf("unexpected chained result: %s", chained.Inspect())
 	}
 }
 

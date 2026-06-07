@@ -192,6 +192,7 @@ func TestToolsBuiltinsAppearInPaletteAndSuggestions(t *testing.T) {
 	BuiltinNames = func() map[string]struct{} {
 		return map[string]struct{}{
 			"bulk_rename":   {},
+			"file_finder":   {},
 			"ffmpeg_status": {},
 		}
 	}
@@ -199,6 +200,8 @@ func TestToolsBuiltinsAppearInPaletteAndSuggestions(t *testing.T) {
 		switch name {
 		case "bulk_rename":
 			return "bulk_rename(dir[, opts]) previews or applies bulk file renames"
+		case "file_finder":
+			return "file_finder(root) creates a chainable filesystem finder with glob, regex, content, sort, and limit filters"
 		case "ffmpeg_status":
 			return "ffmpeg_status() reports ffmpeg/ffprobe availability"
 		default:
@@ -221,6 +224,13 @@ func TestToolsBuiltinsAppearInPaletteAndSuggestions(t *testing.T) {
 	joined := strings.Join(lines, "\n")
 	if !strings.Contains(joined, "bulk_rename") || !strings.Contains(joined, "previews or applies") {
 		t.Fatalf("expected tool builtin suggestion details, got %#v", lines)
+	}
+
+	ctx = ReplCompletionContext{Prefix: "file_find", Ok: true}
+	lines = editor.SuggestionLines(ctx, editor.Candidates, 120)
+	joined = strings.Join(lines, "\n")
+	if !strings.Contains(joined, "file_finder") || !strings.Contains(joined, "chainable filesystem finder") {
+		t.Fatalf("expected file_finder suggestion details, got %#v", lines)
 	}
 }
 

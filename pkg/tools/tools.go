@@ -27,6 +27,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"sort"
 	"strconv"
@@ -62,6 +63,29 @@ type FileInfo struct {
 	ModTime int64  `json:"mod_time"`
 	IsDir   bool   `json:"is_dir"`
 	MIME    string `json:"mime,omitempty"`
+}
+
+type searchOptions struct {
+	Pattern        string
+	PatternType    string
+	PatternRegex   *regexp.Regexp
+	NameRegex      *regexp.Regexp
+	NameContains   string
+	PathRegex      *regexp.Regexp
+	PathContains   string
+	Content        string
+	ContentRegex   *regexp.Regexp
+	Type           string
+	Exts           map[string]struct{}
+	Recursive      bool
+	MaxDepth       int
+	MinSize        int64
+	MaxSize        int64
+	ModifiedAfter  int64
+	ModifiedBefore int64
+	Sort           string
+	Desc           bool
+	Limit          int
 }
 
 func defaultHooks(h Hooks) Hooks {
@@ -164,6 +188,98 @@ func listOpt(opts map[string]any, key string) []string {
 	}
 }
 
+func int64Opt(opts map[string]any, key string, def int64) int64 {
+	if v, ok := opts[key]; ok {
+		switch x := v.(type) {
+		case int:
+			return int64(x)
+		case int64:
+			return x
+		case float64:
+			return int64(x)
+		case string:
+			if n, err := strconv.ParseInt(strings.TrimSpace(x), 10, 64); err == nil {
+				return n
+			}
+		}
+	}
+	return def
+}
+
+func parseSearchOptions(opts map[string]any) (searchOptions, error) {
+	so := searchOptions{
+		Pattern:     stringOpt(opts, "match", "*"),
+		PatternType: strings.ToLower(stringOpt(opts, "pattern_type", "glob")),
+		Recursive:   true,
+		Type:        strings.ToLower(stringOpt(opts, "type", "file")),
+		Sort:        strings.ToLower(stringOpt(opts, "sort", "")),
+		Desc:        boolOpt(opts, "desc"),
+		Limit:       intOpt(opts, "limit", 0),
+		MaxDepth:    intOpt(opts, "max_depth", -1),
+	}
+	if so.PatternType != "glob" && so.PatternType != "regex" && so.PatternType != "literal" {
+		so.PatternType = "glob"
+	}
+	if so.PatternType == "regex" {
+		re, err := regexp.Compile(so.Pattern)
+		if err != nil {
+			return so, fmt.Errorf("invalid match regex: %w", err)
+		}
+		so.PatternRegex = re
+	}
+	if _, ok := opts["recursive"]; ok {
+		so.Recursive = boolOpt(opts, "recursive")
+	}
+	if boolOpt(opts, "include_dirs") && so.Type == "file" {
+		so.Type = "any"
+	}
+	if so.Type != "file" && so.Type != "dir" && so.Type != "any" {
+		so.Type = "file"
+	}
+	so.NameContains = strings.ToLower(stringOpt(opts, "name", ""))
+	if so.NameContains == "" {
+		so.NameContains = strings.ToLower(stringOpt(opts, "contains", ""))
+	}
+	so.PathContains = strings.ToLower(stringOpt(opts, "path_contains", ""))
+	so.Content = stringOpt(opts, "content", "")
+	if pattern := stringOpt(opts, "regex", ""); pattern != "" {
+		re, err := regexp.Compile(pattern)
+		if err != nil {
+			return so, fmt.Errorf("invalid regex option: %w", err)
+		}
+		so.NameRegex = re
+	}
+	if pattern := stringOpt(opts, "path_regex", ""); pattern != "" {
+		re, err := regexp.Compile(pattern)
+		if err != nil {
+			return so, fmt.Errorf("invalid path_regex option: %w", err)
+		}
+		so.PathRegex = re
+	}
+	if pattern := stringOpt(opts, "content_regex", ""); pattern != "" {
+		re, err := regexp.Compile(pattern)
+		if err != nil {
+			return so, fmt.Errorf("invalid content_regex option: %w", err)
+		}
+		so.ContentRegex = re
+	}
+	so.MinSize = int64Opt(opts, "min_size", -1)
+	so.MaxSize = int64Opt(opts, "max_size", -1)
+	so.ModifiedAfter = int64Opt(opts, "modified_after", 0)
+	so.ModifiedBefore = int64Opt(opts, "modified_before", 0)
+	exts := listOpt(opts, "ext")
+	if len(exts) > 0 {
+		so.Exts = map[string]struct{}{}
+		for _, ext := range exts {
+			normalized := strings.TrimPrefix(strings.ToLower(strings.TrimSpace(ext)), ".")
+			if normalized != "" {
+				so.Exts[normalized] = struct{}{}
+			}
+		}
+	}
+	return so, nil
+}
+
 func statSize(path string) int64 {
 	info, err := os.Stat(path)
 	if err != nil {
@@ -178,6 +294,152 @@ func matchFile(name, pattern string) bool {
 	}
 	ok, err := filepath.Match(pattern, name)
 	return err == nil && ok
+}
+
+func matchNamePattern(name string, opts searchOptions) bool {
+	switch opts.PatternType {
+	case "regex":
+		return opts.PatternRegex != nil && opts.PatternRegex.MatchString(name)
+	case "literal":
+		return name == opts.Pattern
+	default:
+		return matchFile(name, opts.Pattern)
+	}
+}
+
+func relativeDepth(base, path string) int {
+	rel, err := filepath.Rel(base, path)
+	if err != nil || rel == "." {
+		return 0
+	}
+	return len(strings.Split(filepath.ToSlash(rel), "/"))
+}
+
+func looksBinary(data []byte) bool {
+	for _, b := range data {
+		if b == 0 {
+			return true
+		}
+	}
+	return false
+}
+
+func fileContains(path, needle string, re *regexp.Regexp) bool {
+	if needle == "" && re == nil {
+		return true
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return false
+	}
+	if looksBinary(data[:min(len(data), 4096)]) {
+		return false
+	}
+	text := string(data)
+	if re != nil && !re.MatchString(text) {
+		return false
+	}
+	if needle != "" && !strings.Contains(strings.ToLower(text), strings.ToLower(needle)) {
+		return false
+	}
+	return true
+}
+
+func searchMatches(path string, d fs.DirEntry, info fs.FileInfo, opts searchOptions, h Hooks) bool {
+	isDir := d.IsDir()
+	switch opts.Type {
+	case "file":
+		if isDir {
+			return false
+		}
+	case "dir":
+		if !isDir {
+			return false
+		}
+	}
+	name := d.Name()
+	if !matchNamePattern(name, opts) {
+		return false
+	}
+	if opts.NameContains != "" && !strings.Contains(strings.ToLower(name), opts.NameContains) {
+		return false
+	}
+	if opts.NameRegex != nil && !opts.NameRegex.MatchString(name) {
+		return false
+	}
+	if opts.PathContains != "" && !strings.Contains(strings.ToLower(filepath.ToSlash(path)), opts.PathContains) {
+		return false
+	}
+	if opts.PathRegex != nil && !opts.PathRegex.MatchString(filepath.ToSlash(path)) {
+		return false
+	}
+	if len(opts.Exts) > 0 {
+		ext := strings.TrimPrefix(strings.ToLower(filepath.Ext(name)), ".")
+		if _, ok := opts.Exts[ext]; !ok {
+			return false
+		}
+	}
+	if opts.MinSize >= 0 && info.Size() < opts.MinSize {
+		return false
+	}
+	if opts.MaxSize >= 0 && info.Size() > opts.MaxSize {
+		return false
+	}
+	modTime := info.ModTime().Unix()
+	if opts.ModifiedAfter > 0 && modTime < opts.ModifiedAfter {
+		return false
+	}
+	if opts.ModifiedBefore > 0 && modTime > opts.ModifiedBefore {
+		return false
+	}
+	if opts.Content != "" || opts.ContentRegex != nil {
+		if isDir {
+			return false
+		}
+		if err := defaultHooks(h).CheckRead(path); err != nil {
+			return false
+		}
+		if !fileContains(path, opts.Content, opts.ContentRegex) {
+			return false
+		}
+	}
+	return true
+}
+
+func sortSearchResults(files []FileInfo, key string, desc bool) {
+	if key == "" {
+		return
+	}
+	sort.SliceStable(files, func(i, j int) bool {
+		var cmp int
+		switch key {
+		case "name":
+			cmp = strings.Compare(files[i].Name, files[j].Name)
+		case "path":
+			cmp = strings.Compare(files[i].Path, files[j].Path)
+		case "size":
+			cmp = cmpInt64(files[i].Size, files[j].Size)
+		case "mod_time":
+			cmp = cmpInt64(files[i].ModTime, files[j].ModTime)
+		default:
+			cmp = strings.Compare(files[i].Path, files[j].Path)
+		}
+		if desc {
+			return cmp > 0
+		}
+		return cmp < 0
+	})
+}
+
+func cmpInt64(a, b int64) int {
+	switch {
+	case a < b:
+		return -1
+	case a > b:
+		return 1
+	default:
+		return 0
+	}
 }
 
 func ExpandTemplate(tpl string, info fs.FileInfo, seq int) string {
@@ -320,29 +582,21 @@ func Search(root string, opts map[string]any, h Hooks) ([]FileInfo, error) {
 	if err != nil {
 		return nil, err
 	}
-	pattern := stringOpt(opts, "match", "*")
-	contains := strings.ToLower(stringOpt(opts, "contains", ""))
-	recursive := true
-	if _, ok := opts["recursive"]; ok {
-		recursive = boolOpt(opts, "recursive")
+	so, err := parseSearchOptions(opts)
+	if err != nil {
+		return nil, err
 	}
 	var out []FileInfo
 	err = filepath.WalkDir(base, func(path string, d fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
 		}
-		if path != base && d.IsDir() && !recursive {
+		depth := relativeDepth(base, path)
+		if path != base && d.IsDir() && !so.Recursive {
 			return filepath.SkipDir
 		}
-		if d.IsDir() {
-			return nil
-		}
-		name := d.Name()
-		if !matchFile(name, pattern) {
-			return nil
-		}
-		if contains != "" && !strings.Contains(strings.ToLower(name), contains) {
-			return nil
+		if path != base && d.IsDir() && so.MaxDepth >= 0 && depth > so.MaxDepth {
+			return filepath.SkipDir
 		}
 		if err := defaultHooks(h).CheckRead(path); err != nil {
 			return err
@@ -351,9 +605,20 @@ func Search(root string, opts map[string]any, h Hooks) ([]FileInfo, error) {
 		if err != nil {
 			return err
 		}
-		out = append(out, FileInfo{Path: path, Name: name, Size: info.Size(), Mode: info.Mode().String(), ModTime: info.ModTime().Unix(), MIME: mime.TypeByExtension(filepath.Ext(name))})
+		if path == base || (so.MaxDepth >= 0 && depth > so.MaxDepth) {
+			return nil
+		}
+		if !searchMatches(path, d, info, so, h) {
+			return nil
+		}
+		name := d.Name()
+		out = append(out, FileInfo{Path: path, Name: name, Size: info.Size(), Mode: info.Mode().String(), ModTime: info.ModTime().Unix(), IsDir: d.IsDir(), MIME: mime.TypeByExtension(filepath.Ext(name))})
 		return nil
 	})
+	sortSearchResults(out, so.Sort, so.Desc)
+	if so.Limit > 0 && len(out) > so.Limit {
+		out = out[:so.Limit]
+	}
 	return out, err
 }
 

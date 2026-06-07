@@ -305,8 +305,11 @@ func TestBuiltinCodeExamplesContainCompleteExamples(t *testing.T) {
 	if !strings.Contains(examples["json-csv-values"], `table_filter(`) || !strings.Contains(examples["json-csv-values"], `csv_decode(`) {
 		t.Fatalf("expected json-csv-values example to demonstrate table helpers, got %q", examples["json-csv-values"])
 	}
-	if !strings.Contains(examples["tools-files"], `bulk_rename(`) || !strings.Contains(examples["tools-images"], `image_convert_batch(`) || !strings.Contains(examples["tools-media"], `ffmpeg_status(`) || !strings.Contains(examples["tools-secrets"], `secret_generate(`) {
+	if !strings.Contains(examples["tools-files"], `bulk_rename(`) || !strings.Contains(examples["tools-files"], `file_finder(`) || !strings.Contains(examples["tools-files"], `content_regex(`) || !strings.Contains(examples["tools-images"], `image_convert_batch(`) || !strings.Contains(examples["tools-media"], `ffmpeg_status(`) || !strings.Contains(examples["tools-secrets"], `secret_generate(`) {
 		t.Fatalf("expected tools examples to surface daily tools builtins")
+	}
+	if !strings.Contains(examples["query-builder"], `.where_in(`) || !strings.Contains(examples["query-builder"], `.where_like(`) {
+		t.Fatalf("expected query-builder example to surface common query filters")
 	}
 }
 

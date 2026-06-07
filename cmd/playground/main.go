@@ -227,12 +227,23 @@ let rename_plan = bulk_rename("testdata", {
 });
 
 let matches = file_search("testdata", {
-	"match": "*.spl",
-	"contains": "tools"
+	"ext": "spl",
+	"name": "examples",
+	"content": "print",
+	"sort": "name",
+	"limit": 3
 });
 
+let finder_matches = file_finder("testdata")
+	.files()
+	.regex("^examples_.*\\.spl$")
+	.content_regex("print\\s+")
+	.limit(2)
+	.exec();
+
 print rename_plan;
-print matches;`,
+print matches;
+print finder_matches;`,
 		"tools-images": `// Image tools expose batch operations for CLI/REPL workflows.
 // The browser playground blocks writes, so the mutating example stays commented.
 
@@ -895,6 +906,8 @@ let template = "let db, err = db_connect(\"sqlite\", \":memory:\");\n" +
 "let rows, qerr = query(db, \"users\")\n" +
 "  .select(\"id\", \"name\")\n" +
 "  .where(\"active\", true)\n" +
+"  .where_in(\"id\", [1, 2, 3])\n" +
+"  .where_like(\"name\", \"%a%\")\n" +
 "  .order_by(\"name ASC\")\n" +
 "  .limit(20)\n" +
 "  .exec();\n" +

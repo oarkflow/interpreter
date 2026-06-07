@@ -11,5 +11,40 @@ print sprintf("planned file operations: %d", len(plan));
 let found = file_search("testdata", {"match": "examples_tools_*.spl"});
 print sprintf("found tool examples: %d", len(found));
 
+let filtered = file_search("testdata", {
+  "ext": "spl",
+  "name": "examples",
+  "path_contains": "testdata",
+  "content": "print",
+  "sort": "name",
+  "limit": 3
+});
+print sprintf("filtered SPL examples: %d", len(filtered));
+
+let finder_matches = file_finder("testdata")
+  .files()
+  .regex("^examples_.*\\.spl$")
+  .content_regex("print\\s+")
+  .sort("name")
+  .limit(2)
+  .exec();
+print sprintf("finder matches: %d", len(finder_matches));
+
+let regex_matches = file_search("testdata", {
+  "match": "^examples_.*\\.spl$",
+  "pattern_type": "regex",
+  "path_regex": "testdata/",
+  "content_regex": "print\\s+",
+  "limit": 2
+});
+print sprintf("regex matches: %d", len(regex_matches));
+
+let dirs = file_finder("testdata")
+  .dirs()
+  .name("data")
+  .max_depth(2)
+  .exec();
+print sprintf("matching directories: %d", len(dirs));
+
 let checksum = file_checksum("testdata/examples_tools_files.spl");
 print checksum.sha256;

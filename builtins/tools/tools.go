@@ -17,6 +17,7 @@ func init() {
 		"bulk_rename":         {Fn: builtinBulkRename},
 		"file_search":         {Fn: builtinFileSearch},
 		"file_locate":         {Fn: builtinFileSearch},
+		"file_finder":         {Fn: builtinFileFinder},
 		"file_move_plan":      {Fn: builtinFileMove},
 		"file_copy_plan":      {Fn: builtinFileCopy},
 		"file_dedupe":         {Fn: builtinFileDedupe},
@@ -47,6 +48,17 @@ func init() {
 		"office_text":         {Fn: builtinOfficeText},
 		"office_read":         {Fn: builtinOfficeRead},
 	})
+
+	prev := eval.DotExpressionHook
+	eval.DotExpressionHook = func(left object.Object, name string) object.Object {
+		if finder, ok := left.(*FileFinder); ok {
+			return getFileFinderProperty(finder, name)
+		}
+		if prev != nil {
+			return prev(left, name)
+		}
+		return nil
+	}
 }
 
 func hooks() toolspkg.Hooks {
@@ -88,6 +100,198 @@ func builtinFileSearch(args ...object.Object) object.Object {
 	if errObj != nil {
 		return errObj
 	}
+	files, err := toolspkg.Search(root, opts, hooks())
+	if err != nil {
+		return object.NewError("%s", err)
+	}
+	out := make([]object.Object, 0, len(files))
+	for _, f := range files {
+		out = append(out, nativeToObj(map[string]any{
+			"path": f.Path, "name": f.Name, "size": f.Size, "mode": f.Mode,
+			"mod_time": f.ModTime, "is_dir": f.IsDir, "mime": f.MIME,
+		}))
+	}
+	return &object.Array{Elements: out}
+}
+
+type FileFinder struct {
+	Root string
+	Opts map[string]any
+}
+
+func (ff *FileFinder) Type() object.ObjectType { return object.FILE_FINDER_OBJ }
+func (ff *FileFinder) Inspect() string {
+	return fmt.Sprintf("<file_finder: %s>", ff.Root)
+}
+
+func builtinFileFinder(args ...object.Object) object.Object {
+	if len(args) != 1 {
+		return object.NewError("file_finder(root) expects 1 argument")
+	}
+	root, errObj := asString(args[0], "root")
+	if errObj != nil {
+		return errObj
+	}
+	return &FileFinder{Root: root, Opts: map[string]any{}}
+}
+
+func getFileFinderProperty(ff *FileFinder, name string) object.Object {
+	switch name {
+	case "files":
+		return finderNoArg(ff, name, func() { ff.Opts["type"] = "file" })
+	case "dirs":
+		return finderNoArg(ff, name, func() { ff.Opts["type"] = "dir"; ff.Opts["include_dirs"] = true })
+	case "any":
+		return finderNoArg(ff, name, func() { ff.Opts["type"] = "any"; ff.Opts["include_dirs"] = true })
+	case "match":
+		return finderStringArg(ff, name, "match")
+	case "pattern_type":
+		return finderStringArg(ff, name, "pattern_type")
+	case "regex":
+		return finderStringArg(ff, name, "regex")
+	case "name":
+		return finderStringArg(ff, name, "name")
+	case "path_contains":
+		return finderStringArg(ff, name, "path_contains")
+	case "path_regex":
+		return finderStringArg(ff, name, "path_regex")
+	case "content":
+		return finderStringArg(ff, name, "content")
+	case "content_regex":
+		return finderStringArg(ff, name, "content_regex")
+	case "ext":
+		return &object.Builtin{Fn: func(args ...object.Object) object.Object {
+			if len(args) != 1 {
+				return object.NewError("ext() expects 1 argument")
+			}
+			switch v := args[0].(type) {
+			case *object.String:
+				ff.Opts["ext"] = v.Value
+			case *object.Array:
+				ff.Opts["ext"] = objectToNative(v)
+			default:
+				return object.NewError("ext() argument must be STRING or ARRAY")
+			}
+			return ff
+		}}
+	case "size":
+		return &object.Builtin{Fn: func(args ...object.Object) object.Object {
+			if len(args) != 2 {
+				return object.NewError("size(min, max) expects 2 arguments")
+			}
+			min, errObj := asInt(args[0], "min")
+			if errObj != nil {
+				return errObj
+			}
+			max, errObj := asInt(args[1], "max")
+			if errObj != nil {
+				return errObj
+			}
+			ff.Opts["min_size"], ff.Opts["max_size"] = min, max
+			return ff
+		}}
+	case "modified":
+		return &object.Builtin{Fn: func(args ...object.Object) object.Object {
+			if len(args) != 2 {
+				return object.NewError("modified(after, before) expects 2 arguments")
+			}
+			after, errObj := asInt(args[0], "after")
+			if errObj != nil {
+				return errObj
+			}
+			before, errObj := asInt(args[1], "before")
+			if errObj != nil {
+				return errObj
+			}
+			ff.Opts["modified_after"], ff.Opts["modified_before"] = after, before
+			return ff
+		}}
+	case "recursive":
+		return &object.Builtin{Fn: func(args ...object.Object) object.Object {
+			if len(args) != 1 {
+				return object.NewError("recursive(bool) expects 1 argument")
+			}
+			b, ok := args[0].(*object.Boolean)
+			if !ok {
+				return object.NewError("recursive() argument must be BOOLEAN")
+			}
+			ff.Opts["recursive"] = b.Value
+			return ff
+		}}
+	case "max_depth":
+		return finderIntArg(ff, name, "max_depth")
+	case "limit":
+		return finderIntArg(ff, name, "limit")
+	case "sort":
+		return &object.Builtin{Fn: func(args ...object.Object) object.Object {
+			if len(args) < 1 || len(args) > 2 {
+				return object.NewError("sort(key[, desc]) expects 1 or 2 arguments")
+			}
+			key, errObj := asString(args[0], "key")
+			if errObj != nil {
+				return errObj
+			}
+			ff.Opts["sort"] = key
+			if len(args) == 2 {
+				b, ok := args[1].(*object.Boolean)
+				if !ok {
+					return object.NewError("sort() desc argument must be BOOLEAN")
+				}
+				ff.Opts["desc"] = b.Value
+			}
+			return ff
+		}}
+	case "exec":
+		return &object.Builtin{Fn: func(args ...object.Object) object.Object {
+			if len(args) != 0 {
+				return object.NewError("exec() expects 0 arguments")
+			}
+			return fileSearchResult(ff.Root, ff.Opts)
+		}}
+	default:
+		return nil
+	}
+}
+
+func finderNoArg(ff *FileFinder, name string, apply func()) object.Object {
+	return &object.Builtin{Fn: func(args ...object.Object) object.Object {
+		if len(args) != 0 {
+			return object.NewError("%s() expects 0 arguments", name)
+		}
+		apply()
+		return ff
+	}}
+}
+
+func finderStringArg(ff *FileFinder, name, key string) object.Object {
+	return &object.Builtin{Fn: func(args ...object.Object) object.Object {
+		if len(args) != 1 {
+			return object.NewError("%s(value) expects 1 argument", name)
+		}
+		value, errObj := asString(args[0], "value")
+		if errObj != nil {
+			return errObj
+		}
+		ff.Opts[key] = value
+		return ff
+	}}
+}
+
+func finderIntArg(ff *FileFinder, name, key string) object.Object {
+	return &object.Builtin{Fn: func(args ...object.Object) object.Object {
+		if len(args) != 1 {
+			return object.NewError("%s(value) expects 1 argument", name)
+		}
+		value, errObj := asInt(args[0], "value")
+		if errObj != nil {
+			return errObj
+		}
+		ff.Opts[key] = value
+		return ff
+	}}
+}
+
+func fileSearchResult(root string, opts map[string]any) object.Object {
 	files, err := toolspkg.Search(root, opts, hooks())
 	if err != nil {
 		return object.NewError("%s", err)

@@ -50,6 +50,20 @@ let rows, qerr = q.exec();
 if (qerr != null) { throw qerr; }
 print rows;
 
+print "\n--- Common query filters ---";
+let filteredQuery = query(db, "items")
+    .where_in("kind", ["fruit"])
+    .where_between("qty", 3, 6)
+    .where_like("name", "%a%")
+    .where_filter({"kind": "fruit"})
+    .where_not_null("name")
+    .order_by("qty ASC");
+print filteredQuery.sql();
+
+let filteredRows, filteredErr = filteredQuery.exec();
+if (filteredErr != null) { throw filteredErr; }
+print filteredRows;
+
 print "\n--- Pattern-driven filtering ---";
 let fruitQuery = query(db, "items")
     .where_match("{kind: \"fruit\", qty: > 2}")

@@ -89,6 +89,7 @@ const (
 	SIGNAL_OBJ        ObjectType = 106
 	COMPUTED_OBJ      ObjectType = 107
 	EFFECT_OBJ        ObjectType = 108
+	FILE_FINDER_OBJ   ObjectType = 109
 )
 
 func (ot ObjectType) String() string {
@@ -163,6 +164,8 @@ func (ot ObjectType) String() string {
 		return "COMPUTED"
 	case EFFECT_OBJ:
 		return "EFFECT"
+	case FILE_FINDER_OBJ:
+		return "FILE_FINDER"
 	default:
 		return "UNKNOWN"
 	}

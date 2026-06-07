@@ -3,6 +3,7 @@ package database
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 	"sync"
 
@@ -276,6 +277,117 @@ func GetQueryBuilderProperty(qb *QueryBuilder, name string) object.Object {
 			}
 			qb.mu.Lock()
 			qb.whereConds = append(qb.whereConds, whereClause{raw: s.Value})
+			qb.mu.Unlock()
+			return qb
+		}}
+	case "where_in":
+		return &object.Builtin{Fn: func(args ...object.Object) object.Object {
+			if len(args) != 2 {
+				return object.NewError("where_in(column, values) requires 2 arguments")
+			}
+			col, ok := args[0].(*object.String)
+			if !ok {
+				return object.NewError("where_in() column must be a string")
+			}
+			values, ok := args[1].(*object.Array)
+			if !ok {
+				return object.NewError("where_in() values must be an array")
+			}
+			qb.mu.Lock()
+			defer qb.mu.Unlock()
+			if len(values.Elements) == 0 {
+				qb.whereConds = append(qb.whereConds, whereClause{raw: "1 = 0"})
+				return qb
+			}
+			placeholders := make([]string, 0, len(values.Elements))
+			rawArgs := make([]any, 0, len(values.Elements))
+			for _, el := range values.Elements {
+				placeholders = append(placeholders, "?")
+				rawArgs = append(rawArgs, splToGoValue(el))
+			}
+			qb.whereConds = append(qb.whereConds, whereClause{
+				raw:   fmt.Sprintf("%s IN (%s)", col.Value, strings.Join(placeholders, ", ")),
+				value: rawArgs,
+			})
+			return qb
+		}}
+	case "where_between":
+		return &object.Builtin{Fn: func(args ...object.Object) object.Object {
+			if len(args) != 3 {
+				return object.NewError("where_between(column, min, max) requires 3 arguments")
+			}
+			col, ok := args[0].(*object.String)
+			if !ok {
+				return object.NewError("where_between() column must be a string")
+			}
+			qb.mu.Lock()
+			qb.whereConds = append(qb.whereConds, whereClause{
+				raw:   fmt.Sprintf("%s BETWEEN ? AND ?", col.Value),
+				value: []any{splToGoValue(args[1]), splToGoValue(args[2])},
+			})
+			qb.mu.Unlock()
+			return qb
+		}}
+	case "where_like":
+		return &object.Builtin{Fn: func(args ...object.Object) object.Object {
+			if len(args) != 2 {
+				return object.NewError("where_like(column, pattern) requires 2 arguments")
+			}
+			col, ok := args[0].(*object.String)
+			if !ok {
+				return object.NewError("where_like() column must be a string")
+			}
+			pattern, ok := args[1].(*object.String)
+			if !ok {
+				return object.NewError("where_like() pattern must be a string")
+			}
+			qb.mu.Lock()
+			qb.whereConds = append(qb.whereConds, whereClause{raw: fmt.Sprintf("%s LIKE ?", col.Value), value: pattern.Value})
+			qb.mu.Unlock()
+			return qb
+		}}
+	case "where_null", "where_not_null":
+		return &object.Builtin{Fn: func(args ...object.Object) object.Object {
+			if len(args) != 1 {
+				return object.NewError("%s(column) requires 1 argument", name)
+			}
+			col, ok := args[0].(*object.String)
+			if !ok {
+				return object.NewError("%s() column must be a string", name)
+			}
+			op := "IS NULL"
+			if name == "where_not_null" {
+				op = "IS NOT NULL"
+			}
+			qb.mu.Lock()
+			qb.whereConds = append(qb.whereConds, whereClause{raw: fmt.Sprintf("%s %s", col.Value, op)})
+			qb.mu.Unlock()
+			return qb
+		}}
+	case "where_filter":
+		return &object.Builtin{Fn: func(args ...object.Object) object.Object {
+			if len(args) != 1 {
+				return object.NewError("where_filter(hash) requires 1 argument")
+			}
+			filter, ok := args[0].(*object.Hash)
+			if !ok {
+				return object.NewError("where_filter() argument must be a hash")
+			}
+			keys := make([]string, 0, len(filter.Pairs))
+			byKey := map[string]object.Object{}
+			for _, pair := range filter.Pairs {
+				key := strings.TrimSpace(pair.Key.Inspect())
+				if key == "" || pair.Value == object.NULL {
+					continue
+				}
+				keys = append(keys, key)
+				byKey[key] = pair.Value
+			}
+			sort.Strings(keys)
+			qb.mu.Lock()
+			for _, key := range keys {
+				qb.whereConds = append(qb.whereConds, whereClause{column: key, operator: "=", value: splToGoValue(byKey[key])})
+			}
 			qb.mu.Unlock()
 			return qb
 		}}
