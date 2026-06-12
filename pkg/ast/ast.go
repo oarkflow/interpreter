@@ -58,6 +58,16 @@ type StringLiteral struct {
 func (sl *StringLiteral) expressionNode() {}
 func (sl *StringLiteral) String() string  { return fmt.Sprintf("\"%s\"", sl.Value) }
 
+type TaggedBlockLiteral struct {
+	Tag  string
+	Code string
+}
+
+func (tbl *TaggedBlockLiteral) expressionNode() {}
+func (tbl *TaggedBlockLiteral) String() string {
+	return fmt.Sprintf("%s`%s`", tbl.Tag, tbl.Code)
+}
+
 type BooleanLiteral struct {
 	Value bool
 }

@@ -1,0 +1,127 @@
+// XQL Integration Examples
+//
+// Run:
+//   go run ./cmd/interpreter testdata/xql_examples.spl
+//
+// XQL is a piped query language for transforming structured data.
+// The xql module provides three integration features:
+//   1. Inline data sources via environment variables
+//   2. Integration connections via xql_connect (optional 4th arg auto-binds a source name)
+//   3. The xql_run function for programmatic query execution
+
+import "xql";
+
+print "=== XQL Inline Data Examples ===";
+
+// --- Example 1: Basic inline data query ---
+let users = [
+  {"id": 1, "name": "Alice", "role": "admin", "score": 95},
+  {"id": 2, "name": "Bob", "role": "user", "score": 72},
+  {"id": 3, "name": "Carol", "role": "admin", "score": 88},
+  {"id": 4, "name": "Dave", "role": "user", "score": 61}
+];
+
+let result, err = xql```
+users |> keep id, name, role
+```;
+if (err != null) { throw err; }
+assert_eq(len(result), 4);
+print sprintf("Inline query returned %d rows", len(result));
+
+// --- Example 2: Projection ---
+let projected, err = xql```
+users |> keep name, score
+```;
+if (err != null) { throw err; }
+print sprintf("Projected %d rows: name + score", len(projected));
+
+// --- Example 3: Filtering ---
+let admins, err = xql```
+users |> filter role == "admin"
+```;
+if (err != null) { throw err; }
+assert_eq(len(admins), 2);
+print sprintf("Filtered %d admin users", len(admins));
+
+// --- Example 4: Sorting ---
+let sorted, err = xql```
+users |> sort score desc
+```;
+if (err != null) { throw err; }
+print sprintf("Sorted: top scorer = %s (%d)", sorted[0].name, sorted[0].score);
+
+// --- Example 5: Windowing + row_number ---
+let windowed, err = xql```
+users |> window sort score desc => row_number(): rank
+```;
+if (err != null) { throw err; }
+print sprintf("Window: top rank score = %d", windowed[0].score);
+
+// --- Example 6: Aggregation (fold) ---
+let agg, err = xql```
+users |> fold role => count(*): cnt, avg(score): avg_score
+```;
+if (err != null) { throw err; }
+print sprintf("Aggregated %d groups", len(agg));
+
+// --- Example 7: Multi-source query ---
+let managers = [
+  {"id": 10, "name": "Mina", "dept": "eng"},
+  {"id": 11, "name": "Evan", "dept": "eng"}
+];
+
+let enriched, err = xql```
+users#u
+|> link managers#m by u.id == m.id mode:left
+|> keep u.name, m.name: manager
+```;
+if (err != null) { throw err; }
+print sprintf("Left join produced %d rows", len(enriched));
+
+print "";
+print "=== XQL Integration API Examples ===";
+print "";
+
+// --- Example 8: Register a connection with source binding ---
+// xql_connect registers an integration type with configuration.
+// Supported types: rest, graphql, database, smtp, webcrawler, temp_file, etc.
+// The 4th optional argument binds a source name for XQL queries, replacing the
+// need for a separate xql_bind call.
+let ok = xql_connect("example_api", "rest", {"url": "https://jsonplaceholder.typicode.com/posts"}, "remote_data");
+assert_eq(ok, true);
+print "OK: connected example_api bound to remote_data";
+
+// --- Example 9: List bound integrations ---
+let integrations = xql_list_integrations();
+assert_eq(len(integrations), 1);
+assert_eq(integrations[0], "remote_data");
+print sprintf("Bound sources: %s", integrations[0]);
+
+// --- Example 10: xql_run ---
+// xql_run can query integration-bound sources (not inline SPL variables).
+// It works with sources registered via xql_connect's 4th argument.
+// For inline variables, use the tagged block syntax.
+let r, e = xql_run("remote_data |> take 1");
+print sprintf("xql_run result: err=%s", e == null ? "none" : e);
+
+print r;
+
+// --- Example 11: Pipeline chaining ---
+let pipeline, err = xql```
+users
+|> filter score >= 70
+|> sort score desc
+|> keep name, score, role
+|> take 2
+```;
+if (err != null) { throw err; }
+assert_eq(len(pipeline), 2);
+print sprintf("Pipeline: top 2 scorers = %s (%d), %s (%d)",
+  pipeline[0].name, pipeline[0].score,
+  pipeline[1].name, pipeline[1].score);
+
+print "";
+print "All XQL integration examples passed!";
+
+// Return true so test runners can verify success
+true;

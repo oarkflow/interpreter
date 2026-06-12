@@ -1,37 +1,25 @@
-module github.com/oarkflow/interpreter/cmd/interpreter-full
+module github.com/oarkflow/interpreter/builtins/xql
 
 go 1.26.2
 
 require (
 	github.com/oarkflow/interpreter v0.0.0
-	github.com/oarkflow/interpreter/builtins/cryptoextra v0.0.0
-	github.com/oarkflow/interpreter/builtins/database v0.0.0
-	github.com/oarkflow/interpreter/builtins/images v0.0.0
-	github.com/oarkflow/interpreter/builtins/integrations v0.0.0
-	github.com/oarkflow/interpreter/builtins/tools v0.0.0
-	github.com/oarkflow/interpreter/builtins/xql v0.0.0
-	github.com/oarkflow/interpreter/config/yaml v0.0.0
+	github.com/oarkflow/xql v0.0.0
 )
 
 require (
 	filippo.io/edwards25519 v1.2.0 // indirect
 	github.com/PuerkitoBio/goquery v1.12.0 // indirect
 	github.com/andybalholm/cascadia v1.3.3 // indirect
-	github.com/disintegration/imaging v1.6.2 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/go-sql-driver/mysql v1.10.0 // indirect
 	github.com/goccy/go-reflect v1.2.0 // indirect
 	github.com/google/uuid v1.6.0 // indirect
-	github.com/hashicorp/errwrap v1.0.0 // indirect
-	github.com/hashicorp/go-multierror v1.1.1 // indirect
 	github.com/jackc/pgpassfile v1.0.0 // indirect
 	github.com/jackc/pgservicefile v0.0.0-20240606120523-5a60cdf6a761 // indirect
 	github.com/jackc/pgx/v5 v5.9.2 // indirect
 	github.com/jackc/puddle/v2 v2.2.2 // indirect
-	github.com/jlaffaye/ftp v0.2.0 // indirect
-	github.com/kr/fs v0.1.0 // indirect
-	github.com/kr/text v0.2.0 // indirect
-	github.com/mattn/go-isatty v0.0.22 // indirect
+	github.com/mattn/go-isatty v0.0.21 // indirect
 	github.com/ncruces/go-strftime v1.0.0 // indirect
 	github.com/oarkflow/date v0.0.4 // indirect
 	github.com/oarkflow/errors v0.0.6 // indirect
@@ -43,38 +31,19 @@ require (
 	github.com/oarkflow/spb v0.0.2 // indirect
 	github.com/oarkflow/squealx v0.0.77 // indirect
 	github.com/oarkflow/xid v1.2.9 // indirect
-	github.com/oarkflow/xql v0.0.0 // indirect
 	github.com/oarkflow/xsync v0.0.5 // indirect
-	github.com/pkg/sftp v1.13.10 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
-	golang.org/x/crypto v0.52.0 // indirect
-	golang.org/x/image v0.40.0 // indirect
 	golang.org/x/net v0.55.0 // indirect
 	golang.org/x/sync v0.20.0 // indirect
 	golang.org/x/sys v0.45.0 // indirect
 	golang.org/x/text v0.37.0 // indirect
 	golang.org/x/time v0.15.0 // indirect
-	gopkg.in/yaml.v3 v3.0.1 // indirect
-	modernc.org/libc v1.72.3 // indirect
+	modernc.org/libc v1.72.0 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.11.0 // indirect
 	modernc.org/sqlite v1.50.0 // indirect
 )
 
 replace github.com/oarkflow/interpreter => ../..
-
-replace github.com/oarkflow/interpreter/builtins/cryptoextra => ../../builtins/cryptoextra
-
-replace github.com/oarkflow/interpreter/builtins/database => ../../builtins/database
-
-replace github.com/oarkflow/interpreter/builtins/images => ../../builtins/images
-
-replace github.com/oarkflow/interpreter/builtins/integrations => ../../builtins/integrations
-
-replace github.com/oarkflow/interpreter/builtins/tools => ../../builtins/tools
-
-replace github.com/oarkflow/interpreter/builtins/xql => ../../builtins/xql
-
-replace github.com/oarkflow/interpreter/config/yaml => ../../config/yaml
 
 replace github.com/oarkflow/xql => ../../../xql

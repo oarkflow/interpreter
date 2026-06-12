@@ -164,6 +164,9 @@ func Eval(node ast.Node, env *object.Environment) object.Object {
 		}
 		return &object.String{Value: node.Value}
 
+	case *ast.TaggedBlockLiteral:
+		return evalTaggedBlockLiteral(node, env)
+
 	case *ast.BooleanLiteral:
 		return object.NativeBoolToBooleanObject(node.Value)
 

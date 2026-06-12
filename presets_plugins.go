@@ -40,6 +40,17 @@ func RegisterRuntimeBuiltins(group map[string]*object.Builtin) {
 	eval.RegisterBuiltins(group)
 }
 
+type EmbeddedLanguageContext = eval.EmbeddedLanguageContext
+type EmbeddedLanguageHandler = eval.EmbeddedLanguageHandler
+
+func RegisterEmbeddedLanguage(tag string, handler EmbeddedLanguageHandler) error {
+	return eval.RegisterEmbeddedLanguage(tag, handler)
+}
+
+func EmbeddedLanguageTags() []string {
+	return eval.EmbeddedLanguageTags()
+}
+
 func RegisterStdModule(name string, exports map[string]Object) error {
 	name = strings.TrimSpace(name)
 	if name == "" {
@@ -107,7 +118,7 @@ func LookupStdModule(name string) (map[string]Object, bool) {
 
 func optionalBuiltinModule(name string) bool {
 	switch name {
-	case "database", "images", "integrations", "tools/files", "tools/archive", "tools/images", "tools/office", "tools/secrets", "tools/media", "tools/system", "tools/network", "cryptoextra", "yaml", "config/yaml":
+	case "database", "images", "integrations", "tools/files", "tools/archive", "tools/images", "tools/office", "tools/secrets", "tools/media", "tools/system", "tools/network", "cryptoextra", "yaml", "config/yaml", "xql":
 		return true
 	default:
 		return false
@@ -168,6 +179,7 @@ func init() {
 	_ = RegisterStdBuiltinModule("tools/media", "media_info", "media_convert", "ffmpeg_status", "ffmpeg_install")
 	_ = RegisterStdBuiltinModule("tools/system", "system_info")
 	_ = RegisterStdBuiltinModule("tools/network", "dns_lookup", "tcp_check", "http_probe")
+	_ = RegisterStdBuiltinModule("xql", "xql_run", "xql_connect", "xql_list_integrations")
 	_ = RegisterStdModule("native/os", builtinspkg.NativeOSModule())
 	_ = RegisterStdBuiltinModule("cryptoextra", "bcrypt_hash", "bcrypt_verify")
 	_ = RegisterStdBuiltinModule("yaml", "config_load", "config_parse")

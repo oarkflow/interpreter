@@ -364,6 +364,24 @@ func (l *Lexer) readTemplateLiteral() string {
 	return out.String()
 }
 
+func (l *Lexer) readTripleBacktickLiteral() string {
+	var out strings.Builder
+	l.readChar() // consume first backtick
+	l.readChar() // consume second backtick
+	l.readChar() // consume third backtick
+	for l.ch != 0 {
+		if l.ch == '`' && l.peekChar() == '`' && l.readPosition+1 < len(l.input) && l.input[l.readPosition+1] == '`' {
+			l.readChar()
+			l.readChar()
+			l.readChar()
+			break
+		}
+		out.WriteByte(l.ch)
+		l.readChar()
+	}
+	return out.String()
+}
+
 // NextToken reads and returns the next token from the input.
 func (l *Lexer) NextToken() token.Token {
 	var tok token.Token
@@ -571,6 +589,10 @@ func (l *Lexer) NextToken() token.Token {
 		}
 	case '`':
 		tok.Type = token.TEMPLATE
+		if l.peekChar() == '`' && l.readPosition+1 < len(l.input) && l.input[l.readPosition+1] == '`' {
+			tok.Literal = l.readTripleBacktickLiteral()
+			return tok
+		}
 		tok.Literal = l.readTemplateLiteral()
 	case '"', '\'':
 		tok.Type = token.STRING

@@ -829,6 +829,10 @@ func (p *Parser) parseExpression(precedence int) ast.Expression {
 	case token.IDENT:
 		if p.curToken.Literal == "lazy" {
 			leftExp = p.parseLazyExpression()
+		} else if p.peekTokenIs(token.TEMPLATE) {
+			tag := p.curToken.Literal
+			p.nextToken()
+			leftExp = &ast.TaggedBlockLiteral{Tag: tag, Code: p.curToken.Literal}
 		} else {
 			leftExp = p.parseIdentifier()
 		}

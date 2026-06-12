@@ -168,6 +168,7 @@ var knownStdModuleExports = map[string][]string{
 	"yaml":          {"config_load", "config_parse"},
 	"config/yaml":   {"config_load", "config_parse"},
 	"builtins":      {},
+	"xql":           {"xql_run", "xql_connect", "xql_list_integrations"},
 }
 
 var knownStdModules = func() map[string]struct{} {

@@ -1,0 +1,14 @@
+import "xql";
+
+let http = [
+  {"id": 1, "title": "a", "body": "x"},
+  {"id": 2, "title": "b", "body": "y"}
+];
+
+let response, err = xql```
+http
+|> keep id, title
+```;
+
+print err;
+print response;

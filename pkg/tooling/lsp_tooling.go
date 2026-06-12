@@ -281,6 +281,9 @@ var builtinSignatureHints = map[string]string{
 	"list":                "list([opts])",
 	"platform":            "platform()",
 	"capabilities":        "capabilities()",
+	"xql_run":             "xql_run(query)",
+	"xql_connect":         "xql_connect(alias, type, config[, source])",
+	"xql_list_integrations": "xql_list_integrations()",
 }
 
 var builtinPurposeHints = map[string]string{
@@ -392,6 +395,9 @@ var builtinPurposeHints = map[string]string{
 	"list":                "Lists executable names from PATH after applying exec policy.",
 	"platform":            "Returns host OS, architecture, cwd, separators, and shell hints.",
 	"capabilities":        "Reports currently available native OS, exec, filesystem, network, system, and environment capabilities.",
+	"xql_run":             "Executes an XQL query against integration-bound data sources and returns (result, err).",
+	"xql_connect":         "Connects an integration alias with the given type and configuration hash. When a 4th source argument is provided, also binds the source name for XQL queries.",
+	"xql_list_integrations": "Returns the names of all bound integration sources.",
 }
 
 var builtinReturnHints = map[string]string{
@@ -503,6 +509,9 @@ var builtinReturnHints = map[string]string{
 	"list":                "Array of strings",
 	"platform":            "Hash",
 	"capabilities":        "Hash",
+	"xql_run":             "Tuple of (result, error)",
+	"xql_connect":         "Boolean",
+	"xql_list_integrations": "Array of strings",
 }
 
 var builtinExampleHints = map[string]string{
