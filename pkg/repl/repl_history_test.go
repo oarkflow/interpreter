@@ -129,6 +129,18 @@ func TestTabCompletesCommandSuggestion(t *testing.T) {
 	}
 }
 
+func TestNormalizePastedReplPrompt(t *testing.T) {
+	if got := normalizePastedReplPrompt(">> print result;"); got != "print result;" {
+		t.Fatalf("unexpected prompt normalization: %q", got)
+	}
+	if got := normalizePastedReplPrompt("  .. |> take 5"); got != "|> take 5" {
+		t.Fatalf("unexpected continuation prompt normalization: %q", got)
+	}
+	if got := normalizePastedReplPrompt("value >> keep"); got != "value >> keep" {
+		t.Fatalf("unexpected non-prompt normalization: %q", got)
+	}
+}
+
 func TestReplCallTipStaysVisibleInsideArguments(t *testing.T) {
 	env := object.NewEnvironment()
 	env.Set("makeLabel", &object.Function{

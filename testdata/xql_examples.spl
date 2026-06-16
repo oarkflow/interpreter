@@ -11,6 +11,19 @@
 
 import "xql";
 
+let result, err = xql```
+call https://jsonplaceholder.typicode.com/posts {
+  method: "GET"
+}
+|> keep userId, id, title, body
+|> take 5
+
+```
+if (err != null) { throw err; }
+print "=== XQL Remote API Example ===";
+print sprintf("Fetched %d posts from API", len(result));
+print result;
+
 print "=== XQL Inline Data Examples ===";
 
 // --- Example 1: Basic inline data query ---

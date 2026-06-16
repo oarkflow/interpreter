@@ -10,8 +10,8 @@ import (
 	"github.com/oarkflow/interpreter"
 	"github.com/oarkflow/interpreter/pkg/eval"
 	"github.com/oarkflow/interpreter/pkg/object"
-	xqlengine "github.com/oarkflow/xql/pkg/xql"
 	"github.com/oarkflow/xql/pkg/integration/providers"
+	xqlengine "github.com/oarkflow/xql/pkg/xql"
 )
 
 type xqlIntegrationCtx struct {
@@ -35,6 +35,7 @@ func getGlobalCtx() *xqlIntegrationCtx {
 	reg := xqlengine.NewIntegrationRegistry()
 	registerCommonProviders(reg)
 	mgr := xqlengine.NewIntegrationManager(reg)
+	_ = connectHTTPURIHandlers(context.Background(), mgr)
 	globalCtx.ctx = &xqlIntegrationCtx{
 		manager:  mgr,
 		bindings: map[string]xqlengine.IntegrationBinding{},
@@ -63,6 +64,7 @@ func registerCommonProviders(reg *xqlengine.IntegrationRegistry) {
 		factory func() xqlengine.Integration
 	}
 	defs := []providerDef{
+		{"http.json", func() xqlengine.Integration { return providers.NewHTTPJSONIntegration("http") }},
 		{"rest", func() xqlengine.Integration { return providers.NewHTTPJSONIntegration("rest") }},
 		{"graphql", func() xqlengine.Integration { return providers.NewHTTPJSONIntegration("graphql") }},
 		{"webhook", func() xqlengine.Integration { return providers.NewHTTPJSONIntegration("webhook") }},
@@ -86,6 +88,18 @@ func registerCommonProviders(reg *xqlengine.IntegrationRegistry) {
 		t := t
 		reg.Register(t, func() xqlengine.Integration { return providers.NewCatalogOnlyIntegration(t) })
 	}
+}
+
+func connectHTTPURIHandlers(ctx context.Context, mgr *xqlengine.IntegrationManager) error {
+	if mgr == nil {
+		return nil
+	}
+	for _, scheme := range []string{"http", "https"} {
+		if err := mgr.Connect(ctx, scheme, "http.json", map[string]any{"url": scheme + "://localhost"}); err != nil {
+			return fmt.Errorf("connect %s handler: %w", scheme, err)
+		}
+	}
+	return nil
 }
 
 func evalXQLBlock(ctx interpreter.EmbeddedLanguageContext) object.Object {
@@ -173,19 +187,14 @@ func run(env *object.Environment, query string) (object.Object, error) {
 	if env != nil {
 		registerSources(baseCat, env)
 	}
-	var cat xqlengine.RuntimeCatalog = baseCat
 	ic := getGlobalCtx()
+	lazyCat := xqlengine.NewLazyIntegrationCatalog(baseCat, ic.manager)
 	ic.mu.Lock()
-	hasBindings := len(ic.bindings) > 0
-	if hasBindings {
-		lazyCat := xqlengine.NewLazyIntegrationCatalog(baseCat, ic.manager)
-		for src, binding := range ic.bindings {
-			lazyCat.BindSource(src, binding)
-		}
-		cat = lazyCat
+	for src, binding := range ic.bindings {
+		lazyCat.BindSource(src, binding)
 	}
 	ic.mu.Unlock()
-	result, _, err := xqlengine.RunResult(context.Background(), query, cat)
+	result, _, err := xqlengine.RunResult(context.Background(), query, lazyCat)
 	if err != nil {
 		return nil, err
 	}

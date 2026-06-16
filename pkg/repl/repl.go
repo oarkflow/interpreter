@@ -6,12 +6,14 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"runtime"
 	"sort"
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 	"unicode"
 
@@ -274,6 +276,8 @@ func RunReplInteractive(env *object.Environment) error {
 	restoreTerminal, err := enableRawTerminal(os.Stdin)
 	if err == nil && restoreTerminal != nil {
 		defer restoreTerminal()
+		stopSignalRestore := setupTerminalSignalRestore(restoreTerminal)
+		defer stopSignalRestore()
 	}
 
 	editor, err := newReplEditor(os.Stdin, os.Stdout, ReplCandidatesForEnv(env), env)
@@ -332,7 +336,7 @@ func enableRawTerminal(in *os.File) (func(), error) {
 		return nil, err
 	}
 	state := strings.TrimSpace(string(stateBytes))
-	rawCmd := exec.Command("stty", "raw", "-echo")
+	rawCmd := exec.Command("stty", "-icanon", "min", "1", "time", "0", "-echo")
 	rawCmd.Stdin = in
 	if err := rawCmd.Run(); err != nil {
 		return nil, err
@@ -345,6 +349,35 @@ func enableRawTerminal(in *os.File) (func(), error) {
 		restoreCmd.Stdin = in
 		_ = restoreCmd.Run()
 	}, nil
+}
+
+func setupTerminalSignalRestore(restore func()) func() {
+	if restore == nil || isWindowsRuntime() {
+		return func() {}
+	}
+	signals := make(chan os.Signal, 2)
+	signal.Notify(signals, os.Interrupt, syscall.SIGTERM, syscall.SIGTSTP)
+	done := make(chan struct{})
+	go func() {
+		select {
+		case sig := <-signals:
+			restore()
+			signal.Stop(signals)
+			switch sig {
+			case syscall.SIGTSTP:
+				signal.Reset(syscall.SIGTSTP)
+				_ = syscall.Kill(os.Getpid(), syscall.SIGTSTP)
+			default:
+				os.Exit(128 + int(sig.(syscall.Signal)))
+			}
+		case <-done:
+			return
+		}
+	}()
+	return func() {
+		signal.Stop(signals)
+		close(done)
+	}
 }
 
 // RunReplBasic starts a simple line-based REPL without raw terminal input.
@@ -394,6 +427,10 @@ func ReplNeedsContinuation(input string) bool {
 
 	if NewLexerFn == nil || LexerNextTokenFn == nil {
 		return false
+	}
+
+	if replHasOpenStringLiteral(input) {
+		return true
 	}
 
 	balanceParen := 0
@@ -455,6 +492,74 @@ func ReplNeedsContinuation(input string) bool {
 	}
 
 	return false
+}
+
+func replHasOpenStringLiteral(input string) bool {
+	var quote byte
+	triple := false
+	escaped := false
+
+	for i := 0; i < len(input); i++ {
+		ch := input[i]
+		if quote == 0 {
+			if ch == '#' {
+				for i+1 < len(input) && input[i+1] != '\n' {
+					i++
+				}
+				continue
+			}
+			if ch == '/' && i+1 < len(input) {
+				switch input[i+1] {
+				case '/':
+					for i+1 < len(input) && input[i+1] != '\n' {
+						i++
+					}
+					continue
+				case '*':
+					i += 2
+					for i+1 < len(input) && !(input[i] == '*' && input[i+1] == '/') {
+						i++
+					}
+					if i+1 < len(input) {
+						i++
+					}
+					continue
+				}
+			}
+			switch ch {
+			case '\'', '"', '`':
+				quote = ch
+				triple = i+2 < len(input) && input[i+1] == ch && input[i+2] == ch
+				if triple {
+					i += 2
+				}
+			}
+			continue
+		}
+
+		if triple {
+			if ch == quote && i+2 < len(input) && input[i+1] == quote && input[i+2] == quote {
+				quote = 0
+				triple = false
+				i += 2
+			}
+			continue
+		}
+
+		if escaped {
+			escaped = false
+			continue
+		}
+		if ch == '\\' {
+			escaped = true
+			continue
+		}
+		if ch == quote {
+			quote = 0
+		}
+	}
+
+	return quote != 0
 }
 
 // ---------------------------------------------------------------------------
@@ -2616,7 +2721,7 @@ func (e *ReplEditor) readLine(prompt string) (string, error) {
 		switch ch {
 		case '\r', '\n':
 			_, _ = fmt.Fprint(e.Out, "\r\n")
-			line := string(buf)
+			line := normalizePastedReplPrompt(string(buf))
 			if strings.TrimSpace(line) != "" {
 				if len(e.History) == 0 || e.History[len(e.History)-1] != line {
 					e.History = append(e.History, line)
@@ -2709,6 +2814,16 @@ func (e *ReplEditor) readLine(prompt string) (string, error) {
 		}
 		render()
 	}
+}
+
+func normalizePastedReplPrompt(line string) string {
+	trimmedLeft := strings.TrimLeft(line, " \t")
+	for _, prompt := range []string{">> ", ".. "} {
+		if strings.HasPrefix(trimmedLeft, prompt) {
+			return strings.TrimPrefix(trimmedLeft, prompt)
+		}
+	}
+	return line
 }
 
 func (e *ReplEditor) ReverseHistorySearch(current []rune) ([]rune, int) {

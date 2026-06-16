@@ -57,6 +57,18 @@ func TestReplNeedsContinuation(t *testing.T) {
 	if !repl.ReplNeedsContinuation("if x > 1 {") {
 		t.Fatalf("expected continuation for open brace")
 	}
+	if !repl.ReplNeedsContinuation("let result, err = xql```") {
+		t.Fatalf("expected continuation for open xql block")
+	}
+	if !repl.ReplNeedsContinuation("let result, err = xql```\nhttp\n|> keep id") {
+		t.Fatalf("expected continuation while xql block is still open")
+	}
+	if repl.ReplNeedsContinuation("let result, err = xql```\nhttp\n|> keep id\n```") {
+		t.Fatalf("did not expect continuation after closing xql block")
+	}
+	if repl.ReplNeedsContinuation("// `") {
+		t.Fatalf("did not expect continuation for quote-like delimiter in a comment")
+	}
 	if repl.ReplNeedsContinuation("let x = 1;") {
 		t.Fatalf("did not expect continuation for complete statement")
 	}

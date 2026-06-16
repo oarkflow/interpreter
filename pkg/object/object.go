@@ -627,6 +627,11 @@ func formatPlainDepth(obj Object, depth int) string {
 		return formatPlainDepth(v.Inner, depth)
 	case *GeneratorValue:
 		return formatPlainDepth(&Array{Elements: v.Elements}, depth)
+	case *String:
+		if depth > 0 {
+			return strconv.Quote(v.Value)
+		}
+		return v.Value
 	case *Array:
 		return formatArrayPlain(v, depth)
 	case *Hash:
