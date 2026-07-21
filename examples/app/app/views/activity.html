@@ -1,0 +1,19 @@
+@extends("layout.html")
+
+@define("title") { Activity }
+@define("heading") { Activity }
+@define("content") {
+  <p>
+    Recent events published by <code>app/models/todo.spl</code> mutations
+    through <code>app/support/events.spl</code>, delivered over a
+    channel and consumed by a background <code>go()</code> worker using
+    <code>select</code>.
+  </p>
+  <ul class="activity-list">
+  @for(evt in items) {
+    <li><span class="at">${evt.at}</span>[${evt.kind}] ${evt.message}</li>
+  } @empty {
+    <li>No activity yet.</li>
+  }
+  </ul>
+}

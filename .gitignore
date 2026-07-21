@@ -1,0 +1,15 @@
+.codex
+*.lock
+.claude
+.gocache
+.gomodcache
+*.test
+.env
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+.spl-ide
+/bin/
+/examples/pdf_demo/
+.secretr-data

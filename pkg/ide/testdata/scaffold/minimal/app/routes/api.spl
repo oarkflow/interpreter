@@ -1,0 +1,11 @@
+// JSON API routes, grouped under the /api prefix.
+import "server" as svr;
+import "@/controllers/api_todo_controller.spl" as api_todos;
+
+export function register(server) {
+  svr.route_group(server, "/api", "GET", "/todos", api_todos.index);
+  svr.route_group(server, "/api", "GET", "/todos/:id", api_todos.show);
+  svr.route_group(server, "/api", "POST", "/todos", api_todos.store);
+  svr.route_group(server, "/api", "PUT", "/todos/:id", api_todos.update);
+  svr.route_group(server, "/api", "DELETE", "/todos/:id", api_todos.destroy);
+}

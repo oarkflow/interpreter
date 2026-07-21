@@ -1,0 +1,18 @@
+body { font-family: system-ui, sans-serif; margin: 2rem auto; max-width: 720px; color: #1a1a1a; }
+.site-header { border-bottom: 1px solid #ddd; margin-bottom: 1.5rem; padding-bottom: 0.75rem; }
+.site-header nav a { margin-right: 1rem; }
+table { width: 100%; border-collapse: collapse; }
+th, td { text-align: left; padding: 0.4rem 0.6rem; border-bottom: 1px solid #eee; }
+form.add-form { margin-bottom: 1rem; }
+form { display: inline; margin-right: 0.25rem; }
+.badge { display: inline-block; padding: 0.1rem 0.5rem; border-radius: 999px; font-size: 0.8em; color: white; }
+.badge.priority-high { background: #b91c1c; }
+.badge.priority-medium { background: #b45309; }
+.badge.priority-low { background: #15803d; }
+.filter-bar { margin: 0.5rem 0; }
+.filter-bar a { margin-right: 0.5rem; padding: 0.2rem 0.6rem; border: 1px solid #ddd; border-radius: 4px; text-decoration: none; color: inherit; }
+.filter-bar a.active { background: #1a1a1a; color: white; border-color: #1a1a1a; }
+.filter-status { color: #666; font-size: 0.9em; }
+ul.activity-list { list-style: none; padding: 0; }
+ul.activity-list li { padding: 0.4rem 0; border-bottom: 1px solid #eee; }
+ul.activity-list li .at { color: #888; font-size: 0.85em; margin-right: 0.5rem; }

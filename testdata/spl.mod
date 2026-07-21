@@ -1,0 +1,4 @@
+{
+  "module": "testdata/showcase",
+  "dependencies": {}
+}

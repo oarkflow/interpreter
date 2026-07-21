@@ -1,0 +1,12 @@
+// Server-rendered HTML routes.
+import "server" as svr;
+import "@/controllers/home_controller.spl" as home;
+import "@/controllers/todo_controller.spl" as todos;
+
+export function register(server) {
+  svr.route(server, "GET", "/", home.index);
+  svr.route(server, "GET", "/todos", todos.index);
+  svr.route(server, "POST", "/todos", todos.store);
+  svr.route(server, "POST", "/todos/:id/toggle", todos.toggle);
+  svr.route(server, "POST", "/todos/:id/delete", todos.remove);
+}

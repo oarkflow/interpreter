@@ -1,0 +1,71 @@
+// Server-rendered HTML routes. The native {{var}} template engine used by
+// this project kind only substitutes flat placeholders (no @for loops), so
+// the list markup is built here as a plain string and passed through as a
+// single {{todo_list}} variable - see app/views/todos.html.
+import "@/models/todo.spl" as Todo;
+
+function render_row(t) {
+  let checked = t.done ? " checked" : "";
+  let style = t.done ? ' style="text-decoration:line-through;opacity:.6"' : "";
+  return sprintf(
+    "<li%s><form method=\"post\" action=\"/todos/%d/toggle\" style=\"display:inline\">" +
+    "<button type=\"submit\"%s>%s</button></form> " +
+    "<strong>%s</strong> <em>(%s)</em> " +
+    "<form method=\"post\" action=\"/todos/%d/delete\" style=\"display:inline\">" +
+    "<button type=\"submit\">delete</button></form></li>",
+    style, t.id, checked, checked == "" ? "mark done" : "undo", t.title, t.priority, t.id
+  );
+}
+
+export function index(req, res) {
+  let items = Todo.all_by_priority();
+  let rows = "";
+  for (t in items) {
+    rows = rows + render_row(t);
+  }
+  if (len(items) == 0) {
+    rows = "<li>No todos yet.</li>";
+  }
+  res.render("todos.html", {
+    "todo_list": rows,
+    "count": len(items)
+  });
+}
+
+export function store(req, res) {
+  let form = req.body;
+  let title = "";
+  let priority = "medium";
+  for (pair in split(form, "&")) {
+    let kv = split(pair, "=");
+    if (len(kv) == 2) {
+      let key = url_decode(kv[0]);
+      let value = url_decode(kv[1]);
+      if (key == "title") {
+        title = value;
+      }
+      if (key == "priority") {
+        priority = value;
+      }
+    }
+  }
+  if (trim(title) != "") {
+    Todo.create({"title": title, "priority": priority});
+  }
+  res.redirect("/todos");
+}
+
+export function toggle(req, res) {
+  let id = to_int(req.param("id"));
+  let t = Todo.find(id);
+  if (t != null) {
+    Todo.update(id, {"done": !t.done});
+  }
+  res.redirect("/todos");
+}
+
+export function remove(req, res) {
+  let id = to_int(req.param("id"));
+  Todo.destroy(id);
+  res.redirect("/todos");
+}

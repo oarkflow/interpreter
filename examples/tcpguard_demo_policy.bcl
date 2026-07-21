@@ -1,0 +1,38 @@
+
+pack "example-security-pack" {
+  version "1.0.0"
+  mode enforce
+}
+
+guard "tcpguard-main" {
+  mode enforce
+  version "1"
+}
+
+rule "protect-admin" {
+  scope {
+    methods ["GET", "POST"]
+    paths ["/admin/*"]
+  }
+
+  trigger {
+    on request.received
+  }
+
+  when {
+    any {
+      request.user_agent equals ""
+      request.user_agent contains "sqlmap"
+    }
+  }
+
+  risk {
+    base 90
+  }
+
+  actions {
+    critical {
+      run block
+    }
+  }
+}

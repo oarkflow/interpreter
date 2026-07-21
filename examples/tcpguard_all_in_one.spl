@@ -1,0 +1,130 @@
+// SPL tcpguard builtins tour (plugins/tcpguard, wrapping
+// github.com/oarkflow/tcpguard, a runtime HTTP security policy engine).
+//
+// Run: go -C cmd/interpreter build -o ../../interpreter . && cd ../.. && ./interpreter examples/tcpguard_all_in_one.spl
+//
+// This wraps only the core load -> build guard -> attach middleware loop.
+// Abuse-detector tuning, approval workflows, Redis-backed stores, and the
+// management server are not exposed by this plugin yet.
+
+print "=== SPL tcpguard (HTTP security middleware) tour ===";
+
+import "integrations"; // for http_get, used below to self-test the guard
+import "server" as server;
+import "tcpguard" as tcpguard;
+
+// -----------------------------------------------------------------------------
+// 1) Load a guard pack from an inline BCL block
+// -----------------------------------------------------------------------------
+print "--- 1) tcpguard_load (inline block) ---";
+
+// Block requests under /admin/* that have a missing or sqlmap-flavored
+// User-Agent; everything else passes through untouched.
+let policy = `
+pack "example-security-pack" {
+  version "1.0.0"
+  mode enforce
+}
+
+guard "tcpguard-main" {
+  mode enforce
+  version "1"
+}
+
+rule "protect-admin" {
+  scope {
+    methods ["GET", "POST"]
+    paths ["/admin/*"]
+  }
+
+  trigger {
+    on request.received
+  }
+
+  when {
+    any {
+      request.user_agent equals ""
+      request.user_agent contains "sqlmap"
+    }
+  }
+
+  risk {
+    base 90
+  }
+
+  actions {
+    critical {
+      run block
+    }
+  }
+}
+`;
+
+let [bundle, loadErr] = tcpguard.load(policy);
+if (loadErr != null) { throw loadErr; }
+
+// -----------------------------------------------------------------------------
+// 2) Build a guard and attach it to a real server
+// -----------------------------------------------------------------------------
+print "--- 2) tcpguard_new / guard_middleware ---";
+
+let [guard, guardErr] = tcpguard.new(bundle, {"mode": "enforce"});
+if (guardErr != null) { throw guardErr; }
+
+let app = server.server();
+
+server.route(app, "GET", "/hello", function(req, res) {
+    res.json({"msg": "hi"});
+});
+server.route(app, "GET", "/admin/secret", function(req, res) {
+    res.json({"msg": "top secret"});
+});
+
+tcpguard.guard_middleware(app, guard);
+
+let handle = server.listen_async(app, 18453);
+print sprintf("listening on %s", app.addr);
+
+// -----------------------------------------------------------------------------
+// 3) Exercise it: allowed vs. blocked requests
+// -----------------------------------------------------------------------------
+print "--- 3) self-test over real HTTP ---";
+
+let base = "http://127.0.0.1:18453";
+
+let [helloRes, e1] = http_get(base + "/hello");
+print sprintf("/hello (normal client)          -> %d", helloRes.status_code);
+
+let [adminOkRes, e2] = http_get(base + "/admin/secret", {"User-Agent": "MyTestClient/1.0"});
+print sprintf("/admin/secret (normal UA)       -> %d", adminOkRes.status_code);
+
+let [adminBlockedRes, e3] = http_get(base + "/admin/secret", {"User-Agent": "sqlmap/1.6"});
+print sprintf("/admin/secret (sqlmap UA)       -> %d (blocked)", adminBlockedRes.status_code);
+
+server.shutdown(app);
+
+// -----------------------------------------------------------------------------
+// 4) Ad-hoc evaluation without a live server
+// -----------------------------------------------------------------------------
+print "--- 4) tcpguard_evaluate (ad-hoc, no server needed) ---";
+
+let [decision1, evalErr1] = tcpguard.evaluate(guard, {"method": "GET", "path": "/admin/secret", "headers": {"User-Agent": ["sqlmap/1.0"]}});
+if (evalErr1 != null) { throw evalErr1; }
+print sprintf("effect=%s allowed=%t", decision1.Effect, decision1.Allowed);
+
+let [decision2, evalErr2] = tcpguard.evaluate(guard, {"method": "GET", "path": "/hello", "headers": {"User-Agent": ["normal-client/1.0"]}});
+if (evalErr2 != null) { throw evalErr2; }
+print sprintf("effect=%s allowed=%t", decision2.Effect, decision2.Allowed);
+
+// -----------------------------------------------------------------------------
+// 5) Loading the same policy from a file instead of an inline block
+// -----------------------------------------------------------------------------
+print "--- 5) tcpguard_load (file) ---";
+
+let policyPath = "examples/tcpguard_demo_policy.bcl";
+let [_wok, writeErr] = write_file(policyPath, policy);
+if (writeErr != null) { throw writeErr; }
+
+let [fileBundle, fileLoadErr] = tcpguard.load(policyPath);
+if (fileLoadErr != null) { throw fileLoadErr; }
+print "loaded the same policy from a file - bundle and guard construction work identically either way";

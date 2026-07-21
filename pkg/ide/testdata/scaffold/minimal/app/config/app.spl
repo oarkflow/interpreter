@@ -1,0 +1,21 @@
+// App configuration, loaded from a .env file via the interpreter's built-in
+// config_load(). Falls back to defaults when the file (or an individual
+// key) is missing, so the app still boots with no .env present at all.
+let raw = try {
+  config_load(".env", "env");
+} catch (e) {
+  {};
+};
+
+function setting(key, fallback) {
+  if (key in raw) {
+    return raw[key];
+  }
+  return fallback;
+}
+
+export const APP_NAME = setting("APP_NAME", "SPL App");
+export const APP_PORT = parse_int("" + setting("APP_PORT", 8080));
+export const APP_ENV = setting("APP_ENV", "development");
+export const VIEWS_DIR = setting("VIEWS_DIR", "app/views");
+export const PUBLIC_DIR = setting("PUBLIC_DIR", "public");

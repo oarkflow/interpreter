@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>{{app_name}}</title>
+  <link rel="stylesheet" href="/public/css/app.css">
+</head>
+<body>
+  <header class="site-header">
+    <h1>{{app_name}}</h1>
+    <nav>
+      <a href="/">Home</a>
+      <a href="/todos">Todos</a>
+      <a href="/api/todos">API</a>
+    </nav>
+  </header>
+  <main>
+    <p>Environment: <strong>{{app_env}}</strong></p>
+    <p>
+      This page is served by <code>app/controllers/home_controller.spl</code>
+      via <code>app/routes/web.spl</code>, rendering
+      <code>app/views/home.html</code> through <code>res.render()</code>.
+    </p>
+    <p><a href="/todos">Go to the Todo list &rarr;</a></p>
+  </main>
+</body>
+</html>

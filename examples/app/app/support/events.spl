@@ -1,0 +1,56 @@
+// A tiny in-process activity bus: model mutations call publish(), a single
+// background goroutine drains it and appends to a bounded history, and
+// GET /api/activity reads that history back out. Demonstrates channel(),
+// go(), and select{} - select multiplexes the event channel against a
+// dedicated stop channel so the worker can be shut down cleanly (see the
+// admin-only POST /api/admin/worker/stop route) instead of just being
+// killed with the process.
+//
+// select{} in this language only has receive-cases (no non-blocking send),
+// so publish() below can still block if nothing is left draining bus - a
+// buffered channel just widens that window rather than closing it. That's
+// an acceptable tradeoff for a demo endpoint that intentionally stops the
+// only consumer; a production version would size the buffer for expected
+// burst volume and/or make stop_worker() start a fresh worker on the next
+// publish rather than leaving the bus unread.
+let bus = channel(200);
+let stop = channel();
+let history = [];
+let max_history = 50;
+
+export function publish(kind, message) {
+  send(bus, {"kind": kind, "message": message, "at": now_iso()});
+}
+
+export function recent(limit) {
+  let n = len(history);
+  if (limit == null || limit >= n) {
+    return history;
+  }
+  return history.slice(n - limit, n);
+}
+
+// start_worker() launches the background consumer and returns its future
+// (see stop_worker() / await). Safe to call more than once only if the
+// previous worker was stopped first.
+export function start_worker() {
+  return go(function() {
+    while (true) {
+      select {
+        case bus <- evt: {
+          history.push(evt);
+          if (len(history) > max_history) {
+            history = history.slice(len(history) - max_history, len(history));
+          }
+        }
+        case stop <- _: {
+          return "worker stopped";
+        }
+      }
+    }
+  });
+}
+
+export function stop_worker() {
+  send(stop, true);
+}

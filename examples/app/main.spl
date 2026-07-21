@@ -1,0 +1,35 @@
+// Single entry point for the app.
+//
+// Run with:
+//   cd examples/app && go run ../../cmd/interpreter-full main.spl
+//
+// cmd/interpreter-full (not the lightweight cmd/interpreter) is required
+// because app/models/todo.spl uses the database builtins - see README.md.
+//
+// Boot order: config -> background workers -> middleware -> routes ->
+// static/template wiring -> listen.
+import "server" as server;
+import "@/config/app.spl" as config;
+import "@/support/events.spl" as events;
+import "@/middleware/logger.spl" as logger;
+import "@/routes/web.spl" as web;
+import "@/routes/api.spl" as api;
+
+events.start_worker();
+
+let app = server.web_app(config.VIEWS_DIR);
+
+// Native middleware, backed directly by github.com/oarkflow/fh/mw/* - no
+// SPL glue code needed. recover() catches panics in any handler below it;
+// requestid() stamps/propagates an X-Request-ID header for log correlation.
+server.native_middleware(app, "recover");
+server.native_middleware(app, "requestid");
+
+server.middleware(app, logger.log_request);
+server.static(app, "/public/", config.PUBLIC_DIR);
+
+web.register(app);
+api.register(app);
+
+print sprintf("%s (%s) booting...", config.APP_NAME, config.APP_ENV);
+server.listen(app, config.APP_PORT);

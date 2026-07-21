@@ -1,0 +1,14 @@
+@extends("layout.html")
+
+@define("title") { ${app_name} }
+@define("heading") { ${app_name} }
+@define("content") {
+  <p>Environment: <strong>${app_env}</strong></p>
+  <p>
+    This page is served by <code>app/controllers/home_controller.spl</code>
+    via <code>app/routes/web.spl</code>, rendering
+    <code>app/views/home.html</code> (which extends
+    <code>app/views/layout.html</code>) through <code>res.render()</code>.
+  </p>
+  <p><a href="/todos">Go to the Todo list &rarr;</a></p>
+}

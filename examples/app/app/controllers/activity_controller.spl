@@ -1,0 +1,19 @@
+import "@/support/events.spl" as events;
+
+export function index(req, res) {
+  res.json({"data": events.recent(20)});
+}
+
+// Markup lives in app/views/activity.html now (plain @for/@empty over the
+// events array) - this handler only gathers data.
+export function web_index(req, res) {
+  res.render("activity.html", {"items": events.recent(20)});
+}
+
+// stop_worker is an admin-only demo endpoint (see app/middleware/auth.spl)
+// showing that the background worker started in main.spl can be told to
+// stop cleanly via the events.stop channel instead of just being killed.
+export function stop_worker(req, res) {
+  events.stop_worker();
+  res.json({"ok": true, "message": "activity worker stop requested"});
+}

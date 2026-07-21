@@ -1,0 +1,18 @@
+body { font-family: system-ui, -apple-system, sans-serif; background: #f8fafc; color: #1e293b; margin: 0; }
+.site-header { background: #4f46e5; color: white; padding: 1rem 2rem; }
+.site-header h1 { margin: 0 0 .5rem; font-size: 1.25rem; }
+.site-header nav a { color: white; margin-right: 1rem; text-decoration: none; opacity: .85; }
+.site-header nav a:hover { opacity: 1; text-decoration: underline; }
+main { max-width: 720px; margin: 2rem auto; padding: 0 1rem; }
+.add-form { display: flex; gap: .5rem; margin-bottom: 1rem; }
+.add-form input { flex: 1; padding: .5rem; border: 1px solid #e2e8f0; border-radius: .375rem; }
+.filter-bar { margin-bottom: 1rem; }
+.filter-bar a { margin-right: .75rem; color: #4f46e5; text-decoration: none; }
+.filter-bar a.active { font-weight: 700; text-decoration: underline; }
+table { width: 100%; border-collapse: collapse; }
+th, td { text-align: left; padding: .5rem; border-bottom: 1px solid #e2e8f0; }
+.badge { padding: .125rem .5rem; border-radius: .25rem; font-size: .75rem; color: white; }
+.priority-high .badge, .badge.priority-high { background: #dc2626; }
+.priority-medium .badge, .badge.priority-medium { background: #d97706; }
+.priority-low .badge, .badge.priority-low { background: #16a34a; }
+button { cursor: pointer; }

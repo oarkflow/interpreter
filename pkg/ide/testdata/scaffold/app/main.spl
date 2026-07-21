@@ -1,0 +1,26 @@
+// Single entry point for the app.
+//
+// Run with:
+//   go run ./cmd/interpreter-full main.spl
+//
+// This project kind uses SQLite (app/models/todo.spl) and the
+// builtins/template engine for views, both linked into cmd/interpreter-full
+// - see examples/app/README.md for the full pattern this scaffold mirrors.
+//
+// Boot order: config -> middleware -> routes -> static -> listen.
+import "server" as server;
+import "@/config/app.spl" as config;
+import "@/middleware/logger.spl" as logger;
+import "@/routes/web.spl" as web;
+import "@/routes/api.spl" as api;
+
+let app = server.web_app(config.VIEWS_DIR);
+
+server.middleware(app, logger.log_request);
+server.static(app, "/public/", config.PUBLIC_DIR);
+
+web.register(app);
+api.register(app);
+
+print sprintf("%s (%s) booting...", config.APP_NAME, config.APP_ENV);
+server.listen(app, config.APP_PORT);

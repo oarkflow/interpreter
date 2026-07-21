@@ -1,0 +1,172 @@
+// SPL PDF builtins tour (builtins/pdf, wrapping github.com/oarkflow/pdf).
+//
+// Build and run from the repository root:
+//   cd cmd/interpreter-full && go build -o ../../bin/interpreter-full . && cd ../..
+//   ./bin/interpreter-full examples/pdf_all_in_one.spl
+//
+// PDF builtins are only linked into cmd/interpreter-full (not the
+// lightweight cmd/interpreter) - see builtins/pdf/pdf.go and the root
+// README's "Quick Start" for why heavier optional dependencies stay out of
+// the lightweight binary.
+//
+// This script writes real files under examples/pdf_demo/ (relative to the
+// repo root, like examples/all_in_one_demo.tmp above it) and reads them
+// back so every builtin below is exercised against a real PDF, not a
+// mock. Run it more than once - each step regenerates its own inputs.
+
+import "pdf" as pdf;
+
+print "=== SPL PDF Builtins Tour ===";
+
+let outDir = "pdf_demo";
+if (!file_exists(outDir)) {
+    mkdir(outDir);
+}
+
+// -----------------------------------------------------------------------------
+// 1) Quick generation + inspection
+// -----------------------------------------------------------------------------
+print "--- 1) pdf_quick / pdf_info / pdf_validate / pdf_to_text ---";
+
+let page1 = outDir + "/page1.pdf";
+pdf.quick("Page one: SPL can write a plain-text PDF in a single call.", page1);
+
+let info = pdf.info(page1);
+print sprintf("pages=%d encrypted=%t", info.pages, info.encrypted);
+
+let validation = pdf.validate(page1);
+print sprintf("valid=%t warnings=%d", validation.valid, len(validation.warnings));
+
+print pdf.to_text(page1);
+
+// -----------------------------------------------------------------------------
+// 2) Generating PDFs from HTML and Markdown
+// -----------------------------------------------------------------------------
+print "--- 2) pdf_from_html / pdf_from_markdown ---";
+
+let htmlInvoice = outDir + "/invoice.pdf";
+pdf.from_html(
+    "<h1>Invoice #1042</h1><p>Bill to: Ada Lovelace</p><p>Total due: $128.00</p>",
+    htmlInvoice
+);
+print sprintf("invoice.pdf pages=%d", pdf.info(htmlInvoice).pages);
+
+let markdownReport = outDir + "/report.pdf";
+pdf.from_markdown(
+    "# Weekly Report\n\n## Highlights\n\n- Shipped the PDF builtins\n- Wrote this tour\n\n## Next up\n\nMore examples.",
+    markdownReport,
+    {"title": "Weekly Report", "author": "SPL", "theme": "modern", "toc": true}
+);
+print sprintf("report.pdf pages=%d", pdf.info(markdownReport).pages);
+
+// -----------------------------------------------------------------------------
+// 3) Page-level operations: merge, split, delete, reorder, rotate
+// -----------------------------------------------------------------------------
+print "--- 3) pdf_merge / pdf_split / pdf_delete_pages / pdf_reorder / pdf_rotate ---";
+
+let page2 = outDir + "/page2.pdf";
+pdf.quick("Page two: merged documents keep every page in order.", page2);
+let page3 = outDir + "/page3.pdf";
+pdf.quick("Page three: the last page before we start slicing it up.", page3);
+
+let bundle = outDir + "/bundle.pdf";
+pdf.merge(bundle, page1, page2, page3);
+print sprintf("bundle.pdf pages=%d", pdf.info(bundle).pages);
+
+let firstPageOnly = outDir + "/first_page.pdf";
+pdf.split(bundle, firstPageOnly, "1");
+print sprintf("first_page.pdf pages=%d", pdf.info(firstPageOnly).pages);
+
+let withoutPageTwo = outDir + "/without_page_two.pdf";
+pdf.delete_pages(bundle, withoutPageTwo, "2");
+print sprintf("without_page_two.pdf pages=%d", pdf.info(withoutPageTwo).pages);
+
+let reordered = outDir + "/reordered.pdf";
+pdf.reorder(bundle, reordered, "3,2,1");
+print sprintf("reordered.pdf pages=%d (now page order is 3,2,1)", pdf.info(reordered).pages);
+
+let rotated = outDir + "/rotated.pdf";
+pdf.rotate(bundle, rotated, "1", 90);
+print sprintf("rotated.pdf pages=%d (page 1 rotated 90deg)", pdf.info(rotated).pages);
+
+// -----------------------------------------------------------------------------
+// 4) Stamping: watermark, page numbers, metadata, image stamp
+// -----------------------------------------------------------------------------
+print "--- 4) pdf_watermark / pdf_add_page_numbers / pdf_set_metadata / pdf_stamp_image ---";
+
+let watermarked = outDir + "/watermarked.pdf";
+pdf.watermark(bundle, watermarked, "DRAFT", {"opacity": 0.25, "angle": 45, "font_size": 60});
+print sprintf("watermarked.pdf pages=%d", pdf.info(watermarked).pages);
+
+let numbered = outDir + "/numbered.pdf";
+pdf.add_page_numbers(bundle, numbered, {"format": "Page %d of %d", "font_size": 10});
+print sprintf("numbered.pdf pages=%d", pdf.info(numbered).pages);
+
+let tagged = outDir + "/tagged.pdf";
+pdf.set_metadata(bundle, tagged, {"Title": "SPL PDF Tour", "Author": "SPL", "Subject": "builtins/pdf demo"});
+print sprintf("tagged.pdf metadata=%v", pdf.info(tagged).metadata);
+
+let stamped = outDir + "/stamped.pdf";
+pdf.stamp_image(bundle, stamped, "examples/pdf_sample_logo.png", {"x": 36, "y": 36, "width": 24, "height": 24});
+print sprintf("stamped.pdf pages=%d", pdf.info(stamped).pages);
+
+// -----------------------------------------------------------------------------
+// 5) Security: protect, decrypt, compress
+// -----------------------------------------------------------------------------
+print "--- 5) pdf_protect / pdf_decrypt / pdf_compress ---";
+
+let protected = outDir + "/protected.pdf";
+pdf.protect(bundle, protected, "user-pw", "owner-pw", "aes-128");
+print sprintf("protected.pdf encrypted=%t", pdf.info(protected, "user-pw").encrypted);
+
+let decrypted = outDir + "/decrypted.pdf";
+pdf.decrypt(protected, decrypted, "user-pw");
+print sprintf("decrypted.pdf encrypted=%t", pdf.info(decrypted).encrypted);
+
+let compressed = outDir + "/compressed.pdf";
+pdf.compress(bundle, compressed);
+print sprintf("compressed.pdf pages=%d", pdf.info(compressed).pages);
+
+// -----------------------------------------------------------------------------
+// 6) Extraction and search: text/html/markdown/json, images, full-text search
+// -----------------------------------------------------------------------------
+print "--- 6) pdf_to_html / pdf_to_markdown / pdf_to_json / pdf_search / pdf_extract_images ---";
+
+print substring(pdf.to_html(bundle), 0, 120);
+print substring(pdf.to_markdown(bundle), 0, 120);
+print substring(pdf.to_json(bundle), 0, 120);
+
+let matches = pdf.search(bundle, "Page", {"case_sensitive": false});
+print sprintf("found %d match(es) for \"Page\"", len(matches));
+
+let imagesDir = outDir + "/extracted_images";
+let extracted = pdf.extract_images(stamped, imagesDir);
+print sprintf("extracted %d image(s) from stamped.pdf into %s", len(extracted), imagesDir);
+
+// -----------------------------------------------------------------------------
+// 7) Images to PDF
+// -----------------------------------------------------------------------------
+print "--- 7) pdf_images_to_pdf ---";
+
+let fromImages = outDir + "/from_images.pdf";
+pdf.images_to_pdf(fromImages, ["examples/pdf_sample_logo.png"], {"size": "a4", "image_fit": "contain"});
+print sprintf("from_images.pdf pages=%d", pdf.info(fromImages).pages);
+
+// -----------------------------------------------------------------------------
+// 8) Forms (documented, not executed - none of the PDFs above have form
+//    fields, since pdf_quick/pdf_from_html/pdf_from_markdown don't create
+//    AcroForm fields. Point these at a real fillable PDF to use them.)
+// -----------------------------------------------------------------------------
+// let fields = pdf.list_form_fields("form_with_fields.pdf");
+// print fields;
+// pdf.fill_form("form_with_fields.pdf", outDir + "/filled.pdf", {"applicant_name": "Ada Lovelace"});
+
+// -----------------------------------------------------------------------------
+// 9) Fetching a PDF from a URL (network capability - disabled by default,
+//    matching all_in_one.spl's convention for optional network access)
+// -----------------------------------------------------------------------------
+if (false) {
+    pdf.from_url("https://example.com/sample.pdf", outDir + "/from_url.pdf");
+}
+
+print "=== Tour complete - generated files are under examples/pdf_demo/ ===";

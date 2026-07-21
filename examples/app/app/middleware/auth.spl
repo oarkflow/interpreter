@@ -1,0 +1,20 @@
+import "@/config/app.spl" as config;
+import "@/support/http.spl" as http;
+import "@/support/types.spl" as types;
+
+// require_admin protects a route group: requests must send
+// "Authorization: Bearer <ADMIN_TOKEN>" matching the configured secret.
+// config.ADMIN_TOKEN is a masked SECRET value (see app/config/app.spl) -
+// secret_reveal() only happens here, at the point of comparison, never
+// logged or returned to the client. The header is parsed into a typed
+// BearerToken (see app/support/types.spl) rather than string-matched
+// directly, so malformed/missing headers are handled the same way any
+// other typed-parse failure would be.
+export function require_admin(req, res, next) {
+  let bearer = http.headers_as(req, types.BearerToken);
+  if (bearer.matches(secret_reveal(config.ADMIN_TOKEN))) {
+    next();
+  } else {
+    res.status(401).json({"error": "unauthorized"});
+  }
+}

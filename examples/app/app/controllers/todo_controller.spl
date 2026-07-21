@@ -1,0 +1,65 @@
+import "@/models/todo.spl" as Todo;
+import "@/support/http.spl" as http;
+import "@/support/events.spl" as events;
+import "@/support/types.spl" as types;
+
+// Row/badge markup lives in app/views/components/todo_components.html now
+// (TodoRow, PriorityBadge) - this controller only gathers data.
+export function index(req, res) {
+  let filter = http.query_as(req, types.TodoFilter);
+  let items = Todo.all_by_priority().filter(function(t) { return filter.matches(t); });
+  let active_filter = filter.priority == null ? "all" : filter.priority;
+  // render_ssr (not render): app/views/todos/index.html uses @signal/
+  // @watch/on:click, which need the SSR hydration payload + client
+  // runtime that render_ssr() injects - plain render() would leave
+  // on:click as an inert literal attribute instead of compiling it to
+  // data-spl-on-click. @reactive doesn't currently support wrapping a
+  // @for loop in this template engine version (verified: it errors with
+  // "cannot iterate over STRING"), so the list itself is server-rendered
+  // per request rather than re-filtered client-side; the priority links
+  // below do a real (server-side, typed-query-parsed) reload instead.
+  res.render_ssr("todos/index.html", {
+    "todos": items,
+    "count": len(items),
+    "activeFilter": active_filter
+  });
+}
+
+export function store(req, res) {
+  let form = http.parse_form(req.body);
+  let input = types.TodoInput(form);
+  match (input.validate()) {
+    case Valid(v) => {
+      let t = Todo.create({"title": v.title, "priority": v.priority});
+      events.publish("todo.created", sprintf("created #%d \"%s\" (%s)", t.id, t.title, t.priority));
+    }
+    case Invalid(reason) => {}
+  }
+  res.redirect("/todos");
+}
+
+export function toggle(req, res) {
+  let id = http.parse_id(req.param("id"));
+  if (id == null) {
+    res.status(400).text("invalid id");
+    return;
+  }
+  let t = Todo.find(id);
+  if (t != null) {
+    Todo.update(id, {"done": !t.done});
+    events.publish("todo.updated", sprintf("toggled #%d \"%s\"", t.id, t.title));
+  }
+  res.redirect("/todos");
+}
+
+export function remove(req, res) {
+  let id = http.parse_id(req.param("id"));
+  if (id == null) {
+    res.status(400).text("invalid id");
+    return;
+  }
+  if (Todo.destroy(id)) {
+    events.publish("todo.deleted", sprintf("deleted #%d", id));
+  }
+  res.redirect("/todos");
+}

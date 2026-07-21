@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Todos</title>
+  <link rel="stylesheet" href="/public/css/app.css">
+</head>
+<body>
+  <header class="site-header">
+    <h1>Todos ({{count}})</h1>
+    <nav>
+      <a href="/">Home</a>
+      <a href="/todos">Todos</a>
+      <a href="/api/todos">API</a>
+    </nav>
+  </header>
+  <main>
+    <form method="post" action="/todos" class="add-form">
+      <input type="text" name="title" placeholder="New todo" required>
+      <select name="priority">
+        <option value="low">low</option>
+        <option value="medium" selected>medium</option>
+        <option value="high">high</option>
+      </select>
+      <button type="submit">Add</button>
+    </form>
+    <ul class="task-list">{{todo_list}}</ul>
+  </main>
+</body>
+</html>

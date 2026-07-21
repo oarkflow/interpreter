@@ -1,0 +1,160 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SPL Playground</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.52.2/min/vs/loader.min.js"></script>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <div class="app">
+    <header class="topbar">
+      <div class="topbar__brand">
+        <span class="mark">SPL Playground</span>
+        <span class="tagline">write, run, and ship SPL code</span>
+      </div>
+      <div class="topbar__controls">
+        <span class="health">
+          <span class="dot" id="healthDot"></span>
+          <span id="healthText">checking service&hellip;</span>
+        </span>
+        <div class="topbar__controls" id="authPanel">
+          <input id="authSecret" type="password" autocomplete="current-password" placeholder="Playground secret" class="input" style="width:11rem" />
+          <button id="loginBtn" class="btn btn--primary btn--sm">Sign in</button>
+          <button id="logoutBtn" class="btn btn--sm hidden">Sign out</button>
+        </div>
+        <span class="status status--idle" id="authStatus">signed out</span>
+        <div class="seg">
+          <button id="modeScratchBtn" class="seg__btn is-active">Scratch</button>
+          <button id="modeProjectsBtn" class="seg__btn">Projects</button>
+        </div>
+        <button id="themeBtn" class="btn btn--sm" title="Toggle light/dark">&#9680;</button>
+      </div>
+    </header>
+
+    <div class="workbench" id="scratchView">
+      <aside class="sidebar">
+        <div class="sidebar__head">
+          <span class="eyebrow">Examples &amp; Tools</span>
+        </div>
+        <div class="sidebar__search" id="exampleSearchWrap">
+          <input id="exampleSearch" type="text" placeholder="Find an example or tool&hellip;" class="input" />
+        </div>
+        <div class="sidebar__body">
+          <div id="exampleList"></div>
+        </div>
+      </aside>
+
+      <section class="main">
+        <div class="pane pane--editor">
+          <div class="pane__bar">
+            <div class="pane__bar-group">
+              <span>Run <kbd>&#8984;/Ctrl + Enter</kbd></span>
+              <div class="divider"></div>
+              <span class="stat">Status <span class="status status--idle" id="statusBadge">idle</span></span>
+              <span class="stat">Duration <span class="stat__value" id="duration">&ndash;</span></span>
+              <span class="stat">Type <span class="stat__value" id="resultType">&ndash;</span></span>
+              <span class="stat">Lines <span class="stat__value" id="outputLines">0</span></span>
+              <span class="stat">Render <span class="stat__value" id="renderServerStatus">local</span></span>
+            </div>
+            <div class="pane__bar-group">
+              <select id="renderMode" class="select">
+                <option value="auto">Auto render</option>
+                <option value="inline">Inline</option>
+                <option value="metadata">Metadata</option>
+                <option value="off">Off</option>
+              </select>
+              <label class="check"><input id="renderAllowUrls" type="checkbox" /> URLs</label>
+              <input id="renderUrlHosts" type="text" placeholder="URL hosts" class="input" style="width:9rem" />
+              <button id="formatBtn" class="btn btn--sm">Format</button>
+              <button id="copyBtn" class="btn btn--sm">Copy</button>
+              <button id="resetBtn" class="btn btn--sm">Reset</button>
+              <button id="runBtn" class="btn btn--primary btn--sm">Run</button>
+            </div>
+          </div>
+          <div class="pane__body" id="editorCodeWrap">
+            <div id="editor" style="position:absolute;inset:0"></div>
+          </div>
+        </div>
+
+        <div class="pane pane--console">
+          <div class="pane__bar">
+            <div class="tabs">
+              <button data-tab="result" class="tab-btn tab is-active">Result</button>
+              <button data-tab="output" class="tab-btn tab">Output</button>
+              <button data-tab="error" class="tab-btn tab">Errors</button>
+              <button data-tab="diagnostics" class="tab-btn tab">Details</button>
+              <button data-tab="artifacts" class="tab-btn tab">Artifacts</button>
+              <button data-tab="preview" class="tab-btn tab">Preview</button>
+            </div>
+          </div>
+          <div class="pane__body">
+            <pre id="result" data-panel="result" class="panel view view--code">&ndash;</pre>
+            <pre id="output" data-panel="output" class="panel view view--code view--console hidden"></pre>
+            <pre id="error" data-panel="error" class="panel view view--code view--error hidden"></pre>
+            <pre id="diagnostics" data-panel="diagnostics" class="panel view view--code view--info hidden"></pre>
+            <div id="artifacts" data-panel="artifacts" class="panel view view--cards hidden"></div>
+            <iframe id="preview" data-panel="preview" class="panel view view--frame hidden" sandbox="allow-scripts"></iframe>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <div class="workbench hidden" id="projectsView">
+      <aside class="sidebar">
+        <div class="sidebar__head">
+          <span class="eyebrow">Projects</span>
+          <button id="newProjectBtn" class="btn btn--primary btn--sm">+ New</button>
+        </div>
+        <div class="sidebar__body" id="projectList"></div>
+        <div class="sidebar__head" style="border-top:1px solid var(--line)">
+          <span class="eyebrow">Files</span>
+        </div>
+        <div class="sidebar__body file-tree" id="fileTree" style="flex:0 0 40%"></div>
+      </aside>
+
+      <section class="main">
+        <div class="pane pane--editor">
+          <div class="pane__bar">
+            <div class="file-tabs" id="fileTabs"></div>
+            <div class="pane__bar-group">
+              <span>Save <kbd>&#8984;/Ctrl + S</kbd></span>
+              <span id="saveStatus">saved</span>
+              <div class="divider"></div>
+              <span class="status status--idle run-pill" id="runStatusPill">idle</span>
+              <button id="runStartBtn" class="btn btn--primary btn--sm">Start</button>
+              <button id="runRestartBtn" class="btn btn--sm">Restart</button>
+              <button id="runStopBtn" class="btn btn--sm">Stop</button>
+              <a id="previewLink" href="#" target="_blank" rel="noopener" class="btn btn--sm hidden">Open app &#8599;</a>
+            </div>
+          </div>
+          <div class="pane__body" id="projectEditorWrap">
+            <div id="projectEditor" style="position:absolute;inset:0"></div>
+            <div id="projectEditorEmpty" class="editor-empty">Select or create a project, then open a file to start editing.</div>
+          </div>
+        </div>
+
+        <div class="pane pane--console">
+          <div class="pane__bar">
+            <div class="tabs">
+              <button data-ptab="logs" class="ptab-btn tab is-active">Logs</button>
+              <button data-ptab="diagnostics" class="ptab-btn tab">Diagnostics</button>
+              <button data-ptab="preview" class="ptab-btn tab">Preview</button>
+            </div>
+            <label class="check"><input id="logsPinBottom" type="checkbox" checked /> pin to bottom</label>
+          </div>
+          <div class="pane__body">
+            <pre id="projectLogs" data-ppanel="logs" class="ppanel view view--code view--console"></pre>
+            <pre id="projectDiagnostics" data-ppanel="diagnostics" class="ppanel view view--code view--info hidden"></pre>
+            <iframe id="projectPreview" data-ppanel="preview" class="ppanel view view--frame hidden"></iframe>
+          </div>
+        </div>
+      </section>
+    </div>
+  </div>
+
+  <script src="/app.js"></script>
+  <script src="/ide.js"></script>
+</body>
+</html>

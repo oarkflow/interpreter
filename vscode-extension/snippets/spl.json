@@ -1,0 +1,99 @@
+{
+  "Native OS import": {
+    "prefix": "native-os-import",
+    "body": [
+      "import \"native/os\" as os;"
+    ],
+    "description": "Import the policy-gated native OS adapter."
+  },
+  "Native OS run": {
+    "prefix": "native-os-run",
+    "body": [
+      "import \"native/os\" as os;",
+      "",
+      "let result = os.run(\"${1:go}\", [${2:\"version\"}], {",
+      "  \"timeout_ms\": ${3:1500},",
+      "  \"max_output_bytes\": ${4:65536}",
+      "});",
+      "",
+      "if (result[\"ok\"]) {",
+      "  print result[\"stdout\"];",
+      "} else {",
+      "  print result[\"stderr\"];",
+      "  print result[\"error\"];",
+      "}"
+    ],
+    "description": "Run an allowed native command with structured stdout/stderr/status."
+  },
+  "Native OS platform": {
+    "prefix": "native-os-platform",
+    "body": [
+      "import \"native/os\" as os;",
+      "",
+      "let info = os.platform();",
+      "print info;"
+    ],
+    "description": "Inspect host OS, architecture, cwd, separators, and shell hints."
+  },
+  "Tools file finder": {
+    "prefix": "tools-file-finder",
+    "body": [
+      "import \"tools/files\";",
+      "",
+      "let matches = file_finder(\"${1:testdata}\")",
+      "  .files()",
+      "  .regex(\"${2:^examples_.*\\\\.spl$}\")",
+      "  .content_regex(\"${3:print\\\\s+}\")",
+      "  .sort(\"${4:name}\")",
+      "  .limit(${5:5})",
+      "  .exec();",
+      "",
+      "print matches;"
+    ],
+    "description": "Search files with the chainable finder, including regex filename and content patterns."
+  },
+  "Tools file search filters": {
+    "prefix": "tools-file-search",
+    "body": [
+      "import \"tools/files\";",
+      "",
+      "let matches = file_search(\"${1:testdata}\", {",
+      "  \"match\": \"${2:^examples_.*\\\\.spl$}\",",
+      "  \"pattern_type\": \"regex\",",
+      "  \"content_regex\": \"${3:print\\\\s+}\",",
+      "  \"sort\": \"${4:name}\",",
+      "  \"limit\": ${5:5}",
+      "});",
+      "",
+      "print matches;"
+    ],
+    "description": "Search files with hash options, regex patterns, sorting, and limits."
+  },
+  "Database query filters": {
+    "prefix": "db-query-filters",
+    "body": [
+      "let rows, err = query(${1:db}, \"${2:users}\")",
+      "  .where_in(\"${3:id}\", [${4:1, 2, 3}])",
+      "  .where_between(\"${5:created_at}\", ${6:start}, ${7:end})",
+      "  .where_like(\"${8:name}\", \"${9:%a%}\")",
+      "  .where_filter(${10:{\"active\": true}})",
+      "  .where_not_null(\"${11:name}\")",
+      "  .limit(${12:20})",
+      "  .exec();",
+      "",
+      "if (err != null) { throw err; }",
+      "print rows;"
+    ],
+    "description": "Build a database query with common filter helpers."
+  },
+  "Native OS capabilities": {
+    "prefix": "native-os-capabilities",
+    "body": [
+      "import \"native/os\" as os;",
+      "",
+      "let caps = os.capabilities();",
+      "print caps;"
+    ],
+    "description": "Inspect native OS capability availability under the active policy."
+  }
+}

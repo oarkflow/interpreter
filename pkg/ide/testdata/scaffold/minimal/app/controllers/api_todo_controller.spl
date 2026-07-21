@@ -1,0 +1,49 @@
+import "@/models/todo.spl" as Todo;
+
+export function index(req, res) {
+  res.json({"data": Todo.all_by_priority()});
+}
+
+export function show(req, res) {
+  let id = to_int(req.param("id"));
+  let t = Todo.find(id);
+  if (t == null) {
+    res.status(404).json({"error": "not found"});
+    return;
+  }
+  res.json({"data": t});
+}
+
+export function store(req, res) {
+  let body = req.json();
+  if (body == null or body.title == null or trim(body.title) == "") {
+    res.status(422).json({"error": "title is required"});
+    return;
+  }
+  let t = Todo.create({"title": body.title, "priority": body.priority});
+  res.status(201).json({"data": t});
+}
+
+export function update(req, res) {
+  let id = to_int(req.param("id"));
+  let body = req.json();
+  if (body == null) {
+    res.status(400).json({"error": "invalid JSON body"});
+    return;
+  }
+  let t = Todo.update(id, body);
+  if (t == null) {
+    res.status(404).json({"error": "not found"});
+    return;
+  }
+  res.json({"data": t});
+}
+
+export function destroy(req, res) {
+  let id = to_int(req.param("id"));
+  if (!Todo.destroy(id)) {
+    res.status(404).json({"error": "not found"});
+    return;
+  }
+  res.status(204).send("");
+}

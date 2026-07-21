@@ -1,0 +1,97 @@
+// SPL rules builtins tour (plugins/rules, wrapping github.com/oarkflow/rules,
+// a BCL-backed policy/decision engine).
+//
+// Run: go run ./cmd/interpreter examples/rules_all_in_one.spl
+//
+// This wraps only the core publish -> evaluate -> activate/rollback loop.
+// Workflows, chains, canary releases, blast-radius analysis, and approval
+// gates are not exposed by this plugin yet.
+//
+// rules.evaluate() returns the library's full EvaluateResponse converted
+// generically (struct field name -> hash key), so hash keys below mirror
+// the Go field names exactly (capitalized) rather than this language's
+// usual snake_case/camelCase convention - e.g. decision.Report.Decision.Effect,
+// not decision.report.decision.effect.
+
+import "rules" as rules;
+
+print "=== SPL rules (policy decisions) tour ===";
+
+let svc = rules.service({"environment": "dev"});
+
+// -----------------------------------------------------------------------------
+// 1) Publish a decision from an inline BCL block
+// -----------------------------------------------------------------------------
+print "--- 1) rules_publish (inline block) ---";
+
+let policyV1 = `module "access" {
+  decision_schema "access" { effects [allow, deny] default deny strategy first_match }
+  decision_table "access" {
+    default deny
+    hit_policy first
+    row "allow-verified" {
+      when { request.verified == true }
+      then { decision allow reason "verified user" }
+      reason "verified user"
+      reason_code "VERIFIED"
+    }
+  }
+}`;
+
+let [pub1, pubErr1] = rules.publish(svc, "access-policy", policyV1, {"version": "1"});
+if (pubErr1 != null) { throw pubErr1; }
+print sprintf("published version=%s", pub1.Definition.Version);
+
+// -----------------------------------------------------------------------------
+// 2) Evaluate it against facts
+// -----------------------------------------------------------------------------
+print "--- 2) rules_evaluate ---";
+
+let [allowed, evalErr1] = rules.evaluate(svc, "access-policy", "access", {"request": {"verified": true}});
+if (evalErr1 != null) { throw evalErr1; }
+print sprintf("verified=true  -> effect=%s allowed=%t reason=%s",
+    allowed.Report.Decision.Effect, allowed.Report.Decision.Allowed, allowed.Report.Decision.Reason);
+
+let [denied, evalErr2] = rules.evaluate(svc, "access-policy", "access", {"request": {"verified": false}});
+if (evalErr2 != null) { throw evalErr2; }
+print sprintf("verified=false -> effect=%s allowed=%t",
+    denied.Report.Decision.Effect, denied.Report.Decision.Allowed);
+
+// -----------------------------------------------------------------------------
+// 3) Publish from a file instead of an inline block
+// -----------------------------------------------------------------------------
+print "--- 3) rules_publish (file) ---";
+
+let policyPath = "rules_demo_policy.bcl";
+let [_wok, writeErr] = write_file(policyPath, policyV1);
+if (writeErr != null) { throw writeErr; }
+let [pubFile, pubFileErr] = rules.publish(svc, "access-policy-file", policyPath);
+if (pubFileErr != null) { throw pubFileErr; }
+print sprintf("published from file, digest=%s", pubFile.Definition.Digest);
+
+// -----------------------------------------------------------------------------
+// 4) New version + rollback
+// -----------------------------------------------------------------------------
+print "--- 4) rules_activate / rules_rollback ---";
+
+// Note: the schema's own "default" must match the table's "default" - the
+// schema-level default wins if they disagree, which would otherwise make
+// this table silently behave as "deny" despite saying "default allow".
+let policyV2 = `module "access" {
+  decision_schema "access" { effects [allow, deny] default allow strategy first_match }
+  decision_table "access" {
+    default allow
+    hit_policy first
+  }
+}`;
+let [pub2, pubErr2] = rules.publish(svc, "access-policy", policyV2, {"version": "2"});
+if (pubErr2 != null) { throw pubErr2; }
+
+let [openDoor, _e1] = rules.evaluate(svc, "access-policy", "access", {"request": {"verified": false}});
+print sprintf("after v2 publish, verified=false -> effect=%s (v2 defaults to allow)", openDoor.Report.Decision.Effect);
+
+let [_rb, rollbackErr] = rules.rollback(svc, "access-policy", "1", "dev");
+if (rollbackErr != null) { throw rollbackErr; }
+
+let [backToV1, _e2] = rules.evaluate(svc, "access-policy", "access", {"request": {"verified": false}});
+print sprintf("after rollback to v1, verified=false -> effect=%s (back to deny)", backToV1.Report.Decision.Effect);

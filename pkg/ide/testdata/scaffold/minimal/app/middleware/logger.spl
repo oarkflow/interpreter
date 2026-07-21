@@ -1,0 +1,6 @@
+// Request logging middleware. Registered globally in main.spl via
+// middleware(app, logger.log_request).
+export function log_request(req, res, next) {
+  print sprintf("%s %s", req.method, req.path);
+  next();
+}

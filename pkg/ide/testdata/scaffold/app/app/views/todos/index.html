@@ -1,0 +1,38 @@
+@extends("layout.html")
+@import("components/todo_components.html")
+
+@define("title") { Todos }
+@define("heading") { Todos }
+@define("content") {
+  <form method="post" action="/todos" class="add-form">
+    <input type="text" name="title" placeholder="New todo..." required>
+    <select name="priority">
+      <option value="low">Low</option>
+      <option value="medium" selected>Medium</option>
+      <option value="high">High</option>
+    </select>
+    <button type="submit">Add</button>
+  </form>
+
+  <div class="filter-bar">
+    <a href="/todos" class="${activeFilter == 'all' ? 'active' : ''}">All</a>
+    <a href="/todos?priority=high" class="${activeFilter == 'high' ? 'active' : ''}">High</a>
+    <a href="/todos?priority=medium" class="${activeFilter == 'medium' ? 'active' : ''}">Medium</a>
+    <a href="/todos?priority=low" class="${activeFilter == 'low' ? 'active' : ''}">Low</a>
+  </div>
+
+  <p>${count} todo(s), sorted by priority</p>
+
+  <table>
+    <thead>
+      <tr><th>ID</th><th>Title</th><th>Priority</th><th>Status</th><th>Actions</th></tr>
+    </thead>
+    <tbody>
+    @for(t in todos) {
+      @render("TodoRow", t)
+    } @empty {
+      <tr><td colspan="5">No todos yet. Add one above.</td></tr>
+    }
+    </tbody>
+  </table>
+}

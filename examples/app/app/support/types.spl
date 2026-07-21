@@ -1,0 +1,92 @@
+// Custom types that request/query/header parsers decode raw input into
+// (see http.body_as/query_as/headers_as) - instead of controllers reading
+// loose hash fields by hand, they get a typed value with real methods.
+//
+// SPL has two distinct ways to define a custom type, both used here:
+//   - `class` (below): stateful, with fields and methods, constructed by
+//     calling the class name directly - no `new` keyword.
+//   - `type X = A(...) | B(...)` (see ValidationResult below): an
+//     algebraic/tagged-union type. Construct a variant by calling it
+//     (`Valid(x)`), and take it apart with `match`/`case Valid(v) => ...`
+//     anywhere the value ends up, including a different module than the
+//     one that declared the type - match only inspects the value's tag,
+//     it doesn't need the constructor in scope.
+//
+// Class methods can't destructure parameters directly (SPL's function/
+// method parameter lists only bind plain identifiers - object/array
+// destructuring is only valid in `let`/`const` declarations and `match`
+// patterns), so each constructor destructures its single hash argument as
+// the first line of init() instead.
+
+// ValidationResult is what TodoInput.validate() (below) returns: either
+// the validated input itself, or a human-readable reason it was rejected.
+export type ValidationResult = Valid(value) | Invalid(reason);
+
+// TodoInput is a typed view over a create/update request body. Works
+// uniformly whether the raw hash came from a decoded JSON body
+// (req.json()) or a parsed form (http.parse_form(req.body)) - both are
+// just hashes with a "title" key.
+export class TodoInput {
+  init(data) {
+    let {title, priority, done} = data;
+    this.title = title;
+    this.priority = priority;
+    this.done = done;
+  }
+
+  validate() {
+    if (type(this.title) != "STRING" or len(this.title) == 0) {
+      return Invalid("title is required");
+    }
+    return Valid(this);
+  }
+}
+
+// TodoFilter is a typed view over query parameters:
+// GET /api/todos?priority=high&done=true
+export class TodoFilter {
+  init(query) {
+    let {priority, done} = query;
+    this.priority = priority;
+    this.done = match (done) {
+      case "true"  => true
+      case "false" => false
+      case _       => null
+    };
+  }
+
+  matches(todo) {
+    if (this.priority != null and todo.priority != this.priority) {
+      return false;
+    }
+    if (this.done != null and todo.done != this.done) {
+      return false;
+    }
+    return true;
+  }
+}
+
+// BearerToken is a typed view over the Authorization header:
+// "Bearer <token>" -> {scheme: "Bearer", token: "<token>"}.
+export class BearerToken {
+  init(headers) {
+    let raw = headers.Authorization;
+    if (raw == null) {
+      this.scheme = null;
+      this.token = null;
+      return;
+    }
+    let parts = raw.split(" ");
+    if (len(parts) == 2) {
+      this.scheme = parts[0];
+      this.token = parts[1];
+    } else {
+      this.scheme = null;
+      this.token = null;
+    }
+  }
+
+  matches(expected) {
+    return this.scheme == "Bearer" and this.token == expected;
+  }
+}

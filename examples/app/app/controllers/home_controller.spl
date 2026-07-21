@@ -1,0 +1,8 @@
+import "@/config/app.spl" as config;
+
+export function index(req, res) {
+  res.render("home.html", {
+    "app_name": config.APP_NAME,
+    "app_env": config.APP_ENV
+  });
+}

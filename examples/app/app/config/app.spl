@@ -1,0 +1,34 @@
+// App configuration, loaded from a .env file via the interpreter's built-in
+// config_load(). Falls back to defaults when the file (or an individual
+// key) is missing - a fresh checkout without a local .env, or the
+// single-binary build running from an extracted temp directory, both still
+// boot with sane defaults. config_load() itself never throws: a missing
+// file comes back as an error-sentinel value, so the load is wrapped in
+// try/catch and treated the same as "no config".
+let raw = try {
+  config_load(".env", "env");
+} catch (e) {
+  {};
+};
+
+function setting(key, fallback) {
+  if (key in raw) {
+    return raw[key];
+  }
+  return fallback;
+}
+
+export const APP_NAME = setting("APP_NAME", "SPL Todo App");
+export const APP_PORT = parse_int("" + setting("APP_PORT", 8080));
+export const APP_ENV = setting("APP_ENV", "development");
+export const VIEWS_DIR = setting("VIEWS_DIR", "app/views");
+export const PUBLIC_DIR = setting("PUBLIC_DIR", "public");
+export const DB_PATH = setting("DB_PATH", "storage/app.db");
+
+// Any key containing "token" is auto-wrapped as a SECRET by config_load(),
+// so ADMIN_TOKEN prints as *** everywhere (logs, print, error messages) and
+// must be unwrapped with secret_reveal() at the point of comparison - see
+// app/middleware/auth.spl. With no .env present there's no reasonable
+// default secret to bake into source, so fall back to a fresh per-process
+// token instead (still wrapped with secret() for the same masking).
+export const ADMIN_TOKEN = "ADMIN_TOKEN" in raw ? raw.ADMIN_TOKEN : secret(uuid());

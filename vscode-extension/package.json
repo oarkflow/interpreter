@@ -1,0 +1,197 @@
+{
+  "name": "spl-vscode",
+  "displayName": "SPL Language Support",
+  "description": "Syntax highlighting, language server features, and safe manual evaluation for SPL files.",
+  "version": "0.1.0",
+  "publisher": "oarkflow",
+  "engines": {
+    "vscode": "^1.86.0"
+  },
+  "categories": [
+    "Programming Languages"
+  ],
+  "activationEvents": [
+    "onLanguage:spl",
+    "onCommand:spl.runFile",
+    "onCommand:spl.evaluateSelection",
+    "onCommand:spl.sessionCheckpoint",
+    "onCommand:spl.sessionRestore",
+    "onCommand:spl.sessionInspect",
+    "onCommand:spl.toolsFfmpegStatus",
+    "onCommand:spl.toolsInstallFfmpeg",
+    "onCommand:spl.toolsPreviewBulkRename",
+    "onCommand:spl.insertNativeOSExample",
+    "onCommand:spl.restartLanguageServer",
+    "onCommand:spl.showOutput"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "languages": [
+      {
+        "id": "spl",
+        "aliases": [
+          "SPL",
+          "spl"
+        ],
+        "extensions": [
+          ".spl"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "spl",
+        "scopeName": "source.spl",
+        "path": "./syntaxes/spl.tmLanguage.json"
+      }
+    ],
+    "snippets": [
+      {
+        "language": "spl",
+        "path": "./snippets/spl.json"
+      }
+    ],
+    "commands": [
+      {
+        "command": "spl.runFile",
+        "title": "SPL: Run Current File"
+      },
+      {
+        "command": "spl.evaluateSelection",
+        "title": "SPL: Evaluate Selection"
+      },
+      {
+        "command": "spl.sessionCheckpoint",
+        "title": "SPL: Session Checkpoint"
+      },
+      {
+        "command": "spl.sessionRestore",
+        "title": "SPL: Session Restore"
+      },
+      {
+        "command": "spl.sessionInspect",
+        "title": "SPL: Session Inspect"
+      },
+      {
+        "command": "spl.toolsFfmpegStatus",
+        "title": "SPL: Tools FFmpeg Status"
+      },
+      {
+        "command": "spl.toolsInstallFfmpeg",
+        "title": "SPL: Tools Install FFmpeg"
+      },
+      {
+        "command": "spl.toolsPreviewBulkRename",
+        "title": "SPL: Tools Preview Bulk Rename"
+      },
+      {
+        "command": "spl.insertNativeOSExample",
+        "title": "SPL: Insert Native OS Example"
+      },
+      {
+        "command": "spl.restartLanguageServer",
+        "title": "SPL: Restart Language Server"
+      },
+      {
+        "command": "spl.showOutput",
+        "title": "SPL: Show Output"
+      }
+    ],
+    "configuration": {
+      "title": "SPL",
+      "properties": {
+        "spl.toolPath": {
+          "type": "string",
+          "default": "",
+          "description": "Path to the spltool executable. When empty, the extension runs `go run ./cmd/spltool lsp --stdio` from the workspace."
+        },
+        "spl.serverMode": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "toolPath",
+            "goRun"
+          ],
+          "default": "auto",
+          "description": "How to launch the SPL language server."
+        },
+        "spl.evaluation.profile": {
+          "type": "string",
+          "enum": [
+            "untrusted",
+            "native",
+            "trusted"
+          ],
+          "default": "untrusted",
+          "description": "Evaluation profile. Use native only when you also configure explicit native/exec allowlists."
+        },
+        "spl.evaluation.timeoutMs": {
+          "type": "number",
+          "default": 1500,
+          "minimum": 100,
+          "description": "Timeout for manual SPL evaluation commands."
+        },
+        "spl.evaluation.maxOutputBytes": {
+          "type": "number",
+          "default": 65536,
+          "minimum": 1024,
+          "description": "Maximum captured output for manual SPL evaluation commands."
+        },
+        "spl.evaluation.maxExecOutputBytes": {
+          "type": "number",
+          "default": 65536,
+          "minimum": 1024,
+          "description": "Maximum captured native command stdout/stderr for manual SPL evaluation commands."
+        },
+        "spl.evaluation.allowedCapabilities": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "Capability allowlist passed to manual evaluation. For native/os command execution include `exec`, or use profile `native`."
+        },
+        "spl.evaluation.allowedExecCommands": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "Executable names allowed during manual native/os evaluation, for example `go`, `echo`, or `git`."
+        },
+        "spl.evaluation.allowedNativeModules": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [
+            "native/os"
+          ],
+          "description": "Native modules allowed during manual evaluation."
+        },
+        "spl.evaluation.deniedNativeModules": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "Native modules denied during manual evaluation."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "vscode:prepublish": "npm run compile"
+  },
+  "dependencies": {
+    "vscode-languageclient": "^9.0.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "@types/vscode": "^1.86.0",
+    "typescript": "^5.3.3"
+  }
+}

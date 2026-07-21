@@ -1,0 +1,72 @@
+// Small shared helper for reading application/x-www-form-urlencoded bodies,
+// since the server builtins expose the raw body string on req.body.
+export function parse_form(body) {
+  let result = {};
+  if (body == "") {
+    return result;
+  }
+  let pairs = body.split("&");
+  for (p in pairs) {
+    let kv = p.split("=");
+    let key = url_decode(kv[0]);
+    let val = "";
+    if (len(kv) > 1) {
+      val = url_decode(kv[1]);
+    }
+    result[key] = val;
+  }
+  return result;
+}
+
+export function form_value(body, key) {
+  let data = parse_form(body);
+  if (key in data) {
+    return data[key];
+  }
+  return "";
+}
+
+// parse_id turns a raw path param into a positive integer id, or null for
+// anything else (missing, non-numeric, zero/negative). Shared by every
+// controller that takes a :id path param.
+//
+// parse_int() signals a bad input as an "ERROR: ..." string rather than
+// throwing, but that string is itself treated as an error by the
+// language's own propagation rules - so it has to be caught before it
+// ever reaches match, otherwise it aborts the expression instead of
+// falling through to the wildcard case below.
+export function parse_id(raw) {
+  let parsed = try {
+    parse_int(raw);
+  } catch (e) {
+    null;
+  };
+  return match (parsed) {
+    case n: integer if n > 0 => n
+    case _ => null
+  };
+}
+
+// body_as/query_as/headers_as decode a request's body/query/headers into
+// a custom type (see app/support/types.spl): `decode` is any callable
+// that takes the raw hash and returns a value - typically a class, called
+// as decode(hash) the same way `ClassName(hash)` constructs an instance
+// (SPL classes have no `new` keyword; calling the class is the
+// constructor call), but a plain function or arrow works too.
+//
+// Written as arrow functions - () => {...} / () => expr are both fully
+// interchangeable with `function` here; this file mixes styles on
+// purpose. Note that an arrow's implicit (braceless) body can't be a bare
+// hash literal - `(x) => {"a": x}` parses as a block, not a returned
+// hash - so body_as below uses an explicit `{ ... return ...; }` body.
+export let body_as = (req, decode) => {
+  let raw = req.json();
+  if (raw == null) {
+    return null;
+  }
+  return decode(raw);
+};
+
+export let query_as = (req, decode) => decode(req.query);
+
+export let headers_as = (req, decode) => decode(req.headers);

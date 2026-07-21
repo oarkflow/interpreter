@@ -1,0 +1,25 @@
+// JSON API routes, grouped under the /api prefix.
+import "server" as svr;
+import "@/controllers/api_todo_controller.spl" as api_todos;
+import "@/controllers/activity_controller.spl" as activity;
+import "@/middleware/auth.spl" as auth;
+
+export function register(server) {
+  // group() returns a route-group object: every route registered through
+  // it is automatically prefixed with "/api" and, if the group has
+  // middleware attached via .use()/.group(), runs that middleware first.
+  let api = svr.group(server, "/api");
+  api.get("/todos", api_todos.index);
+  api.get("/todos/:id", api_todos.show);
+  api.post("/todos", api_todos.store);
+  api.put("/todos/:id", api_todos.update);
+  api.delete("/todos/:id", api_todos.destroy);
+  api.get("/activity", activity.index);
+
+  // Admin-only: a nested group under /api/admin whose middleware (checking
+  // the Authorization header against the ADMIN_TOKEN secret loaded from
+  // .env - see app/config/app.spl) only runs for routes registered on
+  // `admin`, not the routes above.
+  let admin = api.group("/admin", auth.require_admin);
+  admin.post("/worker/stop", activity.stop_worker);
+}

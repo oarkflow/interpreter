@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>{{title}}</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="p-8 bg-gray-100">
+    <div class="max-w-4xl mx-auto bg-white p-6 rounded-lg shadow-lg">
+        <h1 class="text-3xl font-bold text-gray-800 mb-4">{{title}}</h1>
+
+        <div class="mb-6">
+            <h2 class="text-xl font-semibold mb-2">Counter: <span class="text-blue-600">{{counter}}</span></h2>
+            <p class="text-gray-600">API Base: {{apiBase}}</p>
+        </div>
+
+        <div class="mb-6">
+            <h3 class="text-lg font-semibold mb-3">Items:</h3>
+            <ul class="space-y-2">
+                {{#items}}
+                <li class="flex items-center space-x-2">
+                    <span class="w-4 h-4 rounded-full {{#ready}}bg-green-500{{^ready}}bg-red-500{{/ready}}"></span>
+                    <span>{{name}}</span>
+                </li>
+                {{/items}}
+            </ul>
+        </div>
+
+        <div class="text-sm text-gray-500">
+            <p>Rendered at: {{now}}</p>
+            <p>App: {{appName}} v{{appVersion}}</p>
+            <p>Database: {{dbDriver}}</p>
+        </div>
+    </div>
+</body>
+</html>

@@ -1,0 +1,141 @@
+// Todo model, backed by SQLite via the interpreter's database builtins
+// (linked by cmd/interpreter-full). Controllers/routes/views never touch
+// SQL directly - they only call the exported functions below.
+import "database";
+import "@/config/app.spl" as config;
+
+let db, connect_err = connect("sqlite", config.DB_PATH);
+if (connect_err != null) {
+  throw "todo model: failed to connect to " + config.DB_PATH + ": " + connect_err;
+}
+
+let _, schema_err = exec(db,
+  "CREATE TABLE IF NOT EXISTS todos (" +
+  "id INTEGER PRIMARY KEY AUTOINCREMENT, " +
+  "title TEXT NOT NULL, " +
+  "priority TEXT NOT NULL DEFAULT 'medium', " +
+  "done INTEGER NOT NULL DEFAULT 0, " +
+  "created_at TEXT NOT NULL)"
+);
+if (schema_err != null) {
+  throw "todo model: failed to create schema: " + schema_err;
+}
+
+export function normalize_priority(p) {
+  if (p == "low" or p == "medium" or p == "high") {
+    return p;
+  }
+  return "medium";
+}
+
+function priority_rank(p) {
+  if (p == "high") {
+    return 3;
+  }
+  if (p == "medium") {
+    return 2;
+  }
+  if (p == "low") {
+    return 1;
+  }
+  return 0;
+}
+
+function row_to_todo(row) {
+  return {
+    "id": row.id,
+    "title": row.title,
+    "priority": row.priority,
+    "done": row.done == 1,
+    "created_at": row.created_at
+  };
+}
+
+export function all() {
+  let rows, err = db_query(db,
+    "SELECT id, title, priority, done, created_at FROM todos ORDER BY id ASC",
+    null, "array"
+  );
+  if (err != null) {
+    return [];
+  }
+  return rows.map(row_to_todo);
+}
+
+// all_by_priority buckets by priority_rank and flattens high-to-low -
+// Array.sort() only supports default type-based ordering (no custom
+// comparator), so a bucket pass is used instead of a comparator sort.
+export function all_by_priority() {
+  let buckets = [[], [], [], []];
+  for (t in all()) {
+    buckets[priority_rank(t.priority)].push(t);
+  }
+  let result = [];
+  let rank = 3;
+  while (rank >= 0) {
+    for (t in buckets[rank]) {
+      result.push(t);
+    }
+    rank = rank - 1;
+  }
+  return result;
+}
+
+export function find(id) {
+  let rows, err = db_query(db,
+    "SELECT id, title, priority, done, created_at FROM todos WHERE id = ?",
+    [id], "array"
+  );
+  if (err != null or len(rows) == 0) {
+    return null;
+  }
+  return row_to_todo(rows[0]);
+}
+
+export function create(data) {
+  let priority = normalize_priority(data.priority);
+  let created_at = now_iso();
+  let result, err = exec(db,
+    "INSERT INTO todos (title, priority, done, created_at) VALUES (?, ?, 0, ?)",
+    [data.title, priority, created_at]
+  );
+  if (err != null) {
+    return null;
+  }
+  return find(result.last_insert_id);
+}
+
+export function update(id, data) {
+  let existing = find(id);
+  if (existing == null) {
+    return null;
+  }
+  let title = data.title != null ? data.title : existing.title;
+  let priority = data.priority != null ? normalize_priority(data.priority) : existing.priority;
+  let done = data.done != null ? data.done : existing.done;
+  let _, err = exec(db,
+    "UPDATE todos SET title = ?, priority = ?, done = ? WHERE id = ?",
+    [title, priority, done ? 1 : 0, id]
+  );
+  if (err != null) {
+    return null;
+  }
+  return find(id);
+}
+
+export function destroy(id) {
+  let tx, tx_err = begin(db);
+  if (tx_err != null) {
+    return false;
+  }
+  let result, err = exec(tx, "DELETE FROM todos WHERE id = ?", [id]);
+  if (err != null) {
+    rollback(tx);
+    return false;
+  }
+  let ok, commit_err = commit(tx);
+  if (commit_err != null) {
+    return false;
+  }
+  return result.rows_affected > 0;
+}

@@ -1,0 +1,54 @@
+import "@/models/todo.spl" as Todo;
+
+export function index(req, res) {
+  let priority = req.query.priority;
+  let items = Todo.all_by_priority();
+  if (priority != null and priority != "") {
+    items = items.filter(function(t) {
+      return t.priority == priority;
+    });
+  }
+  res.render("todos/index.html", {
+    "todos": items,
+    "count": len(items),
+    "activeFilter": priority == null ? "all" : priority
+  });
+}
+
+export function store(req, res) {
+  let form = req.body;
+  let title = "";
+  let priority = "medium";
+  for (pair in split(form, "&")) {
+    let kv = split(pair, "=");
+    if (len(kv) == 2) {
+      let key = url_decode(kv[0]);
+      let value = url_decode(kv[1]);
+      if (key == "title") {
+        title = value;
+      }
+      if (key == "priority") {
+        priority = value;
+      }
+    }
+  }
+  if (trim(title) != "") {
+    Todo.create({"title": title, "priority": priority});
+  }
+  res.redirect("/todos");
+}
+
+export function toggle(req, res) {
+  let id = to_int(req.param("id"));
+  let t = Todo.find(id);
+  if (t != null) {
+    Todo.update(id, {"done": !t.done});
+  }
+  res.redirect("/todos");
+}
+
+export function remove(req, res) {
+  let id = to_int(req.param("id"));
+  Todo.destroy(id);
+  res.redirect("/todos");
+}

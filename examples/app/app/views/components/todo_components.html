@@ -1,0 +1,16 @@
+@component("PriorityBadge", priority string) {
+  <span class="badge priority-${priority}">${priority}</span>
+}
+
+@component("TodoRow", id, title, priority, done) {
+  <tr class="priority-${priority}">
+    <td>${id}</td>
+    <td>${title}</td>
+    <td>@render("PriorityBadge", {"priority": priority})</td>
+    <td>${done ? "done" : "pending"}</td>
+    <td>
+      <form method="post" action="/todos/${id}/toggle"><button type="submit">${done ? "Undo" : "Done"}</button></form>
+      <form method="post" action="/todos/${id}/delete"><button type="submit">Delete</button></form>
+    </td>
+  </tr>
+}
