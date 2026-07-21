@@ -227,7 +227,9 @@ library and plugins:
 
 ```spl
 let a, b = [1, 2];               // a = 1, b = 2
-let db, err = db_connect("sqlite", ":memory:");
+
+import "database" as database;
+let conn, err = database.connect("sqlite", ":memory:");
 ```
 
 **Object (hash) destructuring**:
@@ -618,17 +620,60 @@ available with no file on disk — `std/core`, `std/fs`, `std/render`,
 `std/test`, `std/config`, `math`, `string`, `array`, `hash`, `time`,
 `json`, `csv`, `crypto`, `path`, `random` (each with a `std/`-prefixed
 alias too), plus every optional plugin's own module name once it's linked
-into the running binary (`database`, `images`, `integrations`, `xql`,
-`yaml`, `money`, `phone`, `ip`, `naturaldate`, `wuid`, `shamir`,
-`metadata`, `cryptoextra`, `securetoken`, and the `tools/*` family):
+into the running binary (`database`, `images`, `integrations`, `pdf`,
+`xql`, `yaml`, `money`, `phone`, `ip`, `naturaldate`, `wuid`, `shamir`,
+`metadata`, `cryptoextra`, `securetoken`, `rules`, `secretr`, `server`,
+`tcpguard`, `emailvalidator`, and the `tools/*` family):
 
 ```spl
 import "std/core" as core;
 core.sprintf("value=%d", 42);
 
-import "database";
-let db, err = db_connect("sqlite", ":memory:");
+import "database" as database;
+let conn, err = database.connect("sqlite", ":memory:");
 ```
+
+The first group above (`std/*`, `math`, `string`, `array`, `hash`, `time`,
+`json`, `csv`, `crypto`, `path`, `random`) is always linked in — those
+functions (`sprintf`, `upper`, `sum`, `md5`, ...) also work as plain global
+calls with **no import at all**; the `import ... as` form is just an
+optional namespacing convenience for them.
+
+Every **optional plugin module** (`database`, `pdf`, `images`,
+`integrations`, `money`, `phone`, `ip`, `naturaldate`, `wuid`, `shamir`,
+`metadata`, `cryptoextra`, `securetoken`, `yaml`, `xql`, `rules`,
+`secretr`, `server`, `tcpguard`, `emailvalidator`) is different: its
+functions are **only reachable through `import`** — there is no global
+fallback, so calling e.g. `pdf_merge(...)` without importing `pdf` first
+fails with `identifier not found`, even in the full `cmd/interpreter`
+build. (The `tools/*` family is the one exception: those daily-ops
+builtins are always linked into `cmd/interpreter` as core functions, so
+`import "tools/files"; bulk_rename(...)` and a bare `bulk_rename(...)`
+with no import at all behave identically — the import is there for
+readability/namespacing, not because it's required.) Two ways to bring
+plugin functions into scope:
+
+```spl
+import "pdf" as pdf;
+pdf.merge("out.pdf", "a.pdf", "b.pdf");   // dot access, prefix stripped from pdf_merge
+
+import "money";
+let price, err = new("19.99", "USD");     // unaliased: names bound directly into scope
+```
+
+Each plugin builtin is registered under a prefixed global name
+(`pdf_merge`, `money_new`, `db_connect`, ...). An **aliased** import
+(`as pdf`) exposes them as `pdf.merge(...)` with the module's own prefix
+stripped. An **unaliased** import binds the same stripped names directly
+into the current scope (`merge(...)`), which is convenient but will
+shadow any identically-named variable or builtin already in scope — this
+guide uses the aliased form throughout to keep call sites unambiguous. If
+a builtin's name doesn't start with its module's prefix (e.g. `database`'s
+`query`/`lazy_query`), or if stripping the prefix would collide with
+another export in the same module (`database`'s `db_query` would collide
+with the already-unprefixed `query`), the full prefixed name is kept
+instead, so `database.db_query(...)` (not `database.query`, which is the
+separate fluent query builder) is correct.
 
 If a script calls a plugin builtin that isn't linked into the running
 binary, it fails with an actionable error naming the missing module rather
@@ -1005,14 +1050,14 @@ Requires the full `cmd/interpreter` build (a lightweight custom embedding
 host would need to import this plugin explicitly):
 
 ```spl
-import "images";
+import "images" as images;
 
-let img = image_load("logo.png");
-print image_info(img); // {format, width, height, mime, name, size}
-let resized = image_resize(img, 50, 50, {"filter": "linear"});
-let cropped = image_crop(img, x, y, width, height);
-let converted = image_convert(img, "jpeg"); // png|jpeg|jpg|gif
-let artifact = image_render(converted);      // wrap for display
+let img = images.load("logo.png");
+print images.info(img); // {format, width, height, mime, name, size}
+let resized = images.resize(img, 50, 50, {"filter": "linear"});
+let cropped = images.crop(img, x, y, width, height);
+let converted = images.convert(img, "jpeg"); // png|jpeg|jpg|gif
+let artifact = images.render(converted);      // wrap for display
 ```
 
 For batch, file-to-file image operations that don't require decoding into
@@ -1028,18 +1073,20 @@ work in every build.
 Requires the full `cmd/interpreter` build.
 
 ```spl
-let app = server(3099);   // or server("localhost:3099")
+import "server" as svr;
 
-route(app, "GET", "/hello", function(req, res) {
+let app = svr.server(3099);   // or svr.server("localhost:3099")
+
+svr.route(app, "GET", "/hello", function(req, res) {
     res.json({"msg": "hi"});
 });
 
-middleware(app, function(req, res, next) {
+svr.middleware(app, function(req, res, next) {
     print "log: " + req.method + " " + req.path;
     next();
 });
 
-middleware(app, "/api", function(req, res, next) {  // path-scoped
+svr.middleware(app, "/api", function(req, res, next) {  // path-scoped
     if (req.get_header("Authorization") == null) {
         res.status(401).json({"error": "unauthorized"});
         return;                 // skipping next() short-circuits the chain
@@ -1047,12 +1094,12 @@ middleware(app, "/api", function(req, res, next) {  // path-scoped
     next();
 });
 
-route_group(app, "/api", "GET", "/health", function(req, res) {
+svr.route_group(app, "/api", "GET", "/health", function(req, res) {
     res.json({"ok": true});
 });
 
-static(app, "/public/", "./public");
-template_dir(app, "./views");
+svr.static(app, "/public/", "./public");
+svr.template_dir(app, "./views");
 ```
 
 Request/response objects:
@@ -1070,7 +1117,7 @@ res.render_ssr("template.html", data);  // SSR + client hydration payload
 Server-Sent Events:
 
 ```spl
-route(app, "GET", "/events", function(req, res) {
+svr.route(app, "GET", "/events", function(req, res) {
     let sse = res.sse();
     sse.send("tick", json_encode({"seq": 1}));
     sse.close();
@@ -1084,7 +1131,7 @@ mutable state with no database):
 let users = {};
 let nextID = 1;
 
-route(app, "POST", "/api/users", function(req, res) {
+svr.route(app, "POST", "/api/users", function(req, res) {
     let body = req.json();
     let id = nextID;
     nextID += 1;
@@ -1092,13 +1139,13 @@ route(app, "POST", "/api/users", function(req, res) {
     res.json({"id": id});
 });
 
-route(app, "GET", "/api/users/:id", function(req, res) {
+svr.route(app, "GET", "/api/users/:id", function(req, res) {
     res.json(users[req.param("id")]);
 });
 
-listen(app, 3099);                     // blocks
-let handle = listen_async(app, 3099);  // non-blocking
-shutdown(app);
+svr.listen(app, 3099);                     // blocks
+let handle = svr.listen_async(app, 3099);  // non-blocking
+svr.shutdown(app);
 ```
 
 `listen`/`listen_async` require both `server` and `network` capabilities
@@ -1113,6 +1160,8 @@ enforce them automatically on every request instead of hand-written `if`
 checks:
 
 ```spl
+import "tcpguard" as tcpguard;
+
 let policy = `
 guard "tcpguard-main" {
   mode enforce
@@ -1148,20 +1197,20 @@ rule "protect-admin" {
 }
 `;
 
-let [bundle, err] = tcpguard_load(policy);       // inline block, or a file/dir path - auto-detected
+let [bundle, err] = tcpguard.load(policy);       // inline block, or a file/dir path - auto-detected
 if (err != null) { throw err; }
-let [guard, gerr] = tcpguard_new(bundle);         // {"mode": "enforce"|"monitor", "geoip": bool}
+let [guard, gerr] = tcpguard.new(bundle);         // {"mode": "enforce"|"monitor", "geoip": bool}
 if (gerr != null) { throw gerr; }
 
-route(app, "GET", "/admin/secret", function(req, res) { res.json({"ok": true}); });
-guard_middleware(app, guard);   // attaches as global middleware; blocked requests never reach routes
+svr.route(app, "GET", "/admin/secret", function(req, res) { res.json({"ok": true}); });
+tcpguard.guard_middleware(app, guard);   // attaches as global middleware; blocked requests never reach routes
 
 // ad-hoc evaluation without a live server:
-let [decision, everr] = tcpguard_evaluate(guard, {"method": "GET", "path": "/admin/secret", "headers": {"User-Agent": ["sqlmap/1.0"]}});
+let [decision, everr] = tcpguard.evaluate(guard, {"method": "GET", "path": "/admin/secret", "headers": {"User-Agent": ["sqlmap/1.0"]}});
 print decision.Effect; // "block"
 ```
 
-`tcpguard_new()` requires the `policy` capability under a restrictive
+`tcpguard.new()` requires the `policy` capability under a restrictive
 security policy. GeoIP enrichment is opt-in (`{"geoip": true}`) since it
 loads a sizeable in-memory dataset on first use. This wraps only the core
 load/attach/evaluate loop — abuse-detector tuning, approval workflows,
@@ -1174,7 +1223,7 @@ and `examples/tcpguard_all_in_one.spl`.
 effect depending on what else is condensed around them, degrading a
 rule's outcome (e.g. `block` silently becoming `monitor`) with no parse
 error. Always write policy blocks one field per line as above, and verify
-a new/edited policy with `tcpguard_evaluate` (or a live request) before
+a new/edited policy with `tcpguard.evaluate` (or a live request) before
 trusting it in production — don't assume a policy does what it says just
 because it parses.
 
@@ -1242,38 +1291,40 @@ explicitly).
 ### Database
 
 ```spl
-import "database";
+import "database" as database;
 
-let db, err = db_connect("sqlite", ":memory:"); // also: postgres, mysql
+let conn, err = database.connect("sqlite", ":memory:"); // also: postgres, mysql
 
-let _, cerr = db_exec(db, "CREATE TABLE items (id INTEGER PRIMARY KEY, name TEXT, qty INTEGER)");
-let _, e1 = db_exec(db, "INSERT INTO items(name, qty) VALUES(?, ?)", ["apples", 3]);       // positional
-let _, e2 = db_exec(db, "INSERT INTO items(name, qty) VALUES(:name, :qty)", {"name": "pears", "qty": 4}); // named
+let _, cerr = database.exec(conn, "CREATE TABLE items (id INTEGER PRIMARY KEY, name TEXT, qty INTEGER)");
+let _, e1 = database.exec(conn, "INSERT INTO items(name, qty) VALUES(?, ?)", ["apples", 3]);       // positional
+let _, e2 = database.exec(conn, "INSERT INTO items(name, qty) VALUES(:name, :qty)", {"name": "pears", "qty": 4}); // named
 
-let rows, qerr = db_query(db, "SELECT name, qty FROM items ORDER BY qty ASC", null, "array");
+let rows, qerr = database.db_query(conn, "SELECT name, qty FROM items ORDER BY qty ASC", null, "array");
 
-let tx, tx_err = db_begin(db);
-db_exec(tx, "INSERT INTO items(name, qty) VALUES(:name, :qty)", {"name": "committed", "qty": 7});
-db_commit(tx); // or db_rollback(tx)
+let tx, tx_err = database.begin(conn);
+database.exec(tx, "INSERT INTO items(name, qty) VALUES(:name, :qty)", {"name": "committed", "qty": 7});
+database.commit(tx); // or database.rollback(tx)
 
-print db_tables(db);
-db_close(db);
+print database.tables(conn);
+database.close(conn);
 ```
 
-Fluent query builder:
+Fluent query builder (`database.query`, not `database.db_query` — the
+two are unrelated: `db_query` runs a raw SQL string, `query` returns a
+`QueryBuilder`):
 
 ```spl
-let rows, err = query(db, "items")
+let rows, err = database.query(conn, "items")
     .where("qty", ">", 3)
     .order_by("qty DESC")
     .limit(2)
     .exec();
 
-let qb = query(db, "items").where("qty", ">", 3);
+let qb = database.query(conn, "items").where("qty", ">", 3);
 print qb.sql(); // SELECT * FROM items WHERE qty > ? ...
 
-let matched = query(db, "items").where_match("{kind: \"fruit\", qty: > 1}").decode_match();
-let lazyRows = lazy_query(db, "items"); // forces to [rows, err] on first access
+let matched = database.query(conn, "items").where_match("{kind: \"fruit\", qty: > 1}").decode_match();
+let lazyRows = database.lazy_query(conn, "items"); // forces to [rows, err] on first access
 ```
 
 Query builder methods: `.from`, `.select`, `.where`/`.where_raw`,
@@ -1282,8 +1333,8 @@ Query builder methods: `.from`, `.select`, `.where`/`.where_raw`,
 `.join`, `.group_by`, `.match`/`.where_match`, `.decode`/`.decode_match`,
 `.exec()`, `.lazy()`, `.sql()`.
 
-`db_connect` requires the `db` capability under a restrictive policy.
-Every DB call follows the `[value, error]` tuple convention.
+`database.connect` requires the `db` capability under a restrictive
+policy. Every DB call follows the `[value, error]` tuple convention.
 
 ### HTTP, SMTP, FTP & SFTP Integrations
 
@@ -1327,68 +1378,74 @@ restricted with `--allow-network`/`SPL_NETWORK_ALLOW`/`SPL_NETWORK_DENY`.
 ### PDF Generation & Editing
 
 ```spl
-pdf_quick("Page one text.", "page1.pdf");
+import "pdf" as pdf;
 
-let info = pdf_info("page1.pdf");           // {pages, encrypted, ...}
-print pdf_validate("page1.pdf");             // {valid, path, pages, encrypted}
-print pdf_to_text("page1.pdf");
-// also: pdf_to_html, pdf_to_markdown, pdf_to_json, pdf_search, pdf_extract_images
+pdf.quick("Page one text.", "page1.pdf");
 
-pdf_from_markdown("# Title\n\nHello **world**", "report.pdf", {
+let info = pdf.info("page1.pdf");           // {pages, encrypted, ...}
+print pdf.validate("page1.pdf");             // {valid, path, pages, encrypted}
+print pdf.to_text("page1.pdf");
+// also: pdf.to_html, pdf.to_markdown, pdf.to_json, pdf.search, pdf.extract_images
+
+pdf.from_markdown("# Title\n\nHello **world**", "report.pdf", {
     "title": "Demo", "author": "SPL", "theme": "modern", "toc": false
 });
-pdf_from_html("<h1>Hi</h1>", "from_html.pdf");
-pdf_from_url("https://example.com", "from_url.pdf"); // requires network capability
+pdf.from_html("<h1>Hi</h1>", "from_html.pdf");
+pdf.from_url("https://example.com", "from_url.pdf"); // requires network capability
 
-pdf_merge("merged.pdf", "page1.pdf", "report.pdf");
-pdf_split("merged.pdf", "first_page.pdf", "1");     // page specs: "1", "1-3", "3,2,1"
-pdf_delete_pages("merged.pdf", "trimmed.pdf", "2");
-pdf_reorder("merged.pdf", "reordered.pdf", "2,1");
-pdf_rotate("merged.pdf", "rotated.pdf", "1", 90);
-pdf_compress("merged.pdf", "compressed.pdf");
+pdf.merge("merged.pdf", "page1.pdf", "report.pdf");
+pdf.split("merged.pdf", "first_page.pdf", "1");     // page specs: "1", "1-3", "3,2,1"
+pdf.delete_pages("merged.pdf", "trimmed.pdf", "2");
+pdf.reorder("merged.pdf", "reordered.pdf", "2,1");
+pdf.rotate("merged.pdf", "rotated.pdf", "1", 90);
+pdf.compress("merged.pdf", "compressed.pdf");
 
-pdf_protect("merged.pdf", "protected.pdf", "user-pw", "owner-pw", "aes-128"); // rc4-128|aes-128 ("aes-256" is not implemented yet)
-pdf_decrypt("protected.pdf", "decrypted.pdf", "user-pw");
+pdf.protect("merged.pdf", "protected.pdf", "user-pw", "owner-pw", "aes-128"); // rc4-128|aes-128 ("aes-256" is not implemented yet)
+pdf.decrypt("protected.pdf", "decrypted.pdf", "user-pw");
 
-pdf_watermark("merged.pdf", "watermarked.pdf", "DRAFT", {"opacity": 0.25, "angle": 45});
-pdf_add_page_numbers("watermarked.pdf", "numbered.pdf", {"format": "Page %d of %d"});
-pdf_set_metadata("numbered.pdf", "tagged.pdf", {"Title": "Report", "Author": "SPL"});
+pdf.watermark("merged.pdf", "watermarked.pdf", "DRAFT", {"opacity": 0.25, "angle": 45});
+pdf.add_page_numbers("watermarked.pdf", "numbered.pdf", {"format": "Page %d of %d"});
+pdf.set_metadata("numbered.pdf", "tagged.pdf", {"Title": "Report", "Author": "SPL"});
 
-let fields = pdf_list_form_fields("form.pdf");
-pdf_fill_form("form.pdf", "filled.pdf", {"name": "Alice", "email": "a@example.com"});
+let fields = pdf.list_form_fields("form.pdf");
+pdf.fill_form("form.pdf", "filled.pdf", {"name": "Alice", "email": "a@example.com"});
 ```
 
-Every function checks file read/write capability; `pdf_from_url`
+Every function checks file read/write capability; `pdf.from_url`
 additionally requires the `network` capability.
 
 ### Secrets Vault & Extra Crypto
 
-**Vault** (`secretr_*` — requires the `secrets` capability):
+**Vault** (`secretr.*` — requires the `secrets` capability):
 
 ```spl
-secretr_set("demo/api-key", "sk_live_demo_only_not_real");
-let apiKey = secretr_get("demo/api-key");
+import "secretr" as secretr;
+
+secretr.set("demo/api-key", "sk_live_demo_only_not_real");
+let apiKey = secretr.get("demo/api-key");
 print apiKey;                    // *** (masked)
 print secret_reveal(apiKey);     // sk_live_demo_only_not_real
 
-secretr_set("demo.database.password", "hunter2");  // dot-notation nests under one entry
-secretr_set("demo.database.host", "localhost");
-secretr_delete("demo/api-key");
+secretr.set("demo.database.password", "hunter2");  // dot-notation nests under one entry
+secretr.set("demo.database.host", "localhost");
+secretr.delete("demo/api-key");
 
-let findings = secretr_scan("aws_key = \"AKIAABCDEFGHIJKLMNOP\"");
+let findings = secretr.scan("aws_key = \"AKIAABCDEFGHIJKLMNOP\"");
 print findings; // [{pattern, redacted, severity}, ...] — scans text for hardcoded secrets
 ```
 
-**bcrypt / JWT** (no capability required):
+**bcrypt / JWT** (`cryptoextra` — no capability required):
 
 ```spl
-let h = bcrypt_hash("hunter2");
-print bcrypt_verify("hunter2", h); // true
+import "cryptoextra" as cryptoextra;
 
-let token = jwt_encode({"sub": "user-123", "role": "admin"}, "signing-secret", {
+let h = cryptoextra.bcrypt_hash("hunter2");
+print cryptoextra.bcrypt_verify("hunter2", h); // true
+
+let token = cryptoextra.jwt_encode({"sub": "user-123", "role": "admin"}, "signing-secret", {
     "alg": "HS256", "expires_in": 3600
 });
-let claims = jwt_decode(token, "signing-secret");
+let claims = cryptoextra.jwt_decode(token, "signing-secret");
 print claims.sub; // user-123
 ```
 
@@ -1401,10 +1458,12 @@ than returning a tuple.
 **Shamir secret sharing** (no capability required):
 
 ```spl
-let [split, err] = shamir_split("db-master-key", 3, 5); // 5 shares, any 3 reconstruct
+import "shamir" as shamir;
+
+let [split, err] = shamir.split("db-master-key", 3, 5); // 5 shares, any 3 reconstruct
 print split; // {auth_key, shares: [...]}
 
-let [secret, cerr] = shamir_combine(slice(split.shares, 0, 3), split.auth_key);
+let [secret, cerr] = shamir.combine(slice(split.shares, 0, 3), split.auth_key);
 print secret; // "db-master-key"
 ```
 
@@ -1412,11 +1471,13 @@ Every share is HMAC-tagged with the `auth_key` so tampered/mismatched
 shares fail loudly at combine time. Distribute shares and the auth key
 separately.
 
-**Stateless encrypted tokens** (`securetoken_*` — no capability required):
+**Stateless encrypted tokens** (`securetoken.*` — no capability required):
 
 ```spl
-let tok = securetoken_encrypt({"sub": "u1", "role": "admin"}, "sekret", {"footer": "v1"});
-let claims = securetoken_decrypt(tok, "sekret", {"expected_footer": "v1"});
+import "securetoken" as securetoken;
+
+let tok = securetoken.encrypt({"sub": "u1", "role": "admin"}, "sekret", {"footer": "v1"});
+let claims = securetoken.decrypt(tok, "sekret", {"expected_footer": "v1"});
 ```
 
 An AES-256-GCM alternative to JWT when you want the payload itself
@@ -1425,10 +1486,10 @@ encrypted, not just signed.
 ### YAML Config
 
 ```spl
-import "yaml";  // or "config/yaml"
+import "yaml" as yaml;  // or "config/yaml"
 
-let doc = yaml_encode({"name": "svc", "replicas": 3, "tags": ["a", "b"]}, {"indent": 2});
-let parsed = yaml_decode(doc);
+let doc = yaml.encode({"name": "svc", "replicas": 3, "tags": ["a", "b"]}, {"indent": 2});
+let parsed = yaml.decode(doc);
 print parsed.replicas; // 3
 
 let cfg = config_load("config/database.yaml", "yaml"); // extends config_load with yaml support
@@ -1456,7 +1517,7 @@ scripting language itself), consumed via `res.render(...)`/
 ```
 
 ```spl
-route(app, "GET", "/", function(req, res) {
+svr.route(app, "GET", "/", function(req, res) {
     res.render("directive.html", {"name": "World", "count": 3, "items": ["a","b","c"]});
 });
 ```
@@ -1493,15 +1554,17 @@ print result; // [{id: 1, n: "a"}]
 
 Any array-of-hashes variable in scope (`items` above) is automatically
 available as a named source inside a tagged block — this is the
-recommended form. The string form, `xql_run("items |> ...")`, does **not**
-auto-see scope variables; connect a source explicitly with `xql_connect`
+recommended form. The string form, `xql.run("items |> ...")`, does **not**
+auto-see scope variables; connect a source explicitly with `xql.connect`
 first if you need one from there:
 
 ```spl
-xql_connect("alias", "http", {"base_url": "https://example.com"});
-print xql_list_integrations();
+import "xql" as xql;
 
-let result, err = xql_run(`
+xql.connect("alias", "http", {"base_url": "https://example.com"});
+print xql.list_integrations();
+
+let result, err = xql.run(`
 call https://example.com/api { method: "GET" }
 |> keep userId, id, title, body
 |> take 5
@@ -1523,7 +1586,9 @@ BCL (e.g. "does this payment need manual review?") instead of scattered
 `if` statements:
 
 ```spl
-let svc = rules_service({"environment": "dev"});
+import "rules" as rules;
+
+let svc = rules.service({"environment": "dev"});
 
 let policy = `module "access" {
   decision_schema "access" { effects [allow, deny] default deny strategy first_match }
@@ -1537,19 +1602,19 @@ let policy = `module "access" {
   }
 }`;
 
-let [pub, perr] = rules_publish(svc, "access-policy", policy, {"version": "1"}); // or a file path
+let [pub, perr] = rules.publish(svc, "access-policy", policy, {"version": "1"}); // or a file path
 if (perr != null) { throw perr; }
 
-let [result, everr] = rules_evaluate(svc, "access-policy", "access", {"request": {"verified": true}});
+let [result, everr] = rules.evaluate(svc, "access-policy", "access", {"request": {"verified": true}});
 if (everr != null) { throw everr; }
 print result.Report.Decision.Effect;   // "allow" - hash keys mirror the Go struct field names as-is
 print result.Report.Decision.Allowed;  // true
 
-rules_activate(svc, "access-policy", "1", "dev");
-rules_rollback(svc, "access-policy", "1", "dev");
+rules.activate(svc, "access-policy", "1", "dev");
+rules.rollback(svc, "access-policy", "1", "dev");
 ```
 
-`rules_service()` requires the `policy` capability under a restrictive
+`rules.service()` requires the `policy` capability under a restrictive
 security policy. This wraps only the core publish/evaluate/activate loop —
 workflows, stateful chains, canary releases, and approval gates aren't
 exposed yet. See
@@ -1635,12 +1700,14 @@ results}`, never aborting a batch on one bad record).
 **Email**:
 
 ```spl
-print email_validate_syntax("User@Example.COM"); // syntax/normalization, no network
-print email_is_disposable("test@mailinator.com");   // true
-print email_is_role_account("admin+ops@example.com"); // true
-print email_is_free_provider("someone@gmail.com");    // true
+import "emailvalidator" as email;
 
-let [result, err] = email_validate("user@example.com", {"check_dns": false});
+print email.validate_syntax("User@Example.COM"); // syntax/normalization, no network
+print email.is_disposable("test@mailinator.com");   // true
+print email.is_role_account("admin+ops@example.com"); // true
+print email.is_free_provider("someone@gmail.com");    // true
+
+let [result, err] = email.validate("user@example.com", {"check_dns": false});
 print result.verdict; print result.risk_score; print result.reasons;
 
 let signups = [
@@ -1648,41 +1715,45 @@ let signups = [
     {"name": "Grace", "email": "grace@mailinator.com"},
     {"name": "Linus", "email": "not-an-email"}
 ];
-let report = email_validate_bulk(signups, "email");
+let report = email.validate_bulk(signups, "email");
 print sprintf("checked %d, %d valid, %d invalid", report.total, report.valid_count, report.invalid_count);
-// write_json/write_csv/db_exec straight from report.results
+// write_json/write_csv/database.exec straight from report.results
 ```
 
-`email_validate`'s DNS check (on by default) and optional SMTP probing
+`email.validate`'s DNS check (on by default) and optional SMTP probing
 require the `network` capability; syntax/disposable/role/free-provider
-checks never touch the network. `email_validate_bulk` defaults DNS/SMTP
+checks never touch the network. `email.validate_bulk` defaults DNS/SMTP
 off so batches stay fast and capability-free unless requested.
 
 **Phone**:
 
 ```spl
-let [parsed, err] = phone_parse("(650) 253-0000", "US"); // default_region for numbers w/o "+"
+import "phone" as phone;
+
+let [parsed, err] = phone.parse("(650) 253-0000", "US"); // default_region for numbers w/o "+"
 print parsed; // {valid, possible, e164, international, national, country_code,
                //  region, type, carrier, network, ...}
-print phone_valid("not a phone number", "US"); // false — never throws
-print phone_country("AU");        // {code, name, phone, currency, currency_symbol}
-print phone_networks("US", {"status": "Operational"}); // full MCC/MNC/PLMN operator table
+print phone.valid("not a phone number", "US"); // false — never throws
+print phone.country("AU");        // {code, name, phone, currency, currency_symbol}
+print phone.networks("US", {"status": "Operational"}); // full MCC/MNC/PLMN operator table
 
-let report = phone_parse_bulk(contacts, "phone", {"default_region": "US", "region_field": "region"});
+let report = phone.parse_bulk(contacts, "phone", {"default_region": "US", "region_field": "region"});
 ```
 
 **IP**:
 
 ```spl
-print ip_is_private("10.0.0.1"); // true
-print ip_client_from_header("10.0.0.1", "203.0.113.5, 10.0.0.1"); // "203.0.113.5"
-print ip_client_from_header(remote, header, {"trust_proxy": false}); // ignore header entirely
+import "ip" as ip;
 
-let [ok, err] = ip_geo_init(); // fetches/caches a geolocation dataset once (network + write capability)
-print ip_country("8.8.8.8");   // "" until ip_geo_init() has run
-print ip_lookup("8.8.8.8");    // {found, country_code, country, region, city, latitude, longitude}
+print ip.is_private("10.0.0.1"); // true
+print ip.client_from_header("10.0.0.1", "203.0.113.5, 10.0.0.1"); // "203.0.113.5"
+print ip.client_from_header(remote, header, {"trust_proxy": false}); // ignore header entirely
 
-let report = ip_lookup_bulk(requests, "ip");
+let [ok, err] = ip.geo_init(); // fetches/caches a geolocation dataset once (network + write capability)
+print ip.country("8.8.8.8");   // "" until ip.geo_init() has run
+print ip.lookup("8.8.8.8");    // {found, country_code, country, region, city, latitude, longitude}
+
+let report = ip.lookup_bulk(requests, "ip");
 ```
 
 ### Money, Natural-Language Dates & Sortable IDs
@@ -1691,19 +1762,21 @@ let report = ip_lookup_bulk(requests, "ip");
 drift like float math would:
 
 ```spl
-let [price, err] = money_new("19.99", "USD"); // STRING amount avoids float rounding
-let tax = money_percent(price, 8.5);           // 8.5%, rounds half up
-let [total, addErr] = money_add(price, tax);
-print money_format(price); print money_format(total); // "$19.99", "$21.69"
+import "money" as money;
 
-let [tripled, mulErr] = money_mul(price, 4);   // whole-number multiplier
+let [price, err] = money.new("19.99", "USD"); // STRING amount avoids float rounding
+let tax = money.percent(price, 8.5);           // 8.5%, rounds half up
+let [total, addErr] = money.add(price, tax);
+print money.format(price); print money.format(total); // "$19.99", "$21.69"
 
-let [eurPrice, _] = money_new("19.99", "EUR");
-let [mismatch, mismatchErr] = money_add(price, eurPrice);
+let [tripled, mulErr] = money.mul(price, 4);   // whole-number multiplier
+
+let [eurPrice, _] = money.new("19.99", "EUR");
+let [mismatch, mismatchErr] = money.add(price, eurPrice);
 print mismatchErr; // "currency mismatch" — a hard error, not silently wrong math
 ```
 
-`money_new`'s amount is always interpreted as a **major-unit** value
+`money.new`'s amount is always interpreted as a **major-unit** value
 (dollars, not cents) regardless of whether you pass a `STRING`, `INTEGER`,
 or `FLOAT` — pass the `STRING` form (`"19.99"`) to avoid float rounding;
 there's no separate "from minor units" constructor.
@@ -1711,11 +1784,13 @@ there's no separate "from minor units" constructor.
 **Natural-language dates**:
 
 ```spl
-let [r, err] = naturaldate_parse("tomorrow at 9am");
-print r; // {time, unix, direction, truncated, has_recur}
-print naturaldate_parse_all("remind me tomorrow at 9am and again next friday"); // every expression found
+import "naturaldate" as naturaldate;
 
-print naturaldate_parse("next friday", {
+let [r, err] = naturaldate.parse("tomorrow at 9am");
+print r; // {time, unix, direction, truncated, has_recur}
+print naturaldate.parse_all("remind me tomorrow at 9am and again next friday"); // every expression found
+
+print naturaldate.parse("next friday", {
     "reference": "2026-01-01T00:00:00Z", "location": "America/New_York"
 });
 ```
@@ -1723,10 +1798,12 @@ print naturaldate_parse("next friday", {
 **Sortable IDs**:
 
 ```spl
-let id = wuid_new();         // 128-bit, time-ordered, base62-encoded
-print wuid_new_uuid();        // same ID, standard dashed UUID format
+import "wuid" as wuid;
 
-let [parsed, err] = wuid_parse(id); // {hex, id, uuid, unix_ms, time}
+let id = wuid.new();         // 128-bit, time-ordered, base62-encoded
+print wuid.new_uuid();        // same ID, standard dashed UUID format
+
+let [parsed, err] = wuid.parse(id); // {hex, id, uuid, unix_ms, time}
 ```
 
 None of these check any capability — they're pure in-memory computations.
@@ -1737,13 +1814,15 @@ Profile an unfamiliar data source before writing a schema/import pipeline
 by hand:
 
 ```spl
-let [types, err] = infer_csv_types("id,name,active,joined\n1,Ada,true,2020-01-15\n2,Grace,false,2021-06-30\n");
+import "metadata" as metadata;
+
+let [types, err] = metadata.infer_csv_types("id,name,active,joined\n1,Ada,true,2020-01-15\n2,Grace,false,2021-06-30\n");
 print types; // {active: "bool", id: "int", joined: "time.Time", name: "string"}
 
-let [jtypes, jerr] = infer_json_types([{"id": 1, "score": 9.5}, {"id": 2, "score": 10}]);
+let [jtypes, jerr] = metadata.infer_json_types([{"id": 1, "score": 9.5}, {"id": 2, "score": 10}]);
 print jtypes; // {id: "int", score: "float64"}
 
-print infer_value_type("2026-01-01"); // "time.Time"
+print metadata.infer_value_type("2026-01-01"); // "time.Time"
 ```
 
 ---
@@ -1784,24 +1863,27 @@ task end to end.
 ### 1. Validate and clean up a signup CSV, then load it into a database
 
 ```spl
-import "database";
+import "database" as database;
+import "emailvalidator" as email;
+import "phone" as phone;
+import "metadata" as metadata;
 
 let csvText = read_file("signups.csv");
-let [types, terr] = infer_csv_types(csvText);
+let [types, terr] = metadata.infer_csv_types(csvText);
 print types; // spot-check column types before trusting the shape
 
 let table = read_csv("signups.csv");
 let rows = table_rows(table);
 
-let emailReport = email_validate_bulk(rows, "email");
-let phoneReport = phone_parse_bulk(rows, "phone", {"default_region": "US"});
+let emailReport = email.validate_bulk(rows, "email");
+let phoneReport = phone.parse_bulk(rows, "phone", {"default_region": "US"});
 
-let db, dberr = db_connect("sqlite", "signups.db");
-db_exec(db, "CREATE TABLE IF NOT EXISTS signups (name TEXT, email TEXT, phone_e164 TEXT, valid_email BOOLEAN, valid_phone BOOLEAN)");
+let conn, dberr = database.connect("sqlite", "signups.db");
+database.exec(conn, "CREATE TABLE IF NOT EXISTS signups (name TEXT, email TEXT, phone_e164 TEXT, valid_email BOOLEAN, valid_phone BOOLEAN)");
 
 for (i, row in emailReport.results) {
     let phoneRow = phoneReport.results[i];
-    db_exec(db, "INSERT INTO signups(name, email, phone_e164, valid_email, valid_phone) VALUES(?, ?, ?, ?, ?)",
+    database.exec(conn, "INSERT INTO signups(name, email, phone_e164, valid_email, valid_phone) VALUES(?, ?, ?, ?, ?)",
         [row.name, row.input, phoneRow.e164, row.valid, phoneRow.valid]);
 }
 
@@ -1811,24 +1893,28 @@ write_json("signups_report.json", {"emails": emailReport, "phones": phoneReport}
 ### 2. A small JSON API with auth middleware, JWT, and in-memory state
 
 ```spl
-let app = server(3099);
+import "server" as svr;
+import "cryptoextra" as cryptoextra;
+import "money" as money;
+
+let app = svr.server(3099);
 let SECRET = "change-me";
 let users = {};
 
-route(app, "POST", "/api/login", function(req, res) {
+svr.route(app, "POST", "/api/login", function(req, res) {
     let body = req.json();
-    let token = jwt_encode({"sub": body.username}, SECRET, {"alg": "HS256", "expires_in": 3600});
+    let token = cryptoextra.jwt_encode({"sub": body.username}, SECRET, {"alg": "HS256", "expires_in": 3600});
     res.json({"token": token});
 });
 
-middleware(app, "/api", function(req, res, next) {
+svr.middleware(app, "/api", function(req, res, next) {
     if (req.path == "/api/login") { next(); return; }
     let auth = req.get_header("Authorization");
     if (auth == null) {
         res.status(401).json({"error": "missing token"});
         return;
     }
-    let claims = try { jwt_decode(auth, SECRET); } catch (e) { null; };
+    let claims = try { cryptoextra.jwt_decode(auth, SECRET); } catch (e) { null; };
     if (claims == null) {
         res.status(401).json({"error": "invalid token"});
         return;
@@ -1836,21 +1922,26 @@ middleware(app, "/api", function(req, res, next) {
     next();
 });
 
-route(app, "POST", "/api/orders", function(req, res) {
+svr.route(app, "POST", "/api/orders", function(req, res) {
     let body = req.json();
-    let [price, perr] = money_new(body.amount, body.currency);
+    let [price, perr] = money.new(body.amount, body.currency);
     if (perr != null) { res.status(400).json({"error": perr}); return; }
-    let tax = money_percent(price, 8.5);
-    let [total, aerr] = money_add(price, tax);
-    res.json({"subtotal": money_format(price), "tax": money_format(tax), "total": money_format(total)});
+    let tax = money.percent(price, 8.5);
+    let [total, aerr] = money.add(price, tax);
+    res.json({"subtotal": money.format(price), "tax": money.format(tax), "total": money.format(total)});
 });
 
-listen(app, 3099);
+svr.listen(app, 3099);
 ```
 
 ### 3. A scheduled data pipeline with reactive status and a live dashboard
 
 ```spl
+import "database" as database;
+import "server" as svr;
+
+let conn, dberr = database.connect("sqlite", "pipeline.db");
+
 let lastRun = signal("lastRun", null);
 let recordsProcessed = signal("recordsProcessed", 0);
 let status = computed(function() {
@@ -1858,44 +1949,46 @@ let status = computed(function() {
 });
 
 schedule_interval("5m", "sync", function() {
-    let rows, err = query(db, "pending_items").where("processed", false).limit(100).exec();
+    let rows, err = database.query(conn, "pending_items").where("processed", false).limit(100).exec();
     if (err != null) { return; }
     for (row in rows) {
-        db_exec(db, "UPDATE pending_items SET processed = ? WHERE id = ?", [true, row.id]);
+        database.exec(conn, "UPDATE pending_items SET processed = ? WHERE id = ?", [true, row.id]);
     }
     recordsProcessed.set(function(prev) { return prev + len(rows); });
     lastRun.set(now_iso());
 });
 
-let app = server(3100);
-route(app, "GET", "/status", function(req, res) {
+let app = svr.server(3100);
+svr.route(app, "GET", "/status", function(req, res) {
     let sse = res.sse();
     sse.send("status", json_encode({"status": status.value, "processed": recordsProcessed.value, "lastRun": lastRun.value}));
     sse.close();
 });
-listen(app, 3100);
+svr.listen(app, 3100);
 ```
 
 ### 4. Generating a signed, encrypted report as a PDF
 
 ```spl
-import "database";
+import "database" as database;
+import "money" as money;
+import "pdf" as pdf;
 
-let db, err = db_connect("postgres", "postgres://user:pass@localhost/reports");
-let rows, qerr = query(db, "monthly_totals").order_by("month DESC").limit(12).exec();
+let conn, err = database.connect("postgres", "postgres://user:pass@localhost/reports");
+let rows, qerr = database.query(conn, "monthly_totals").order_by("month DESC").limit(12).exec();
 
 let body = "# Monthly Report\n\n";
 for (row in rows) {
     // row.total is a decimal-string column (e.g. "1999.00") — pass amounts
-    // as STRING to money_new to avoid float rounding; an INTEGER/FLOAT
+    // as STRING to money.new to avoid float rounding; an INTEGER/FLOAT
     // amount is treated as a major-unit value, not minor units (cents).
-    let [amount, aerr] = money_new(row.total, "USD");
-    body += sprintf("- %s: %s\n", row.month, money_format(amount));
+    let [amount, aerr] = money.new(row.total, "USD");
+    body += sprintf("- %s: %s\n", row.month, money.format(amount));
 }
 
-pdf_from_markdown(body, "report.pdf", {"title": "Monthly Report", "theme": "modern", "toc": false});
-pdf_watermark("report.pdf", "report_wm.pdf", "CONFIDENTIAL", {"opacity": 0.2});
-pdf_protect("report_wm.pdf", "report_final.pdf", "reader-pw", "owner-pw", "aes-128");
+pdf.from_markdown(body, "report.pdf", {"title": "Monthly Report", "theme": "modern", "toc": false});
+pdf.watermark("report.pdf", "report_wm.pdf", "CONFIDENTIAL", {"opacity": 0.2});
+pdf.protect("report_wm.pdf", "report_final.pdf", "reader-pw", "owner-pw", "aes-128");
 ```
 
 ### 5. Running third-party scripts safely (multi-tenant / plugin scripts)
@@ -1930,14 +2023,16 @@ error, which the script can handle with ordinary `try/catch` (see
 ### 6. Splitting and safely re-combining a master credential
 
 ```spl
+import "shamir" as shamir;
+
 let masterKey = secret_generate(32);
-let [split, err] = shamir_split(secret_reveal(masterKey), 3, 5); // any 3 of 5 shares reconstruct
+let [split, err] = shamir.split(secret_reveal(masterKey), 3, 5); // any 3 of 5 shares reconstruct
 
 // Distribute split.shares[0..4] to 5 separate holders, and split.auth_key
 // to a 6th party (or store it separately) — no single share (or the auth
 // key alone) reveals anything about the secret.
 
-let [recovered, cerr] = shamir_combine(
+let [recovered, cerr] = shamir.combine(
     [split.shares[0], split.shares[2], split.shares[4]],
     split.auth_key
 );

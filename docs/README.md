@@ -175,7 +175,8 @@ const PI = 3.14159;
 Supports tuple-style assignment for functions/builtins returning arrays:
 
 ```spl
-let db, err = db_connect("sqlite", ":memory:");
+import "database" as database;
+let conn, err = database.connect("sqlite", ":memory:");
 ```
 
 ### Functions and closures
@@ -333,14 +334,21 @@ Key groups:
 - JSON/Encoding: `json_encode`, `json_decode`, base64/hex/url encode/decode
 - File/OS: `read_file`, `write_file`, `file_exists`, `remove_file`, `os_env`
 - Process exec: `exec` with whitelist + timeout
-- Database: `db_connect`, `db_query`, `db_exec`, `db_begin`, `db_commit`, `db_rollback`, `db_tables`, `db_close`
-- Integrations:
-  - HTTP: `http_request`, `http_get`, `http_post`, `webhook`
-  - SMTP: `smtp_send`
-  - FTP: `ftp_list`, `ftp_get`, `ftp_put`
-  - SFTP: `sftp_list`, `sftp_get`, `sftp_put`
+- Database (`import "database" as database;`): `database.connect`, `database.db_query`, `database.exec`, `database.begin`, `database.commit`, `database.rollback`, `database.tables`, `database.close`
+- Integrations (`import "integrations" as integrations;`):
+  - HTTP: `integrations.http_request`, `integrations.http_get`, `integrations.http_post`, `integrations.webhook`
+  - SMTP: `integrations.smtp_send`
+  - FTP: `integrations.ftp_list`, `integrations.ftp_get`, `integrations.ftp_put`
+  - SFTP: `integrations.sftp_list`, `integrations.sftp_get`, `integrations.sftp_put`
 - Testing helpers: `assert_true`, `assert_eq`, `test_summary`, `run_tests`
 - Formatting: `sprintf`, `printf`, `interpolate`
+
+Builtins in the groups above marked with an `import "..."` are optional
+plugin modules: their functions are only reachable after importing the
+module (aliased dot access, or an unaliased import that binds the
+module's own — often prefix-stripped — names directly into scope). Core
+groups (strings, collections, time, JSON/encoding, file/OS, formatting,
+testing) work as plain global calls with no import at all.
 
 ## Integrations Reference
 
@@ -352,30 +360,34 @@ All integration builtins return tuple-style responses for robust handling.
 ### HTTP
 
 ```spl
-let res, err = http_get("https://httpbin.org/get");
+import "integrations" as integrations;
+
+let res, err = integrations.http_get("https://httpbin.org/get");
 if (err == null) {
   print res.status_code;
 }
 
 let payload = {"event": "build_done", "ok": true};
-let wres, werr = webhook("https://example.com/hook", payload, {"X-Token": "abc"}, 5000);
+let wres, werr = integrations.webhook("https://example.com/hook", payload, {"X-Token": "abc"}, 5000);
 ```
 
 ### Database
 
-`db_query` and `db_exec` now support both positional and named parameters, and transactions are available via `db_begin` / `db_commit` / `db_rollback`.
+`database.db_query` and `database.exec` now support both positional and named parameters, and transactions are available via `database.begin` / `database.commit` / `database.rollback`.
 
 ```spl
-let db, err = db_connect("sqlite", ":memory:");
-let _, _ = db_exec(db, "CREATE TABLE items (name TEXT, qty INTEGER)");
-let _, _ = db_exec(db, "INSERT INTO items(name, qty) VALUES(?, ?)", ["apples", 3]);
-let _, _ = db_exec(db, "INSERT INTO items(name, qty) VALUES(:name, :qty)", {"name": "pears", "qty": 4});
+import "database" as database;
 
-let tx, tx_err = db_begin(db);
-let _, _ = db_exec(tx, "INSERT INTO items(name, qty) VALUES(:name, :qty)", {"name": "committed", "qty": 7});
-let ok, commit_err = db_commit(tx);
+let conn, err = database.connect("sqlite", ":memory:");
+let _, _ = database.exec(conn, "CREATE TABLE items (name TEXT, qty INTEGER)");
+let _, _ = database.exec(conn, "INSERT INTO items(name, qty) VALUES(?, ?)", ["apples", 3]);
+let _, _ = database.exec(conn, "INSERT INTO items(name, qty) VALUES(:name, :qty)", {"name": "pears", "qty": 4});
 
-let rows, query_err = db_query(db, "SELECT name, qty FROM items ORDER BY qty ASC", null, "array");
+let tx, tx_err = database.begin(conn);
+let _, _ = database.exec(tx, "INSERT INTO items(name, qty) VALUES(:name, :qty)", {"name": "committed", "qty": 7});
+let ok, commit_err = database.commit(tx);
+
+let rows, query_err = database.db_query(conn, "SELECT name, qty FROM items ORDER BY qty ASC", null, "array");
 ```
 
 ### SMTP

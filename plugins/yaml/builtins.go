@@ -129,12 +129,6 @@ func init() {
 	}
 	eval.RegisterPluginBuiltins(builtins)
 
-	exports := make(map[string]interpreter.Object, len(builtins))
-	for name, b := range builtins {
-		exports[name] = b
-	}
-	_ = interpreter.RegisterStdModule("yaml", exports)
-	_ = interpreter.RegisterStdModule("config/yaml", exports)
-	_ = interpreter.RegisterStdBuiltinModule("yaml", "config_load", "config_parse", "yaml_encode", "yaml_decode")
-	_ = interpreter.RegisterStdBuiltinModule("config/yaml", "config_load", "config_parse", "yaml_encode", "yaml_decode")
+	_ = interpreter.RegisterStdBuiltinModuleWithPrefix("yaml", "yaml_", "config_load", "config_parse", "yaml_encode", "yaml_decode")
+	_ = interpreter.RegisterStdBuiltinModuleWithPrefix("config/yaml", "yaml_", "config_load", "config_parse", "yaml_encode", "yaml_decode")
 }

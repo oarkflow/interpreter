@@ -130,11 +130,11 @@ let tiny = image("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQ
 // write_json("tmp/profile.json", {"team": "playground", "ok": true}, {"pretty": true});
 // write_csv("tmp/people.csv", [{"name": "Ada", "role": "engineer"}]);
 // Optional images module examples in cmd/interpreter:
-// import "images";
-// let loaded = image_load(tiny);
-// image_save(loaded, "tmp/tiny.png");
-// image_resize_file("tmp/tiny.png", "tmp/tiny-large.png", 48, 48);
-// image_convert_file("tmp/tiny-large.png", "tmp/tiny-large.jpg", "jpeg");
+// import "images" as images;
+// let loaded = images.load(tiny);
+// import "tools/images" as toolsImages;
+// toolsImages.image_resize_file("tmp/tiny.png", "tmp/tiny-large.png", {"width": 48, "height": 48, "apply": true});
+// toolsImages.image_convert_batch("tmp", "tmp/converted", {"to": "jpeg", "apply": true});
 
 print "Write helpers are documented here for CLI/REPL workflows.";`,
 		"tools-files": `// Daily file tools are preview-first. This example only reads repository files
@@ -552,25 +552,27 @@ print sprintf("%%f from int:   %f", 42);`,
 // The server is a long-lived, stateful process — not a fragment or API stub.
 // It manages routes, middleware, sessions, and in-memory state.
 
-let app = server(3000);
+import "server" as svr;
+
+let app = svr.server(3000);
 
 // In-memory state lives on the server; the client never touches it.
 let users = {};
 let nextID = 1;
 
 // Middleware runs server-side on every request.
-middleware(app, function(req, res, next) {
+svr.middleware(app, function(req, res, next) {
 	print sprintf("[%s] %s %s", now_iso(), req.method, req.path);
 	res.header("X-Powered-By", "SPL");
 	next();
 });
 
 // All flow logic is server-side: create, read, lookup, delete.
-route(app, "GET", "/api/users", function(req, res) {
+svr.route(app, "GET", "/api/users", function(req, res) {
 	res.json(values(users));
 });
 
-route(app, "POST", "/api/users", function(req, res) {
+svr.route(app, "POST", "/api/users", function(req, res) {
 	let body = req.json();
 	let id = to_string(nextID);
 	nextID = nextID + 1;
@@ -579,7 +581,7 @@ route(app, "POST", "/api/users", function(req, res) {
 	res.status(201).json(user);
 });
 
-route(app, "GET", "/api/users/:id", function(req, res) {
+svr.route(app, "GET", "/api/users/:id", function(req, res) {
 	let id = req.param("id");
 	if (has_key(users, id)) {
 		res.json(users[id]);
@@ -588,7 +590,7 @@ route(app, "GET", "/api/users/:id", function(req, res) {
 	}
 });
 
-route(app, "DELETE", "/api/users/:id", function(req, res) {
+svr.route(app, "DELETE", "/api/users/:id", function(req, res) {
 	let id = req.param("id");
 	if (has_key(users, id)) {
 		let removed = users[id];
@@ -599,7 +601,7 @@ route(app, "DELETE", "/api/users/:id", function(req, res) {
 	}
 });
 
-route(app, "GET", "/api/stats", function(req, res) {
+svr.route(app, "GET", "/api/stats", function(req, res) {
 	let fib = function fib(n) {
 		if (n < 2) {
 			return n;
@@ -622,20 +624,22 @@ print "All create/read/delete decisions happen server-side";`,
 // Middleware runs on the server, wrapping every handler.
 // The client sends plain requests; the server decides auth, logging, CORS.
 
-let app = server(3001);
+import "server" as svr;
+
+let app = svr.server(3001);
 
 // Request counter — server-side state, invisible to client.
 let requestCount = 0;
 
 // Logging middleware — server decides what to log.
-middleware(app, function(req, res, next) {
+svr.middleware(app, function(req, res, next) {
 	requestCount = requestCount + 1;
 	print sprintf("#%d %s %s", requestCount, req.method, req.path);
 	next();
 });
 
 // Auth middleware on /api — server controls access, not the client.
-middleware(app, "/api", function(req, res, next) {
+svr.middleware(app, "/api", function(req, res, next) {
 	let token = req.get_header("Authorization");
 	if (token == null) {
 		res.status(401).json({"error": "missing token"});
@@ -650,18 +654,18 @@ middleware(app, "/api", function(req, res, next) {
 });
 
 // CORS middleware — server sets the policy.
-middleware(app, function(req, res, next) {
+svr.middleware(app, function(req, res, next) {
 	res.header("Access-Control-Allow-Origin", "*");
 	res.header("Access-Control-Allow-Methods", "GET, POST, DELETE");
 	res.header("Access-Control-Allow-Headers", "Authorization, Content-Type");
 	next();
 });
 
-route(app, "GET", "/health", function(req, res) {
+svr.route(app, "GET", "/health", function(req, res) {
 	res.json({"ok": true, "requests_served": requestCount});
 });
 
-route(app, "GET", "/api/protected", function(req, res) {
+svr.route(app, "GET", "/api/protected", function(req, res) {
 	res.json({"message": "you passed server-side auth", "total_requests": requestCount});
 });
 
@@ -834,10 +838,11 @@ print "untrusted profile smoke complete";`,
 // These require a configured database connection, so this playground version
 // prints the SPL you would use in CLI, REPL, or an embedded host.
 
-let template = "let db, err = db_connect(\"sqlite\", \":memory:\");\n" +
-"let ok, _ = db_exec(db, \"CREATE TABLE users (id INTEGER, name TEXT, active BOOLEAN)\");\n" +
-"let _, _ = db_exec(db, \"INSERT INTO users(id, name, active) VALUES(?, ?, ?)\", [1, \"Ada\", true]);\n" +
-"let rows, qerr = query(db, \"users\")\n" +
+let template = "import \"database\" as database;\n" +
+"let db, err = database.connect(\"sqlite\", \":memory:\");\n" +
+"let ok, _ = database.exec(db, \"CREATE TABLE users (id INTEGER, name TEXT, active BOOLEAN)\");\n" +
+"let _, _ = database.exec(db, \"INSERT INTO users(id, name, active) VALUES(?, ?, ?)\", [1, \"Ada\", true]);\n" +
+"let rows, qerr = database.query(db, \"users\")\n" +
 "  .select(\"id\", \"name\")\n" +
 "  .where(\"active\", true)\n" +
 "  .where_in(\"id\", [1, 2, 3])\n" +
@@ -849,18 +854,20 @@ let template = "let db, err = db_connect(\"sqlite\", \":memory:\");\n" +
 
 print "=== query builder template ===";
 print template;
-print "Use lazy_query(db, \"users\") or query(db, \"users\").lazy() to defer execution.";`,
+print "Use database.lazy_query(db, \"users\") or database.query(db, \"users\").lazy() to defer execution.";`,
 
 		"server-sse": `// Server-Sent Events (SSE)
 // The server pushes events to the client over a long-lived connection.
 // The client just listens — no polling, no flow control.
 
-let app = server(3002);
+import "server" as svr;
+
+let app = svr.server(3002);
 
 // In-memory event log — server state.
 let eventLog = [];
 
-route(app, "GET", "/events", function(req, res) {
+svr.route(app, "GET", "/events", function(req, res) {
 	// Server initiates the SSE stream.
 	let sse = res.sse();
 
@@ -879,7 +886,7 @@ route(app, "GET", "/events", function(req, res) {
 	sse.close();
 });
 
-route(app, "GET", "/log", function(req, res) {
+svr.route(app, "GET", "/log", function(req, res) {
 	res.json({"events": eventLog, "count": len(eventLog)});
 });
 
@@ -890,37 +897,39 @@ print "Event sequence, timing, and payload are all server decisions";`,
 // All URL structure and handler mapping is server-side.
 // The client hits URLs — it does not decide which handler runs.
 
-let app = web_app("./templates");
+import "server" as svr;
+
+let app = svr.web_app("./templates");
 
 // API group — server organizes routes by prefix.
-route_group(app, "/api/v1", "GET", "/health", function(req, res) {
+svr.route_group(app, "/api/v1", "GET", "/health", function(req, res) {
 	res.json({"status": "ok", "version": "1.0"});
 });
 
-route_group(app, "/api/v1", "GET", "/users", function(req, res) {
+svr.route_group(app, "/api/v1", "GET", "/users", function(req, res) {
 	res.json([
 		{"id": 1, "name": "Alice"},
 		{"id": 2, "name": "Bob"}
 	]);
 });
 
-route_group(app, "/api/v1", "GET", "/users/:id", function(req, res) {
+svr.route_group(app, "/api/v1", "GET", "/users/:id", function(req, res) {
 	let id = req.param("id");
 	// Server resolves the user — client just requested a URL.
 	res.json({"id": to_int(id), "name": "User " + id});
 });
 
 // Admin group — server decides access, not the client.
-route_group(app, "/admin", "GET", "/dashboard", function(req, res) {
+svr.route_group(app, "/admin", "GET", "/dashboard", function(req, res) {
 	res.json({"section": "dashboard", "stats": {"users": 42, "active": 18}});
 });
 
-route_group(app, "/admin", "GET", "/settings", function(req, res) {
+svr.route_group(app, "/admin", "GET", "/settings", function(req, res) {
 	res.json({"section": "settings", "features": ["auth", "logging", "rate-limit"]});
 });
 
 // Static files served by the server.
-static(app, "/assets/", "./public");
+svr.static(app, "/assets/", "./public");
 
 print "Web app with route groups:";
 let routes = app.routes;
@@ -1103,7 +1112,7 @@ print sprintf("premium=%v", premium);
 print sprintf("total=%d", total);
 
 let summary = {
-	"module": label,
+	"module": "complete-tour",
 	"items": len(prices),
 	"premium_count": len(premium),
 	"total": total,

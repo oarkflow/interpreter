@@ -20,23 +20,24 @@ functions, transactions, and channels/goroutines - see
 
 ```bash
 cd examples/app
-go run ../../cmd/interpreter-full main.spl
+go run ../../cmd/interpreter main.spl
 ```
 
-`app/models/todo.spl` uses the database builtins (`db_connect`,
-`db_query`, ...), which are **not** linked into the lightweight
-`cmd/interpreter` binary — they pull in a real SQLite driver dependency
-that most embedders don't need (see the root `README.md`'s Quick Start).
-This app needs `cmd/interpreter-full`.
+`app/models/todo.spl` uses the `database` plugin module (`import
+"database"; connect(...); exec(...); ...`), which is **not** linked into
+the lightweight `cmd/interpreter` binary — it pulls in a real SQLite
+driver dependency that most embedders don't need (see the root
+`README.md`'s Quick Start). This app needs the full `cmd/interpreter`
+build.
 
 Run it from inside `examples/app/`: `app/config/app.spl`'s `VIEWS_DIR`,
 `PUBLIC_DIR`, and `DB_PATH` are plain relative paths, resolved against the
 process's working directory (there's no script-directory builtin to
 anchor them to `main.spl`'s own location), so `res.render()`/`static()`/
-`db_connect()` need the app directory as cwd to find `app/views`,
-`public`, and `storage/app.db`.
+`connect()` need the app directory as cwd to find `app/views`, `public`,
+and `storage/app.db`.
 
-No flags needed — `cmd/interpreter-full`'s default sandbox no longer
+No flags needed — `cmd/interpreter`'s default sandbox no longer
 applies a wall-clock deadline to trusted scripts, so a server started
 with `listen()` keeps running (and keeps handling requests) indefinitely.
 Press `Ctrl+C` to stop it; the server drains in-flight requests and closes
@@ -137,7 +138,7 @@ a replacement.
 ## Single-binary build
 
 `examples/app` is its own Go module (a separate `go.mod`, the same
-pattern `cmd/interpreter-full` uses) so it can link `builtins/database`
+pattern `cmd/interpreter` uses) so it can link `builtins/database`
 directly - the root module intentionally doesn't carry that dependency.
 `main.go` embeds the entire app (`main.spl`, `app/`, `public/`,
 `storage/`) into one Go binary via `go:embed`, so the compiled executable
@@ -355,7 +356,7 @@ examples/app/
 │                             workers, middleware, routes, then listen()
 ├── main.go                  optional: builds main.spl + app/ + public/ +
 │                             storage/ into a single Go binary (go:embed)
-├── go.mod                   separate module (like cmd/interpreter-full)
+├── go.mod                   separate module (like cmd/interpreter)
 │                             so main.go can link builtins/database and
 │                             builtins/template
 ├── spl.mod                  module manifest + the @/ and ~/ import aliases
