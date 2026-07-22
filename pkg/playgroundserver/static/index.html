@@ -3,14 +3,246 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>SPL Playground</title>
+  <title>SPL — A programmable layer for Go products</title>
+  <meta name="description" content="SPL is an embeddable scripting runtime for controlled business rules, workflows, data operations, and automation in Go applications." />
   <script src="https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.52.2/min/vs/loader.min.js"></script>
   <link rel="stylesheet" href="/styles.css" />
+  <link rel="stylesheet" href="/landing.css" />
 </head>
 <body>
-  <div class="app">
+  <main class="landing" id="landingPage">
+    <header class="site-header">
+      <div class="shell site-header__inner">
+        <a class="brand" href="#overview" aria-label="SPL home"><span class="brand__mark">S</span><span>SPL</span></a>
+        <nav class="site-nav" aria-label="Main navigation">
+          <div class="site-nav__links">
+            <a href="#product">Product</a>
+            <a href="#security">Security</a>
+            <a href="#developers">Developers</a>
+          </div>
+          <button class="nav-link-button" data-open-playground>Playground</button>
+          <button class="button button--light button--compact" data-open-playground>Try SPL <span>↗</span></button>
+          <button class="menu-button" id="landingMenu" aria-label="Toggle navigation" aria-expanded="false"><span></span><span></span></button>
+        </nav>
+      </div>
+    </header>
+
+    <section class="hero" id="overview">
+      <div class="shell hero__grid">
+        <div class="hero__copy">
+          <p class="overline">EMBEDDED SCRIPTING RUNTIME · GO</p>
+          <h1>Put changeable logic<br>in the right place.</h1>
+          <p class="hero__lead">SPL gives your application a controlled, programmable layer for rules, workflows, and automation—without turning your host system into a black box.</p>
+          <div class="hero__actions">
+            <button class="button button--accent" data-open-playground>Open playground <span>→</span></button>
+            <a class="text-link" href="#developers">Read the quick start <span>↓</span></a>
+          </div>
+          <dl class="hero__meta">
+            <div><dt>Runtime</dt><dd>Embedded or isolated</dd></div>
+            <div><dt>Policy</dt><dd>Capability based</dd></div>
+            <div><dt>Tooling</dt><dd>CLI · REPL · LSP · IDE</dd></div>
+          </dl>
+        </div>
+
+        <div class="demo" aria-label="Interactive SPL example">
+          <div class="demo__header">
+            <div class="demo__title"><span class="demo__logo">S</span><strong>SPL workspace</strong></div>
+            <span class="runtime-state"><i></i>runtime ready</span>
+          </div>
+          <div class="demo__tabs" role="tablist" aria-label="Code examples">
+            <button class="is-active" role="tab" aria-selected="true" data-demo="rules">Route a decision</button>
+            <button role="tab" aria-selected="false" data-demo="data">Transform data</button>
+            <button role="tab" aria-selected="false" data-demo="automation">Schedule work</button>
+          </div>
+          <div class="demo__editor">
+            <div class="demo__filebar"><span id="demoFilename">routing.spl</span><button id="demoRun">Run <kbd>⌘↵</kbd></button></div>
+            <pre id="demoCode" class="demo__code"></pre>
+          </div>
+          <div class="demo__console">
+            <div><span>RESULT</span><b id="demoStatus">READY</b></div>
+            <code id="demoResult">Approved({ id: "ORD-1042", queue: "standard" })</code>
+          </div>
+        </div>
+      </div>
+      <div class="shell hero__foot">
+        <span>Open source</span><span>Written in Go</span><span>Host-controlled execution</span><span>Production profiles and limits</span>
+      </div>
+    </section>
+
+    <section class="statement">
+      <div class="shell statement__grid">
+        <p class="section-index">01 / PRODUCT</p>
+        <div>
+          <h2>Your platform stays stable.<br>Your logic gets room to move.</h2>
+          <p>Keep core infrastructure in Go. Move customer-specific behavior, operational workflows, and frequently changing rules into an execution layer designed for that responsibility.</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="product" id="product">
+      <div class="shell product__layout">
+        <div class="product__nav" role="tablist" aria-label="Product capabilities">
+          <button class="is-active" data-product-tab="embed" role="tab" aria-selected="true"><span>01</span>Embed</button>
+          <button data-product-tab="author" role="tab" aria-selected="false"><span>02</span>Author</button>
+          <button data-product-tab="operate" role="tab" aria-selected="false"><span>03</span>Operate</button>
+          <button data-product-tab="extend" role="tab" aria-selected="false"><span>04</span>Extend</button>
+        </div>
+        <div class="product__panels">
+          <article class="product-panel is-active" data-product-panel="embed">
+            <div class="product-panel__copy">
+              <p class="eyebrow">EMBED</p>
+              <h3>A small API between your product and its scripts.</h3>
+              <p>Execute source directly, pass application data into the global scope, set per-run context and limits, or keep a reusable runtime for repeated work.</p>
+              <ul><li>One-shot and reusable runtime APIs</li><li>Context cancellation and typed errors</li><li>Sessions, checkpoints, and replay</li></ul>
+            </div>
+            <div class="api-surface">
+              <div class="api-surface__top"><span>host.go</span><b>GO</b></div>
+              <pre><code><em>result</em>, <em>err</em> := interpreter.ExecWithOptions(
+    source,
+    <span>map[string]any</span>{<q>"order"</q>: order},
+    interpreter.ExecOptions{
+        Profile: <q>"untrusted"</q>,
+        Context: ctx,
+        MaxSteps: <strong>500_000</strong>,
+    },
+)</code></pre>
+              <div class="api-surface__return"><span>RETURN</span><code>object.Object, error</code></div>
+            </div>
+          </article>
+          <article class="product-panel" data-product-panel="author">
+            <div class="product-panel__copy">
+              <p class="eyebrow">AUTHOR</p>
+              <h3>Readable scripts with enough language to scale.</h3>
+              <p>Start with familiar C-family syntax and grow into structured modules, types, matching, concurrency, and reusable abstractions when the work demands it.</p>
+              <ul><li>Functions, closures, classes, and interfaces</li><li>ADTs, pattern matching, macros, and modules</li><li>Async/await, channels, generators, and streams</li></ul>
+            </div>
+            <div class="language-map">
+              <div><span>Core</span><b>functions · collections · errors</b></div>
+              <div><span>Structure</span><b>modules · classes · interfaces</b></div>
+              <div><span>Modeling</span><b>types · match · destructuring</b></div>
+              <div><span>Concurrency</span><b>async · channels · streams</b></div>
+            </div>
+          </article>
+          <article class="product-panel" data-product-panel="operate">
+            <div class="product-panel__copy">
+              <p class="eyebrow">OPERATE</p>
+              <h3>Execution you can observe, stop, and explain.</h3>
+              <p>Bound every run, classify failures, surface diagnostics, and connect lifecycle hooks to the logging and metrics systems your team already operates.</p>
+              <ul><li>Step, depth, heap, output, and time limits</li><li>Policy, limit, timeout, and cancellation errors</li><li>Execution and policy-denial observability hooks</li></ul>
+            </div>
+            <div class="run-log">
+              <div class="run-log__head"><span>execution / req_8f31</span><b>COMPLETED</b></div>
+              <dl><div><dt>profile</dt><dd>readonly</dd></div><div><dt>source</dt><dd>rules/price.spl</dd></div><div><dt>result</dt><dd>success</dd></div><div><dt>limits</dt><dd>within policy</dd></div></dl>
+            </div>
+          </article>
+          <article class="product-panel" data-product-panel="extend">
+            <div class="product-panel__copy">
+              <p class="eyebrow">EXTEND</p>
+              <h3>Expose your domain, not your entire process.</h3>
+              <p>Register native built-ins and standard modules that match your product model. Scripts see the interface you design—not arbitrary host internals.</p>
+              <ul><li>Runtime plugins and custom built-ins</li><li>Application-specific standard modules</li><li>Broad built-in data and integration library</li></ul>
+            </div>
+            <div class="module-list">
+              <div><code>std/order</code><span>application module</span><b>12 exports</b></div>
+              <div><code>std/customer</code><span>application module</span><b>8 exports</b></div>
+              <div><code>std/audit</code><span>application module</span><b>5 exports</b></div>
+            </div>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section class="workloads">
+      <div class="shell">
+        <div class="workloads__header"><p class="section-index">02 / WORKLOADS</p><h2>One runtime. Four practical jobs.</h2></div>
+        <div class="workloads__list">
+          <article><span>01</span><h3>Decision logic</h3><p>Eligibility, routing, pricing, validation, and approval rules.</p><code>input → match → decision</code></article>
+          <article><span>02</span><h3>Data operations</h3><p>Parse, validate, transform, enrich, query, and export structured data.</p><code>JSON · CSV · YAML · DB</code></article>
+          <article><span>03</span><h3>Workflow automation</h3><p>Coordinate APIs, files, schedules, documents, and operational tasks.</p><code>HTTP · files · scheduler</code></article>
+          <article><span>04</span><h3>Product scripting</h3><p>Offer customer-defined behavior inside boundaries your application owns.</p><code>plugin API → safe result</code></article>
+        </div>
+      </div>
+    </section>
+
+    <section class="security" id="security">
+      <div class="shell">
+        <div class="security__header">
+          <div><p class="section-index">03 / SECURITY</p><h2>Authority is explicit.</h2></div>
+          <p>Profiles establish the starting policy. Your application controls resource limits and which host capabilities are available to each workload.</p>
+        </div>
+        <div class="security-console">
+          <div class="security-console__profiles" role="tablist" aria-label="Execution profiles">
+            <p>COMPARE PROFILES</p>
+            <button class="is-active" data-profile="untrusted" role="tab" aria-selected="true">untrusted</button>
+            <button data-profile="readonly" role="tab" aria-selected="false">readonly</button>
+            <button data-profile="automation" role="tab" aria-selected="false">automation</button>
+            <button data-profile="server" role="tab" aria-selected="false">server</button>
+          </div>
+          <div class="security-console__main">
+            <div class="profile-summary"><div><span>ACTIVE PROFILE</span><strong id="profileName">untrusted</strong></div><p id="profileDescription">Strict host protection with worker-process execution and a read-only filesystem rooted at the script directory.</p></div>
+            <div class="capability-table">
+              <div class="capability-table__head"><span>CAPABILITY</span><span>ACCESS</span><span>BOUNDARY</span></div>
+              <div data-capability="filesystem"><b>Filesystem</b><span class="access access--limited">LIMITED</span><code>script directory · read</code></div>
+              <div data-capability="network"><b>Network</b><span class="access access--denied">DENIED</span><code>—</code></div>
+              <div data-capability="database"><b>Database</b><span class="access access--denied">DENIED</span><code>—</code></div>
+              <div data-capability="process"><b>Process</b><span class="access access--denied">DENIED</span><code>—</code></div>
+              <div data-capability="server"><b>Server</b><span class="access access--denied">DENIED</span><code>—</code></div>
+            </div>
+            <div class="security-console__foot"><span><i></i> host protection enabled</span><span id="isolationText">isolated worker</span></div>
+          </div>
+        </div>
+        <div class="limits-row"><span>Also bounded by</span><code>MaxSteps</code><code>MaxDepth</code><code>MaxHeapMB</code><code>Timeout</code><code>MaxOutputBytes</code><code>Context</code></div>
+      </div>
+    </section>
+
+    <section class="developers" id="developers">
+      <div class="shell">
+        <div class="developers__header">
+          <div><p class="section-index">04 / DEVELOPERS</p><h2>Start with one call.</h2></div>
+          <p>Use the simple API first. Adopt reusable runtimes, sessions, custom modules, and observability only when your integration needs them.</p>
+        </div>
+        <div class="quickstart">
+          <div class="quickstart__nav" role="tablist" aria-label="Quick start examples">
+            <button class="is-active" data-code-tab="install" role="tab" aria-selected="true">01&nbsp;&nbsp;Build</button>
+            <button data-code-tab="execute" role="tab" aria-selected="false">02&nbsp;&nbsp;Execute</button>
+            <button data-code-tab="serve" role="tab" aria-selected="false">03&nbsp;&nbsp;Playground</button>
+          </div>
+          <div class="quickstart__code">
+            <div class="quickstart__bar"><span id="quickstartLabel">terminal</span><button id="quickstartCopy" data-copy-command="go -C cmd/interpreter build -o interpreter .">Copy</button></div>
+            <pre id="quickstartCode"><code><i>$</i> go -C cmd/interpreter build -o interpreter .</code></pre>
+            <div class="quickstart__note"><span id="quickstartStep">Build the full CLI</span><small id="quickstartNote">The full cmd/interpreter build includes the complete optional plugin surface.</small></div>
+          </div>
+        </div>
+        <div class="toolchain">
+          <span>ONE TOOLCHAIN</span>
+          <div><b>interpreter</b><small>REPL and script runner</small></div>
+          <div><b>spltool</b><small>format, check, test, package</small></div>
+          <div><b>LSP</b><small>editor diagnostics</small></div>
+          <div><b>Playground</b><small>scratch and projects</small></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="final-cta">
+      <div class="shell final-cta__inner">
+        <div><p>RUN THE REAL INTERPRETER</p><h2>Write a script.<br>See what SPL can do.</h2></div>
+        <button class="button button--accent button--large" data-open-playground>Open playground <span>→</span></button>
+      </div>
+    </section>
+
+    <footer class="footer">
+      <div class="shell footer__top">
+        <div><a class="brand brand--footer" href="#overview"><span class="brand__mark">S</span><span>SPL</span></a><p>A practical scripting language for Go applications.</p></div>
+        <nav><div><b>Product</b><a href="#product">Runtime</a><a href="#security">Security</a><button data-open-playground>Playground</button></div><div><b>Developers</b><a href="#developers">Quick start</a><a href="#developers">Toolchain</a><a href="#overview">Overview</a></div></nav>
+      </div>
+      <div class="shell footer__bottom"><span>Open source · Written in Go</span><a href="#overview">Back to top ↑</a></div>
+    </footer>
+  </main>
+
+  <div class="app hidden" id="playgroundApp">
     <header class="topbar">
       <div class="topbar__brand">
+        <button class="btn btn--ghost btn--sm playground-back" id="playgroundBack" title="Back to SPL home" aria-label="Back to SPL home">←</button>
         <span class="mark">SPL Playground</span>
         <span class="tagline">write, run, and ship SPL code</span>
       </div>
@@ -156,5 +388,6 @@
 
   <script src="/app.js"></script>
   <script src="/ide.js"></script>
+  <script src="/landing.js"></script>
 </body>
 </html>

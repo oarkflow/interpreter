@@ -161,8 +161,188 @@ func bindIntegerTimeMethod(ts *object.Integer, methodName, builtinName string) o
 // Hash methods
 // ---------------------------------------------------------------------------
 
+func collectionStringFields(args []object.Object, method string, min int) ([]string, object.Object) {
+	if len(args) < min {
+		return nil, object.NewError("%s expects at least %d field argument(s), got %d", method, min, len(args))
+	}
+	fields := make([]string, len(args))
+	for i, arg := range args {
+		field, ok := arg.(*object.String)
+		if !ok {
+			return nil, object.NewError("%s field %d must be STRING, got %s", method, i+1, arg.Type())
+		}
+		if strings.TrimSpace(field.Value) == "" {
+			return nil, object.NewError("%s fields cannot be empty", method)
+		}
+		fields[i] = field.Value
+	}
+	return fields, nil
+}
+
+func collectionHashGetPath(hash *object.Hash, path string) (object.Object, bool) {
+	var current object.Object = hash
+	for _, segment := range strings.Split(path, ".") {
+		nextHash, ok := current.(*object.Hash)
+		if !ok {
+			return nil, false
+		}
+		pair, ok := nextHash.Pairs[(&object.String{Value: segment}).HashKey()]
+		if !ok {
+			return nil, false
+		}
+		current = pair.Value
+	}
+	return current, true
+}
+
+func collectionHashSetString(hash *object.Hash, key string, value object.Object) {
+	keyObject := &object.String{Value: key}
+	hash.Pairs[keyObject.HashKey()] = object.HashPair{Key: keyObject, Value: value}
+}
+
+func collectionHashSetPath(hash *object.Hash, path []string, value object.Object) {
+	if len(path) == 1 {
+		collectionHashSetString(hash, path[0], value)
+		return
+	}
+	keyObject := &object.String{Value: path[0]}
+	hashed := keyObject.HashKey()
+	child := &object.Hash{Pairs: make(map[object.HashKey]object.HashPair)}
+	if pair, ok := hash.Pairs[hashed]; ok {
+		if existing, ok := pair.Value.(*object.Hash); ok {
+			child = existing
+		}
+	}
+	collectionHashSetPath(child, path[1:], value)
+	hash.Pairs[hashed] = object.HashPair{Key: keyObject, Value: child}
+}
+
+func collectionHashOnly(hash *object.Hash, fields []string) *object.Hash {
+	out := &object.Hash{Pairs: make(map[object.HashKey]object.HashPair)}
+	for _, field := range fields {
+		if value, ok := collectionHashGetPath(hash, field); ok {
+			collectionHashSetPath(out, strings.Split(field, "."), value)
+		}
+	}
+	return out
+}
+
+func collectionHashClone(hash *object.Hash) *object.Hash {
+	pairs := make(map[object.HashKey]object.HashPair, len(hash.Pairs))
+	for key, pair := range hash.Pairs {
+		pairs[key] = pair
+	}
+	return &object.Hash{Pairs: pairs}
+}
+
+func collectionHashExceptPath(hash *object.Hash, path []string) *object.Hash {
+	out := collectionHashClone(hash)
+	key := &object.String{Value: path[0]}
+	hashed := key.HashKey()
+	if len(path) == 1 {
+		delete(out.Pairs, hashed)
+		return out
+	}
+	pair, ok := out.Pairs[hashed]
+	if !ok {
+		return out
+	}
+	child, ok := pair.Value.(*object.Hash)
+	if !ok {
+		return out
+	}
+	pair.Value = collectionHashExceptPath(child, path[1:])
+	out.Pairs[hashed] = pair
+	return out
+}
+
+func collectionHashExcept(hash *object.Hash, fields []string) *object.Hash {
+	out := collectionHashClone(hash)
+	for _, field := range fields {
+		out = collectionHashExceptPath(out, strings.Split(field, "."))
+	}
+	return out
+}
+
+func collectionIdentity(value object.Object) string {
+	if value == nil {
+		return "NULL:null"
+	}
+	return value.Type().String() + ":" + value.Inspect()
+}
+
+func collectionLess(left, right object.Object) bool {
+	switch l := left.(type) {
+	case *object.Integer:
+		switch r := right.(type) {
+		case *object.Integer:
+			return l.Value < r.Value
+		case *object.Float:
+			return float64(l.Value) < r.Value
+		}
+	case *object.Float:
+		switch r := right.(type) {
+		case *object.Integer:
+			return l.Value < float64(r.Value)
+		case *object.Float:
+			return l.Value < r.Value
+		}
+	case *object.String:
+		if r, ok := right.(*object.String); ok {
+			return l.Value < r.Value
+		}
+	}
+	return left.Inspect() < right.Inspect()
+}
+
 func getHashMethod(hash *object.Hash, name string) object.Object {
 	switch name {
+	case "only", "pick":
+		return &object.Builtin{Fn: func(args ...object.Object) object.Object {
+			fields, errObj := collectionStringFields(args, name, 1)
+			if errObj != nil {
+				return errObj
+			}
+			return collectionHashOnly(hash, fields)
+		}}
+	case "except", "omit":
+		return &object.Builtin{Fn: func(args ...object.Object) object.Object {
+			fields, errObj := collectionStringFields(args, name, 1)
+			if errObj != nil {
+				return errObj
+			}
+			return collectionHashExcept(hash, fields)
+		}}
+	case "has":
+		return &object.Builtin{Fn: func(args ...object.Object) object.Object {
+			fields, errObj := collectionStringFields(args, name, 1)
+			if errObj != nil {
+				return errObj
+			}
+			for _, field := range fields {
+				if _, ok := collectionHashGetPath(hash, field); !ok {
+					return object.FALSE
+				}
+			}
+			return object.TRUE
+		}}
+	case "get":
+		return &object.Builtin{Fn: func(args ...object.Object) object.Object {
+			if len(args) < 1 || len(args) > 2 {
+				return object.NewError("get expects 1-2 arguments (field, optional fallback)")
+			}
+			fields, errObj := collectionStringFields(args[:1], name, 1)
+			if errObj != nil {
+				return errObj
+			}
+			if value, ok := collectionHashGetPath(hash, fields[0]); ok {
+				return value
+			}
+			if len(args) == 2 {
+				return args[1]
+			}
+			return object.NULL
+		}}
 	case "keys":
 		return &object.Builtin{Fn: func(args ...object.Object) object.Object {
 			keys := make([]object.Object, 0, len(hash.Pairs))
@@ -376,6 +556,368 @@ func getFloatMethod(num *object.Float, name string) object.Object {
 
 func getArrayMethod(arr *object.Array, name string) object.Object {
 	switch name {
+	case "first":
+		return methodNoArg(arr, name, func() object.Object {
+			if len(arr.Elements) == 0 {
+				return object.NULL
+			}
+			return arr.Elements[0]
+		})
+	case "last":
+		return methodNoArg(arr, name, func() object.Object {
+			if len(arr.Elements) == 0 {
+				return object.NULL
+			}
+			return arr.Elements[len(arr.Elements)-1]
+		})
+	case "pluck":
+		return &object.Builtin{Fn: func(args ...object.Object) object.Object {
+			if len(args) == 0 {
+				return &object.Array{Elements: append([]object.Object(nil), arr.Elements...)}
+			}
+			fields, errObj := collectionStringFields(args, name, 1)
+			if errObj != nil {
+				return errObj
+			}
+			out := make([]object.Object, 0, len(arr.Elements))
+			for _, element := range arr.Elements {
+				hash, ok := element.(*object.Hash)
+				if !ok {
+					out = append(out, &object.Hash{Pairs: make(map[object.HashKey]object.HashPair)})
+					continue
+				}
+				out = append(out, collectionHashOnly(hash, fields))
+			}
+			return &object.Array{Elements: out}
+		}}
+	case "column", "values_of", "valuesOf":
+		return &object.Builtin{Fn: func(args ...object.Object) object.Object {
+			fields, errObj := collectionStringFields(args, name, 1)
+			if errObj != nil || len(fields) != 1 {
+				if errObj != nil {
+					return errObj
+				}
+				return object.NewError("%s expects exactly 1 field", name)
+			}
+			out := make([]object.Object, 0, len(arr.Elements))
+			for _, element := range arr.Elements {
+				hash, ok := element.(*object.Hash)
+				if !ok {
+					out = append(out, object.NULL)
+					continue
+				}
+				value, exists := collectionHashGetPath(hash, fields[0])
+				if !exists {
+					value = object.NULL
+				}
+				out = append(out, value)
+			}
+			return &object.Array{Elements: out}
+		}}
+	case "only", "select":
+		return &object.Builtin{Fn: func(args ...object.Object) object.Object {
+			fields, errObj := collectionStringFields(args, name, 1)
+			if errObj != nil {
+				return errObj
+			}
+			out := make([]object.Object, 0, len(arr.Elements))
+			for _, element := range arr.Elements {
+				if hash, ok := element.(*object.Hash); ok {
+					out = append(out, collectionHashOnly(hash, fields))
+				}
+			}
+			return &object.Array{Elements: out}
+		}}
+	case "except", "omit":
+		return &object.Builtin{Fn: func(args ...object.Object) object.Object {
+			fields, errObj := collectionStringFields(args, name, 1)
+			if errObj != nil {
+				return errObj
+			}
+			out := make([]object.Object, 0, len(arr.Elements))
+			for _, element := range arr.Elements {
+				if hash, ok := element.(*object.Hash); ok {
+					out = append(out, collectionHashExcept(hash, fields))
+				} else {
+					out = append(out, element)
+				}
+			}
+			return &object.Array{Elements: out}
+		}}
+	case "where", "first_where", "firstWhere":
+		return &object.Builtin{Fn: func(args ...object.Object) object.Object {
+			if len(args) != 2 {
+				return object.NewError("%s expects 2 arguments (field, value)", name)
+			}
+			fields, errObj := collectionStringFields(args[:1], name, 1)
+			if errObj != nil {
+				return errObj
+			}
+			firstMatch := name == "first_where" || name == "firstWhere"
+			out := make([]object.Object, 0)
+			for _, element := range arr.Elements {
+				hash, ok := element.(*object.Hash)
+				if !ok {
+					continue
+				}
+				value, exists := collectionHashGetPath(hash, fields[0])
+				if exists && objectsEqual(value, args[1]) {
+					if firstMatch {
+						return element
+					}
+					out = append(out, element)
+				}
+			}
+			if firstMatch {
+				return object.NULL
+			}
+			return &object.Array{Elements: out}
+		}}
+	case "where_in", "whereIn":
+		return &object.Builtin{Fn: func(args ...object.Object) object.Object {
+			if len(args) < 2 {
+				return object.NewError("where_in expects a field and one or more values")
+			}
+			fields, errObj := collectionStringFields(args[:1], name, 1)
+			if errObj != nil {
+				return errObj
+			}
+			values := args[1:]
+			if valuesArray, ok := args[1].(*object.Array); ok && len(args) == 2 {
+				values = valuesArray.Elements
+			}
+			out := make([]object.Object, 0)
+			for _, element := range arr.Elements {
+				hash, ok := element.(*object.Hash)
+				if !ok {
+					continue
+				}
+				value, exists := collectionHashGetPath(hash, fields[0])
+				if !exists {
+					continue
+				}
+				for _, candidate := range values {
+					if objectsEqual(value, candidate) {
+						out = append(out, element)
+						break
+					}
+				}
+			}
+			return &object.Array{Elements: out}
+		}}
+	case "group_by", "groupBy", "key_by", "keyBy":
+		return &object.Builtin{Fn: func(args ...object.Object) object.Object {
+			fields, errObj := collectionStringFields(args, name, 1)
+			if errObj != nil || len(fields) != 1 {
+				if errObj != nil {
+					return errObj
+				}
+				return object.NewError("%s expects exactly 1 field", name)
+			}
+			keyBy := name == "key_by" || name == "keyBy"
+			out := &object.Hash{Pairs: make(map[object.HashKey]object.HashPair)}
+			for _, element := range arr.Elements {
+				hash, ok := element.(*object.Hash)
+				if !ok {
+					continue
+				}
+				value, exists := collectionHashGetPath(hash, fields[0])
+				if !exists {
+					continue
+				}
+				hashable, ok := value.(object.Hashable)
+				if !ok {
+					return object.NewError("%s field %q must contain hashable values, got %s", name, fields[0], value.Type())
+				}
+				key := hashable.HashKey()
+				if keyBy {
+					out.Pairs[key] = object.HashPair{Key: value, Value: element}
+					continue
+				}
+				group := &object.Array{Elements: []object.Object{}}
+				if existing, ok := out.Pairs[key]; ok {
+					group = existing.Value.(*object.Array)
+				}
+				group.Elements = append(group.Elements, element)
+				out.Pairs[key] = object.HashPair{Key: value, Value: group}
+			}
+			return out
+		}}
+	case "sort_by", "sortBy":
+		return &object.Builtin{Fn: func(args ...object.Object) object.Object {
+			if len(args) < 1 || len(args) > 2 {
+				return object.NewError("sort_by expects 1-2 arguments (field, optional direction)")
+			}
+			fields, errObj := collectionStringFields(args[:1], name, 1)
+			if errObj != nil {
+				return errObj
+			}
+			descending := false
+			if len(args) == 2 {
+				direction, ok := args[1].(*object.String)
+				if !ok || (direction.Value != "asc" && direction.Value != "desc") {
+					return object.NewError("sort_by direction must be \"asc\" or \"desc\"")
+				}
+				descending = direction.Value == "desc"
+			}
+			out := append([]object.Object(nil), arr.Elements...)
+			sort.SliceStable(out, func(i, j int) bool {
+				leftHash, leftOK := out[i].(*object.Hash)
+				rightHash, rightOK := out[j].(*object.Hash)
+				if !leftOK || !rightOK {
+					return false
+				}
+				left, leftExists := collectionHashGetPath(leftHash, fields[0])
+				right, rightExists := collectionHashGetPath(rightHash, fields[0])
+				if !leftExists || !rightExists {
+					return leftExists && !rightExists
+				}
+				if descending {
+					return collectionLess(right, left)
+				}
+				return collectionLess(left, right)
+			})
+			return &object.Array{Elements: out}
+		}}
+	case "unique_by", "uniqueBy":
+		return &object.Builtin{Fn: func(args ...object.Object) object.Object {
+			fields, errObj := collectionStringFields(args, name, 1)
+			if errObj != nil || len(fields) != 1 {
+				if errObj != nil {
+					return errObj
+				}
+				return object.NewError("unique_by expects exactly 1 field")
+			}
+			seen := make(map[string]bool)
+			out := make([]object.Object, 0, len(arr.Elements))
+			for _, element := range arr.Elements {
+				hash, ok := element.(*object.Hash)
+				if !ok {
+					continue
+				}
+				value, exists := collectionHashGetPath(hash, fields[0])
+				if !exists {
+					value = object.NULL
+				}
+				identity := collectionIdentity(value)
+				if !seen[identity] {
+					seen[identity] = true
+					out = append(out, element)
+				}
+			}
+			return &object.Array{Elements: out}
+		}}
+	case "compact":
+		return methodNoArg(arr, name, func() object.Object {
+			out := make([]object.Object, 0, len(arr.Elements))
+			for _, element := range arr.Elements {
+				if element != nil && element != object.NULL {
+					out = append(out, element)
+				}
+			}
+			return &object.Array{Elements: out}
+		})
+	case "take", "drop":
+		return &object.Builtin{Fn: func(args ...object.Object) object.Object {
+			if len(args) != 1 {
+				return object.NewError("%s expects exactly 1 integer argument", name)
+			}
+			count, ok := args[0].(*object.Integer)
+			if !ok {
+				return object.NewError("%s count must be INTEGER, got %s", name, args[0].Type())
+			}
+			n := int(count.Value)
+			length := len(arr.Elements)
+			if n > length {
+				n = length
+			}
+			if n < -length {
+				n = -length
+			}
+			start, end := 0, length
+			if name == "take" {
+				if n >= 0 {
+					end = n
+				} else {
+					start = length + n
+				}
+			} else if n >= 0 {
+				start = n
+			} else {
+				end = length + n
+			}
+			return &object.Array{Elements: append([]object.Object(nil), arr.Elements[start:end]...)}
+		}}
+	case "chunk":
+		return &object.Builtin{Fn: func(args ...object.Object) object.Object {
+			if len(args) != 1 {
+				return object.NewError("chunk expects exactly 1 integer argument")
+			}
+			size, ok := args[0].(*object.Integer)
+			if !ok || size.Value <= 0 {
+				return object.NewError("chunk size must be a positive INTEGER")
+			}
+			out := make([]object.Object, 0, (len(arr.Elements)+int(size.Value)-1)/int(size.Value))
+			for start := 0; start < len(arr.Elements); start += int(size.Value) {
+				end := start + int(size.Value)
+				if end > len(arr.Elements) {
+					end = len(arr.Elements)
+				}
+				out = append(out, &object.Array{Elements: append([]object.Object(nil), arr.Elements[start:end]...)})
+			}
+			return &object.Array{Elements: out}
+		}}
+	case "sum", "avg":
+		return &object.Builtin{Fn: func(args ...object.Object) object.Object {
+			if len(args) > 1 {
+				return object.NewError("%s expects zero arguments or one field", name)
+			}
+			field := ""
+			if len(args) == 1 {
+				fields, errObj := collectionStringFields(args, name, 1)
+				if errObj != nil {
+					return errObj
+				}
+				field = fields[0]
+			}
+			total := float64(0)
+			allIntegers := true
+			count := 0
+			for _, element := range arr.Elements {
+				value := element
+				if field != "" {
+					hash, ok := element.(*object.Hash)
+					if !ok {
+						return object.NewError("%s(%q) requires an array of HASH values", name, field)
+					}
+					var exists bool
+					value, exists = collectionHashGetPath(hash, field)
+					if !exists {
+						return object.NewError("%s field %q is missing", name, field)
+					}
+				}
+				switch number := value.(type) {
+				case *object.Integer:
+					total += float64(number.Value)
+				case *object.Float:
+					total += number.Value
+					allIntegers = false
+				default:
+					return object.NewError("%s expects numeric values, got %s", name, value.Type())
+				}
+				count++
+			}
+			if name == "avg" {
+				if count == 0 {
+					return object.NULL
+				}
+				return &object.Float{Value: total / float64(count)}
+			}
+			if allIntegers {
+				return &object.Integer{Value: int64(total)}
+			}
+			return &object.Float{Value: total}
+		}}
 	case "map":
 		return &object.Builtin{
 			Fn: func(args ...object.Object) object.Object {

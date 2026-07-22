@@ -1924,10 +1924,21 @@ func (p *Parser) parseHashLiteral() ast.Expression {
 		} else {
 			key := p.parseExpression(LOWEST)
 
-			// Property shorthand: { x } is sugar for { "x": x }
-			if ident, ok := key.(*ast.Identifier); ok && !p.peekTokenIs(token.COLON) {
+			if ident, ok := key.(*ast.Identifier); ok {
+				// Bare property names are string keys, matching object-literal
+				// syntax: { id: 1 } is equivalent to { "id": 1 }.
+				// Keep { id } as property shorthand for { "id": id }.
 				strKey := &ast.StringLiteral{Value: ident.Name}
-				hash.Entries = append(hash.Entries, ast.HashEntry{Key: strKey, Value: ident})
+				if !p.peekTokenIs(token.COLON) {
+					hash.Entries = append(hash.Entries, ast.HashEntry{Key: strKey, Value: ident})
+				} else {
+					if !p.expectPeek(token.COLON) {
+						return nil
+					}
+					p.nextToken()
+					value := p.parseExpression(LOWEST)
+					hash.Entries = append(hash.Entries, ast.HashEntry{Key: strKey, Value: value})
+				}
 			} else {
 				if !p.expectPeek(token.COLON) {
 					return nil

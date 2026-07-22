@@ -729,7 +729,7 @@ let b = [0, ...[1, 2, 3], 4];        // array spread
 hash["name"]; hash.name; person?.address?.city; // access forms
 ```
 
-**Array methods** (dot syntax): `.length`, `.map(fn)`, `.filter(fn)`,
+**Array methods** (dot syntax): `.length`, `.first()`, `.last()`, `.map(fn)`, `.filter(fn)`,
 `.forEach(fn)`, `.find(fn)`, `.every(fn)`, `.some(fn)`, `.reduce(fn[,
 init])`, `.indexOf(x)`, `.includes(x)`, `.join([sep])`, `.flat()`,
 `.flatMap(fn)`, `.reverse()`, `.slice(start[, end])`, `.sort()` (all of
@@ -747,7 +747,29 @@ let arr2 = [1, 2, 3];
 arr2.push(4);                       // mutates in place
 ```
 
-**Hash methods**: `.keys()`, `.values()`, `.entries()`, `.length`.
+Arrays of hashes also expose chainable, non-mutating collection operations:
+
+```spl
+let large = orders.filter(o => o.total >= 1000);
+print large.pluck("id");             // [{id:"B-42"}, {id:"C-08"}]
+print large.pluck("id", "total");   // projected hashes for many fields
+print large.column("id");            // ["B-42", "C-08"]
+print large.except("id");            // new hashes without id
+print large.pluck();                  // shallow copy of the collection
+```
+
+The full set includes `.only(fields...)`, `.except(fields...)`,
+`.where(field, value)`, `.where_in(field, values)`,
+`.first_where(field, value)`, `.group_by(field)`, `.key_by(field)`,
+`.sort_by(field[, "asc"|"desc"])`, `.unique_by(field)`, `.compact()`,
+`.take(n)`, `.drop(n)`, `.chunk(size)`, `.sum([field])`, and `.avg([field])`.
+Field-based methods accept dotted paths such as `"customer.region"`.
+`pluck` preserves object shape; use `.column(field)` or `.values_of(field)`
+when a flat array of scalar values is desired.
+
+**Hash methods**: `.keys()`, `.values()`, `.entries()`, `.length`,
+`.only(fields...)`, `.except(fields...)`, `.has(fields...)`, and
+`.get(field[, fallback])` (with `pick`/`omit` aliases).
 
 A large complementary set of **free** collection functions (`first`,
 `last`, `sum`, `avg`, `group_by`, `merge`, `has_key`, `get`, `zip`,
