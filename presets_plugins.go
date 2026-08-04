@@ -154,7 +154,7 @@ func LookupStdModule(name string) (map[string]Object, bool) {
 
 func optionalBuiltinModule(name string) bool {
 	switch name {
-	case "database", "images", "integrations", "tools/files", "tools/archive", "tools/images", "tools/office", "tools/secrets", "tools/media", "tools/system", "tools/network", "cryptoextra", "securetoken", "yaml", "config/yaml", "xql", "naturaldate", "wuid", "money", "phone", "ip", "shamir", "metadata", "pdf", "rules", "secretr", "server", "tcpguard", "emailvalidator":
+	case "database", "images", "integrations", "tools/files", "tools/archive", "tools/images", "tools/office", "tools/secrets", "tools/media", "tools/system", "tools/network", "cryptoextra", "securetoken", "yaml", "config/yaml", "xql", "lua", "naturaldate", "wuid", "money", "phone", "ip", "shamir", "metadata", "pdf", "rules", "secretr", "server", "tcpguard", "emailvalidator":
 		return true
 	default:
 		return false
@@ -217,6 +217,7 @@ func init() {
 	_ = RegisterStdBuiltinModule("tools/system", "system_info")
 	_ = RegisterStdBuiltinModule("tools/network", "dns_lookup", "tcp_check", "http_probe")
 	_ = RegisterStdBuiltinModuleWithPrefix("xql", "xql_", "xql_run", "xql_connect", "xql_list_integrations")
+	_ = RegisterStdBuiltinModuleWithPrefix("lua", "lua_", "lua_run", "lua_eval", "lua_load", "lua_version")
 	_ = RegisterStdModule("native/os", builtinspkg.NativeOSModule())
 	_ = RegisterStdBuiltinModule("cryptoextra", "bcrypt_hash", "bcrypt_verify", "jwt_encode", "jwt_decode")
 	_ = RegisterStdBuiltinModuleWithPrefix("securetoken", "securetoken_", "securetoken_encrypt", "securetoken_decrypt")

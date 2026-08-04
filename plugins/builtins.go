@@ -7,6 +7,7 @@ import (
 	_ "github.com/oarkflow/interpreter/plugins/images"
 	_ "github.com/oarkflow/interpreter/plugins/integrations"
 	_ "github.com/oarkflow/interpreter/plugins/ip"
+	_ "github.com/oarkflow/interpreter/plugins/lua"
 	_ "github.com/oarkflow/interpreter/plugins/metadata"
 	_ "github.com/oarkflow/interpreter/plugins/money"
 	_ "github.com/oarkflow/interpreter/plugins/naturaldate"
