@@ -144,6 +144,10 @@ func (s *State) callLuaFast(root *Function, args []Value) (callResult, error) {
 			if err := s.swapTable(regs[a].value, regs[b].value, regs[c].value); err != nil {
 				return callResult{}, s.vmWrap(p, pc, err)
 			}
+		case opAddTable:
+			if err := s.addTableValue(&regs[a].value, regs[b].value, regs[c].value); err != nil {
+				return callResult{}, s.vmWrap(p, pc, err)
+			}
 		case opSetTableK:
 			target, key, value := regs[a].value, p.Constants[b], regs[c].value
 			if target.kind == TableKind && target.Table().meta == nil {

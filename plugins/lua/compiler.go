@@ -244,7 +244,7 @@ func markFastPrototypes(p *Prototype) bool {
 	}
 	for _, ins := range p.Code {
 		switch ins.op() {
-		case opMove, opLoadK, opLoadNil, opLoadBool, opGetUp, opSetUp, opGetGlobal, opSetGlobal, opGetTable, opGetTableK, opGetArrayI, opGetFieldK, opSetTable, opSetTableK, opSetArrayI, opSetFieldK, opSwapTable, opNewTable, opAdd, opAddK, opSub, opSubK, opMul, opMulK, opDiv, opDivK, opMod, opModK, opPow, opPowK, opNeg, opNot, opLen, opConcat, opEq, opEqK, opNEK, opLT, opLTK, opGTK, opLE, opLEK, opGEK, opJumpCompareK, opJump, opJumpFalse, opForPrep, opForLoop, opForLoopV, opClosure:
+		case opMove, opLoadK, opLoadNil, opLoadBool, opGetUp, opSetUp, opGetGlobal, opSetGlobal, opGetTable, opGetTableK, opGetArrayI, opGetFieldK, opSetTable, opSetTableK, opSetArrayI, opSetFieldK, opSwapTable, opAddTable, opNewTable, opAdd, opAddK, opSub, opSubK, opMul, opMulK, opDiv, opDivK, opMod, opModK, opPow, opPowK, opNeg, opNot, opLen, opConcat, opEq, opEqK, opNEK, opLT, opLTK, opGTK, opLE, opLEK, opGEK, opJumpCompareK, opJump, opJumpFalse, opForPrep, opForLoop, opForLoopV, opClosure:
 		case opCall:
 			if ins.c() == 255 {
 				ok = false
@@ -496,6 +496,10 @@ func (c *compiler) compileAssignment(n *assignStatement) error {
 		c.emit(abc(opSwapTable, uint8(table), uint8(first), uint8(second)), n.line)
 		return nil
 	}
+	if accumulator, table, key, ok := c.tableReductionRegisters(n); ok {
+		c.emit(abc(opAddTable, uint8(accumulator), uint8(table), uint8(key)), n.line)
+		return nil
+	}
 	if len(n.targets) == 1 && len(n.values) == 1 {
 		if name, ok := n.targets[0].(*nameExpression); ok {
 			variable := c.resolve(name.name)
@@ -536,6 +540,32 @@ func (c *compiler) compileAssignment(n *assignStatement) error {
 		}
 	}
 	return nil
+}
+
+func (c *compiler) tableReductionRegisters(n *assignStatement) (int, int, int, bool) {
+	if len(n.targets) != 1 || len(n.values) != 1 {
+		return 0, 0, 0, false
+	}
+	target, ok := n.targets[0].(*nameExpression)
+	value, okValue := n.values[0].(*binaryExpression)
+	if !ok || !okValue || value.operator != tPlus {
+		return 0, 0, 0, false
+	}
+	left, leftOK := value.left.(*nameExpression)
+	indexed, indexOK := value.right.(*indexExpression)
+	if !leftOK || !indexOK || left.name != target.name {
+		return 0, 0, 0, false
+	}
+	tableName, tableOK := indexed.table.(*nameExpression)
+	keyName, keyOK := indexed.key.(*nameExpression)
+	if !tableOK || !keyOK {
+		return 0, 0, 0, false
+	}
+	accumulator, table, key := c.resolve(target.name), c.resolve(tableName.name), c.resolve(keyName.name)
+	if accumulator.class != localVariable || table.class != localVariable || key.class != localVariable {
+		return 0, 0, 0, false
+	}
+	return accumulator.index, table.index, key.index, true
 }
 
 // tableSwapRegisters recognizes a[i],a[j] = a[j],a[i]. Restricting every

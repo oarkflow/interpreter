@@ -65,6 +65,7 @@ const (
 	opGetFieldK
 	opSetFieldK
 	opSwapTable
+	opAddTable
 )
 
 const (

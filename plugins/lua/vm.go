@@ -400,6 +400,10 @@ func (s *State) callLua(fn *Function, args []Value) (callResult, error) {
 			if err := s.swapTable(regs[a].value, regs[b].value, regs[c].value); err != nil {
 				return callResult{}, s.vmWrap(p, pc, err)
 			}
+		case opAddTable:
+			if err := s.addTableValue(&regs[a].value, regs[b].value, regs[c].value); err != nil {
+				return callResult{}, s.vmWrap(p, pc, err)
+			}
 		case opSetTableK:
 			t, key, value := regs[a].value, p.Constants[b], regs[c].value
 			if t.kind == TableKind && t.Table().meta == nil && key.kind == StringKind {
@@ -1055,6 +1059,34 @@ func (s *State) swapTable(target, first, second Value) error {
 		return err
 	}
 	return s.assignIndex(target, second, right, 0)
+}
+
+func (s *State) addTableValue(accumulator *Value, target, key Value) error {
+	if accumulator.kind == NumberKind && target.kind == TableKind && target.Table().meta == nil && key.kind == NumberKind {
+		if value, ok := target.Table().getDenseNumber(key.Number()); ok && value.kind == NumberKind {
+			*accumulator = Number(accumulator.Number() + value.Number())
+			return nil
+		}
+	}
+	value, err := s.index(target, key, 0)
+	if err != nil {
+		return err
+	}
+	x, xok := toNumber(*accumulator)
+	y, yok := toNumber(value)
+	if xok && yok {
+		*accumulator = Number(x + y)
+		return nil
+	}
+	result, ok, err := s.binaryMetamethod(*accumulator, value, "__add")
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return runtimeError("attempt to perform arithmetic on a %s value", badNumericType(*accumulator, value))
+	}
+	*accumulator = result
+	return nil
 }
 func (s *State) binaryMetamethod(a, b Value, name string) (Value, bool, error) {
 	method := metaField(a, name)
