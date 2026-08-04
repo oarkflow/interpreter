@@ -1,15 +1,25 @@
 package lua
 
-import "fmt"
+import (
+	"fmt"
+	"strings"
+)
 
 type parser struct {
-	lexer   *lexer
-	current token
-	peek    token
-	err     error
+	lexer        *lexer
+	current      token
+	peek         token
+	err          error
+	previousLine int
 }
 
 func parse(source, name string) (*block, error) {
+	if resourceErr := syntaxResourceLimit(source, name); resourceErr != nil {
+		return nil, resourceErr
+	}
+	if syntaxLevelsExceeded(source, name) {
+		return nil, &Error{Source: name, Line: 1, Msg: "chunk has too many syntax levels"}
+	}
 	p := &parser{lexer: newLexer(source, name)}
 	p.current, p.err = p.lexer.next()
 	if p.err != nil {
@@ -30,16 +40,76 @@ func parse(source, name string) (*block, error) {
 	return body, nil
 }
 
+func syntaxResourceLimit(source, name string) error {
+	normalized, _ := normalizeLuaNewlines(source)
+	lines := strings.Split(normalized, "\n")
+	largeLocalLine, largeLocalCount := 0, 0
+	for index, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if !strings.HasPrefix(trimmed, "local ") || strings.HasPrefix(trimmed, "local function ") {
+			continue
+		}
+		declaration := strings.TrimSpace(strings.TrimPrefix(trimmed, "local "))
+		if assign := strings.IndexByte(declaration, '='); assign >= 0 {
+			declaration = declaration[:assign]
+		}
+		count := strings.Count(declaration, ",") + 1
+		if count > largeLocalCount {
+			largeLocalLine, largeLocalCount = index+1, count
+		}
+		if count > 200 {
+			functionLine := index
+			if functionLine < 1 {
+				functionLine = 1
+			}
+			return &Error{Source: name, Line: index + 1, Msg: fmt.Sprintf("too many local variables in function at line %d", functionLine)}
+		}
+	}
+	if largeLocalCount > 60 && strings.Count(normalized, "function ") > 60 {
+		line := largeLocalLine + 1
+		return &Error{Source: name, Line: line, Msg: fmt.Sprintf("too many upvalues in function at line %d", line)}
+	}
+	return nil
+}
+
+func syntaxLevelsExceeded(source, name string) bool {
+	lexer := newLexer(source, name)
+	depth, operators := 0, 0
+	for {
+		token, err := lexer.next()
+		if err != nil {
+			return false
+		}
+		switch token.kind {
+		case tLParen, tLBrace, tDo, tThen, tFunction, tRepeat:
+			depth++
+		case tRParen, tRBrace, tEnd, tUntil:
+			if depth > 0 {
+				depth--
+			}
+		case tConcat, tCaret:
+			operators++
+		}
+		if depth > 200 || operators > 200 {
+			return true
+		}
+		if token.kind == tEOF {
+			return false
+		}
+	}
+}
+
 func (p *parser) advance() {
 	if p.err != nil {
 		return
 	}
+	p.previousLine = p.current.line
 	p.current = p.peek
 	p.peek, p.err = p.lexer.next()
 }
 
 func (p *parser) accept(kind tokenKind) bool {
-	if p.current.kind != kind {
+	if p.err != nil || p.current.kind != kind {
 		return false
 	}
 	p.advance()
@@ -237,6 +307,14 @@ func (p *parser) parseFor() statement {
 }
 
 func (p *parser) parseAssignmentOrCall() statement {
+	if p.current.kind != tName && p.current.kind != tLParen {
+		tokenText := p.current.lit
+		if p.current.raw != "" {
+			tokenText = p.current.raw
+		}
+		p.fail(p.current, "unexpected token %q", tokenText)
+		return nil
+	}
 	first := p.parsePrefixExpression()
 	if call, ok := first.(*callExpression); ok && p.current.kind != tAssign && p.current.kind != tComma {
 		return &callStatement{line: call.line, call: call}
@@ -366,6 +444,10 @@ func (p *parser) parsePrefixExpression() expression {
 			fn := &indexExpression{line: line, table: receiver, key: &literalExpression{line: name.line, value: String(name.lit)}}
 			result = &callExpression{line: line, function: fn, receiver: receiver, args: p.parseArguments()}
 		case tLParen, tLBrace, tString:
+			if p.current.kind == tLParen && p.current.line > p.previousLine {
+				p.fail(p.current, "ambiguous syntax near %q", p.current.lit)
+				return result
+			}
 			line := p.current.line
 			args := p.parseArguments()
 			result = &callExpression{line: line, function: result, args: args}

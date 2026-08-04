@@ -59,7 +59,7 @@ func (l *lexer) next() (token, error) {
 	if c == '[' {
 		if level, content, ok, err := l.scanLongBracket(l.pos); ok || err != nil {
 			_ = level
-			return token{kind: tString, lit: content, line: line}, err
+			return token{kind: tString, lit: content, raw: l.source[start:l.pos], line: line}, err
 		}
 	}
 	l.pos++
@@ -124,7 +124,7 @@ func (l *lexer) next() (token, error) {
 		}
 		return token{kind: tDot, lit: ".", line: line}, nil
 	}
-	return token{}, &Error{Source: l.name, Line: line, Msg: "unexpected character " + strconv.QuoteRune(rune(c))}
+	return token{}, &Error{Source: l.name, Line: line, Msg: "unexpected symbol near '" + string([]byte{c}) + "'"}
 }
 
 func (l *lexer) skipSpaceAndComments() error {
@@ -209,6 +209,7 @@ func (l *lexer) scanNumber() (token, error) {
 }
 
 func (l *lexer) scanQuoted(quote byte) (token, error) {
+	start := l.pos
 	line := l.line
 	l.pos++
 	var out strings.Builder
@@ -216,7 +217,7 @@ func (l *lexer) scanQuoted(quote byte) (token, error) {
 		c := l.source[l.pos]
 		l.pos++
 		if c == quote {
-			return token{kind: tString, lit: out.String(), line: line}, nil
+			return token{kind: tString, lit: out.String(), raw: l.source[start:l.pos], line: line}, nil
 		}
 		if c == '\n' || c == '\r' {
 			return token{}, &Error{Source: l.name, Line: l.line, Msg: "unfinished string"}

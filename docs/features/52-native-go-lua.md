@@ -47,6 +47,19 @@ lua`
 `;
 ```
 
+Single backtick blocks interpolate `${expr}` as host-language expressions
+before the code reaches the Lua compiler, the same as any other SPL template
+string. For Lua source containing a literal `$` or `${` — currency
+formatting, or code that just happens to contain that character sequence —
+use triple backtick instead; it reads as a raw, non-interpolated block:
+
+```spl
+lua```
+  local price = "$" .. tostring(total)
+  return price
+```;
+```
+
 ## Go embedding
 
 Blank-import the package to register the SPL module and embedded-language tag:
@@ -58,6 +71,15 @@ import _ "github.com/oarkflow/interpreter/plugins/lua"
 For direct use, create a state with `lua.NewState`, then use `Load`, `Call`, or
 `DoString`. `CallInto` avoids allocating a result slice, and `CallNumber2` is a
 specialized allocation-free path for numeric functions with two arguments.
+
+`plugins/lua/examples/main.go` is a runnable walkthrough of the Go API
+(`Load`/`Call`/`CallInto`/`CallNumber2`, registering a Go callback with
+`Native`/`NativeBinary`, a persistent `Script` via `LoadScript`) and the SPL
+layer (`lua.eval`/`run`/`load`, single- and triple-backtick tagged blocks):
+
+```sh
+cd plugins && go run ./lua/examples
+```
 
 The implementation includes closures and upvalues, varargs and multiple
 returns, numeric and generic loops, metatables, protected calls, function
@@ -72,10 +94,22 @@ Run the established-program and embedding benchmarks on a fixed CPU:
 
 ```sh
 cd plugins
-GOMAXPROCS=1 go test ./lua -run '^$' \
+GOMAXPROCS=1 go test ./lua -pgo=lua/default.pgo -run '^$' \
   -bench 'Benchmark(BinaryTrees12WithCapturedOutput|FannkuchRedux8|SpectralNorm150|NBody20000|GoCallsLuaInto)$' \
   -benchmem -count=15
 ```
+
+`plugins/lua/default.pgo` is a profile captured from the full benchmark suite
+(`go test -bench .`) and is used for profile-guided inlining of the hot
+interpreter loop. `go test` does not auto-detect a package-local
+`default.pgo` the way `go build` of a main package does, so pass `-pgo`
+explicitly when benchmarking this package directly; regenerate the profile
+with `go test -pgo=off -bench . -cpuprofile=default.pgo .` after VM changes
+that materially shift where time is spent. A host application that vendors
+this VM should generate its own `default.pgo` from its own production
+workload and place it next to its main package, per the standard Go PGO
+workflow — the profile here is a development/benchmarking aid, not a
+substitute for that.
 
 The VM uses compact values, register bytecode, iterative frames, dense-array
 table paths, shape caches, a state-local table arena, typed native math calls,

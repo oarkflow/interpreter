@@ -33,6 +33,7 @@ func (s *State) newTable(arrayHint, hashHint int) *Table {
 func (s *State) collectTables() {
 	s.gcGeneration++
 	s.markTable(s.globals)
+	s.markTable(s.registry)
 	for _, fn := range s.dumped {
 		s.markValue(FunctionValue(fn))
 	}
@@ -42,7 +43,11 @@ func (s *State) collectTables() {
 	for i := 0; i < s.top; i++ {
 		s.markValue(s.stack[i].value)
 	}
+	for _, value := range s.hookRoots {
+		s.markValue(value)
+	}
 	for i := range s.frames {
+		s.markValue(FunctionValue(s.frames[i].fn))
 		live := len(s.frames[i].regs)
 		pc := s.frames[i].pc - 1
 		if proto := s.frames[i].fn.Proto; proto != nil && pc >= 0 && pc < len(proto.LiveRegisters) {
@@ -110,6 +115,7 @@ func (s *State) markValue(v Value) {
 			s.markValue(thread.state.stack[i].value)
 		}
 		for i := range thread.state.frames {
+			s.markValue(FunctionValue(thread.state.frames[i].fn))
 			live := len(thread.state.frames[i].regs)
 			pc := thread.state.frames[i].pc - 1
 			if proto := thread.state.frames[i].fn.Proto; proto != nil && pc >= 0 && pc < len(proto.LiveRegisters) {

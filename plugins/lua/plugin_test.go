@@ -28,6 +28,22 @@ func TestPluginRegistrationAndSPLExecution(t *testing.T) {
 	}
 }
 
+// Triple-backtick embedding uses the same IDENT-then-template tagging as the
+// single-backtick form, but the lexer reads the block as a raw literal with
+// no ${...} interpolation — needed for Lua source that contains a literal
+// $ or ${ (currency formatting, shell-style templates passed through to
+// Lua's own string library) which single backtick would otherwise try to
+// interpolate as host-language expressions.
+func TestTripleBacktickLuaBlock(t *testing.T) {
+	tagged, err := interpreter.Exec("lua```\n  local price = \"$\" .. tostring(5)\n  local raw = \"${not_interpolated}\"\n  return price .. \"|\" .. raw\n```;", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tagged.Inspect() != `$5|${not_interpolated}` {
+		t.Fatalf("tagged = %s", tagged.Inspect())
+	}
+}
+
 func TestPersistentLuaModuleFromSPL(t *testing.T) {
 	result, err := interpreter.Exec(`
 		import "lua" as lua;

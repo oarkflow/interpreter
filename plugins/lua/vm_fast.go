@@ -5,703 +5,754 @@ import "math"
 // callLuaFast executes the allocation-sensitive, single-result-compatible
 // instruction subset with an iterative frame trampoline. Programs requiring
 // dynamic result lists/coroutine suspension use the general VM.
+// callLuaFast delegates its instruction loop to runFastLoop and performs
+// frame/stack cleanup inline on every exit path instead of via defer. The
+// loop below has dozens of return statements (one per opcode error and the
+// terminal opReturn case), which disqualifies Go's open-coded defer
+// optimization; a deferred closure here would fall back to the much slower
+// deferprocStack path on every call, which is significant at this
+// function's per-call granularity (it is invoked once per embedding call,
+// e.g. CallInto).
 func (s *State) callLuaFast(root *Function, args []Value) (callResult, error) {
 	start := len(s.frames)
 	startTop := s.top
-	defer func() {
-		if len(s.frames) <= start {
-			return
-		}
+	hooksActive := s.hook.kind == FunctionKind
+	if err := s.pushFastFrame(root, args, -1, 0); err != nil {
+		return callResult{}, err
+	}
+	result, err := s.runFastLoop(start, hooksActive)
+	if len(s.frames) > start {
 		for i := start; i < len(s.frames); i++ {
 			if !s.frames[i].heap {
-				for j := range s.frames[i].regs {
-					s.frames[i].regs[j].value = Nil
-				}
+				clear(s.frames[i].regs)
 			}
 		}
 		s.frames = s.frames[:start]
 		s.top = startTop
-	}()
-	if err := s.pushFastFrame(root, args, -1, 0); err != nil {
-		return callResult{}, err
 	}
+	return result, err
+}
+
+// runFastLoop nests two loops: the outer loop re-derives the top frame's
+// fn/proto/registers whenever the frame stack actually changes (call,
+// return, tail call); the inner loop dispatches instructions within a single
+// frame without repeating that work. A flat single-loop version previously
+// re-derived fi/f/p/regs and re-checked f.pc against len(p.Code) on every
+// single instruction, including straight-line arithmetic and table
+// instructions that never touch s.frames — measurable dispatch overhead in
+// tight numeric loops (fannkuch-redux, n-body). Every instruction still
+// funnels through the `next` label before the inner loop repeats; when
+// hooksActive, that forces `continue outer` so debug hooks keep the original
+// per-instruction re-derivation semantics (a hook can itself invoke Lua code
+// that reallocates s.frames, which would otherwise leave a stale f/regs
+// pointer live across multiple instructions instead of self-healing after
+// one, as the flat loop did).
+func (s *State) runFastLoop(start int, hooksActive bool) (callResult, error) {
+outer:
 	for len(s.frames) > start {
 		fi := len(s.frames) - 1
 		f := &s.frames[fi]
 		p, fn, regs := f.fn.Proto, f.fn, f.regs
-		if f.pc >= len(p.Code) {
-			result := callResult{}
-			if done, err := s.fastReturn(start, result); done || err != nil {
-				return result, err
-			}
-			continue
-		}
-		pc := f.pc
-		ins := p.Code[pc]
-		f.pc++
-		if err := s.instructionHook(f, p, pc); err != nil {
-			return callResult{}, s.vmWrap(p, pc, err)
-		}
-		a, b, c := ins.a(), ins.b(), ins.c()
-		switch ins.op() {
-		case opMove:
-			regs[a].value = regs[b].value
-		case opLoadK:
-			regs[a].value = p.Constants[ins.bx()]
-		case opLoadKX:
-			regs[a].value = p.Constants[p.ExtraConstants[pc]]
-		case opLoadNil:
-			regs[a].value = Nil
-		case opLoadBool:
-			regs[a].value = Bool(b != 0)
-		case opGetUp:
-			regs[a].value = fn.Up[b].value
-		case opSetUp:
-			fn.Up[b].value = regs[a].value
-		case opGetGlobal:
-			env := fn.Env
-			if env == nil {
-				env = s.globals
-			}
-			value, err := s.index(TableValue(env), p.Constants[ins.bx()], 0)
-			if err != nil {
-				return callResult{}, s.vmWrap(p, pc, err)
-			}
-			regs[a].value = value
-		case opGetGlobalX:
-			env := fn.Env
-			if env == nil {
-				env = s.globals
-			}
-			value, err := s.index(TableValue(env), p.Constants[p.ExtraConstants[pc]], 0)
-			if err != nil {
-				return callResult{}, s.vmWrap(p, pc, err)
-			}
-			regs[a].value = value
-		case opSetGlobal:
-			env := fn.Env
-			if env == nil {
-				env = s.globals
-			}
-			if err := s.assignIndex(TableValue(env), p.Constants[ins.bx()], regs[a].value, 0); err != nil {
-				return callResult{}, s.vmWrap(p, pc, err)
-			}
-		case opSetGlobalX:
-			env := fn.Env
-			if env == nil {
-				env = s.globals
-			}
-			if err := s.assignIndex(TableValue(env), p.Constants[p.ExtraConstants[pc]], regs[a].value, 0); err != nil {
-				return callResult{}, s.vmWrap(p, pc, err)
-			}
-		case opGetTable:
-			target := regs[b].value
-			if target.kind == TableKind && target.Table().meta == nil {
-				key := regs[c].value
-				if key.kind == NumberKind {
-					if value, ok := target.Table().getDenseNumber(key.Number()); ok {
-						regs[a].value = value
-						continue
-					}
+		for f.pc < len(p.Code) {
+			pc := f.pc
+			ins := p.Code[pc]
+			f.pc++
+			if hooksActive {
+				if err := s.instructionHook(f, p, pc); err != nil {
+					return callResult{}, s.vmWrap(p, pc, err)
 				}
-				regs[a].value = target.Table().Get(key)
-			} else {
-				value, err := s.index(target, regs[c].value, 0)
+			}
+			a, b, c := ins.a(), ins.b(), ins.c()
+			switch ins.op() {
+			case opMove:
+				regs[a].value = regs[b].value
+			case opLoadK:
+				regs[a].value = p.Constants[ins.bx()]
+			case opLoadKX:
+				regs[a].value = p.Constants[p.ExtraConstants[pc]]
+			case opLoadNil:
+				regs[a].value = Nil
+			case opLoadBool:
+				regs[a].value = Bool(b != 0)
+			case opGetUp:
+				regs[a].value = fn.Up[b].value
+			case opSetUp:
+				fn.Up[b].value = regs[a].value
+			case opGetGlobal:
+				env := fn.Env
+				if env == nil {
+					env = s.globals
+				}
+				value, err := s.index(TableValue(env), p.Constants[ins.bx()], 0)
 				if err != nil {
 					return callResult{}, s.vmWrap(p, pc, err)
 				}
 				regs[a].value = value
-			}
-		case opGetTableK:
-			target, key := regs[b].value, p.Constants[c]
-			if target.kind == TableKind && target.Table().meta == nil {
-				if key.kind == StringKind {
+			case opGetGlobalX:
+				env := fn.Env
+				if env == nil {
+					env = s.globals
+				}
+				value, err := s.index(TableValue(env), p.Constants[p.ExtraConstants[pc]], 0)
+				if err != nil {
+					return callResult{}, s.vmWrap(p, pc, err)
+				}
+				regs[a].value = value
+			case opSetGlobal:
+				env := fn.Env
+				if env == nil {
+					env = s.globals
+				}
+				if err := s.assignIndex(TableValue(env), p.Constants[ins.bx()], regs[a].value, 0); err != nil {
+					return callResult{}, s.vmWrap(p, pc, err)
+				}
+			case opSetGlobalX:
+				env := fn.Env
+				if env == nil {
+					env = s.globals
+				}
+				if err := s.assignIndex(TableValue(env), p.Constants[p.ExtraConstants[pc]], regs[a].value, 0); err != nil {
+					return callResult{}, s.vmWrap(p, pc, err)
+				}
+			case opGetTable:
+				target := regs[b].value
+				if target.kind == TableKind && target.Table().meta == nil {
+					key := regs[c].value
+					if key.kind == NumberKind {
+						if value, ok := target.Table().getDenseNumber(key.Number()); ok {
+							regs[a].value = value
+							goto next
+						}
+					}
+					regs[a].value = target.Table().Get(key)
+				} else {
+					value, err := s.index(target, regs[c].value, 0)
+					if err != nil {
+						return callResult{}, s.vmWrap(p, pc, err)
+					}
+					regs[a].value = value
+				}
+			case opGetTableK:
+				target, key := regs[b].value, p.Constants[c]
+				if target.kind == TableKind && target.Table().meta == nil {
+					if key.kind == StringKind {
+						table, cache := target.Table(), &p.FieldCaches[pc]
+						if table.shape != nil && cache.shape == table.shape {
+							regs[a].value = table.fields[cache.slot].value
+							goto next
+						}
+						if slot, ok := s.cachedField(p, pc, target.Table(), key.StringValue()); ok {
+							regs[a].value = target.Table().fields[slot].value
+							goto next
+						}
+					}
+					if key.kind == NumberKind {
+						if value, ok := target.Table().getDenseNumber(key.Number()); ok {
+							regs[a].value = value
+							goto next
+						}
+					}
+					regs[a].value = target.Table().Get(key)
+				} else {
+					value, err := s.index(target, key, 0)
+					if err != nil {
+						return callResult{}, s.vmWrap(p, pc, err)
+					}
+					regs[a].value = value
+				}
+			case opGetArrayI:
+				target := regs[b].value
+				if target.kind == TableKind && target.Table().meta == nil && c <= len(target.Table().array) {
+					regs[a].value = target.Table().array[c-1]
+				} else {
+					value, err := s.index(target, Number(float64(c)), 0)
+					if err != nil {
+						return callResult{}, s.vmWrap(p, pc, err)
+					}
+					regs[a].value = value
+				}
+			case opGetFieldK:
+				target, name := regs[b].value, p.Constants[c].StringValue()
+				if target.kind == TableKind && target.Table().meta == nil {
 					table, cache := target.Table(), &p.FieldCaches[pc]
 					if table.shape != nil && cache.shape == table.shape {
 						regs[a].value = table.fields[cache.slot].value
-						continue
+						goto next
 					}
-					if slot, ok := s.cachedField(p, pc, target.Table(), key.StringValue()); ok {
-						regs[a].value = target.Table().fields[slot].value
-						continue
+					if slot, ok := s.cachedField(p, pc, table, name); ok {
+						regs[a].value = table.fields[slot].value
+						goto next
+					}
+					regs[a].value = table.GetString(name)
+				} else {
+					value, err := s.index(target, p.Constants[c], 0)
+					if err != nil {
+						return callResult{}, s.vmWrap(p, pc, err)
+					}
+					regs[a].value = value
+				}
+			case opSetTable:
+				target := regs[a].value
+				if target.kind == TableKind && target.Table().meta == nil {
+					key, value := regs[b].value, regs[c].value
+					if key.kind == NumberKind && target.Table().setDenseNumber(key.Number(), value) {
+						goto next
+					}
+					if err := target.Table().Set(key, value); err != nil {
+						return callResult{}, s.vmWrap(p, pc, err)
+					}
+				} else if err := s.assignIndex(target, regs[b].value, regs[c].value, 0); err != nil {
+					return callResult{}, s.vmWrap(p, pc, err)
+				}
+			case opSwapTable:
+				if err := s.swapTable(regs[a].value, regs[b].value, regs[c].value); err != nil {
+					return callResult{}, s.vmWrap(p, pc, err)
+				}
+			case opAddTable:
+				accumulator, target, key := regs[a].value, regs[b].value, regs[c].value
+				if accumulator.kind == NumberKind && target.kind == TableKind && target.Table().meta == nil && key.kind == NumberKind {
+					if value, ok := target.Table().getDenseNumber(key.Number()); ok && value.kind == NumberKind {
+						regs[a].value = Number(accumulator.Number() + value.Number())
+						goto next
 					}
 				}
-				if key.kind == NumberKind {
-					if value, ok := target.Table().getDenseNumber(key.Number()); ok {
-						regs[a].value = value
-						continue
+				if err := s.addTableValue(&regs[a].value, regs[b].value, regs[c].value); err != nil {
+					return callResult{}, s.vmWrap(p, pc, err)
+				}
+			case opSetTableK:
+				target, key, value := regs[a].value, p.Constants[b], regs[c].value
+				if target.kind == TableKind && target.Table().meta == nil {
+					if key.kind == StringKind {
+						table, cache := target.Table(), &p.FieldCaches[pc]
+						if table.shape != nil && cache.shape == table.shape {
+							table.fields[cache.slot].value = value
+							goto next
+						}
+						if slot, ok := s.cachedField(p, pc, target.Table(), key.StringValue()); ok {
+							target.Table().fields[slot].value = value
+							goto next
+						}
+					}
+					if key.kind == NumberKind && target.Table().setDenseNumber(key.Number(), value) {
+						goto next
+					}
+					if err := target.Table().Set(key, value); err != nil {
+						return callResult{}, s.vmWrap(p, pc, err)
+					}
+				} else if err := s.assignIndex(target, key, value, 0); err != nil {
+					return callResult{}, s.vmWrap(p, pc, err)
+				}
+			case opSetArrayI:
+				target, value := regs[a].value, regs[c].value
+				if target.kind == TableKind && target.Table().meta == nil {
+					table := target.Table()
+					if b <= len(table.array) {
+						table.array[b-1] = value
+						goto next
+					}
+					if table.appendDenseNumber(b, value) {
+						goto next
 					}
 				}
-				regs[a].value = target.Table().Get(key)
-			} else {
-				value, err := s.index(target, key, 0)
-				if err != nil {
+				if err := s.assignIndex(target, Number(float64(b)), value, 0); err != nil {
 					return callResult{}, s.vmWrap(p, pc, err)
 				}
-				regs[a].value = value
-			}
-		case opGetArrayI:
-			target := regs[b].value
-			if target.kind == TableKind && target.Table().meta == nil && c <= len(target.Table().array) {
-				regs[a].value = target.Table().array[c-1]
-			} else {
-				value, err := s.index(target, Number(float64(c)), 0)
-				if err != nil {
-					return callResult{}, s.vmWrap(p, pc, err)
-				}
-				regs[a].value = value
-			}
-		case opGetFieldK:
-			target, name := regs[b].value, p.Constants[c].StringValue()
-			if target.kind == TableKind && target.Table().meta == nil {
-				table, cache := target.Table(), &p.FieldCaches[pc]
-				if table.shape != nil && cache.shape == table.shape {
-					regs[a].value = table.fields[cache.slot].value
-					continue
-				}
-				if slot, ok := s.cachedField(p, pc, table, name); ok {
-					regs[a].value = table.fields[slot].value
-					continue
-				}
-				regs[a].value = table.GetString(name)
-			} else {
-				value, err := s.index(target, p.Constants[c], 0)
-				if err != nil {
-					return callResult{}, s.vmWrap(p, pc, err)
-				}
-				regs[a].value = value
-			}
-		case opSetTable:
-			target := regs[a].value
-			if target.kind == TableKind && target.Table().meta == nil {
-				key, value := regs[b].value, regs[c].value
-				if key.kind == NumberKind && target.Table().setDenseNumber(key.Number(), value) {
-					continue
-				}
-				if err := target.Table().Set(key, value); err != nil {
-					return callResult{}, s.vmWrap(p, pc, err)
-				}
-			} else if err := s.assignIndex(target, regs[b].value, regs[c].value, 0); err != nil {
-				return callResult{}, s.vmWrap(p, pc, err)
-			}
-		case opSwapTable:
-			if err := s.swapTable(regs[a].value, regs[b].value, regs[c].value); err != nil {
-				return callResult{}, s.vmWrap(p, pc, err)
-			}
-		case opAddTable:
-			accumulator, target, key := regs[a].value, regs[b].value, regs[c].value
-			if accumulator.kind == NumberKind && target.kind == TableKind && target.Table().meta == nil && key.kind == NumberKind {
-				if value, ok := target.Table().getDenseNumber(key.Number()); ok && value.kind == NumberKind {
-					regs[a].value = Number(accumulator.Number() + value.Number())
-					continue
-				}
-			}
-			if err := s.addTableValue(&regs[a].value, regs[b].value, regs[c].value); err != nil {
-				return callResult{}, s.vmWrap(p, pc, err)
-			}
-		case opSetTableK:
-			target, key, value := regs[a].value, p.Constants[b], regs[c].value
-			if target.kind == TableKind && target.Table().meta == nil {
-				if key.kind == StringKind {
+			case opSetFieldK:
+				target, value, name := regs[a].value, regs[c].value, p.Constants[b].StringValue()
+				if target.kind == TableKind && target.Table().meta == nil {
 					table, cache := target.Table(), &p.FieldCaches[pc]
 					if table.shape != nil && cache.shape == table.shape {
 						table.fields[cache.slot].value = value
-						continue
+						goto next
 					}
-					if slot, ok := s.cachedField(p, pc, target.Table(), key.StringValue()); ok {
-						target.Table().fields[slot].value = value
-						continue
+					if slot, ok := s.cachedField(p, pc, table, name); ok {
+						table.fields[slot].value = value
+						goto next
 					}
+					table.SetString(name, value)
+					goto next
 				}
-				if key.kind == NumberKind && target.Table().setDenseNumber(key.Number(), value) {
-					continue
-				}
-				if err := target.Table().Set(key, value); err != nil {
+				if err := s.assignIndex(target, p.Constants[b], value, 0); err != nil {
 					return callResult{}, s.vmWrap(p, pc, err)
 				}
-			} else if err := s.assignIndex(target, key, value, 0); err != nil {
-				return callResult{}, s.vmWrap(p, pc, err)
-			}
-		case opSetArrayI:
-			target, value := regs[a].value, regs[c].value
-			if target.kind == TableKind && target.Table().meta == nil {
-				table := target.Table()
-				if b <= len(table.array) {
-					table.array[b-1] = value
-					continue
+			case opNewTable:
+				regs[a].value = TableValue(s.newTable(b, c))
+			case opSetListMulti:
+				table := regs[a].value
+				if table.kind != TableKind {
+					return callResult{}, s.vmError(p, pc, "attempt to index a %s value", table.TypeName())
 				}
-				if table.appendDenseNumber(b, value) {
-					continue
+				for i := 0; i < f.multi.count; i++ {
+					if err := table.Table().Set(Number(float64(ins.bx()+i)), f.multi.at(i)); err != nil {
+						return callResult{}, s.vmWrap(p, pc, err)
+					}
 				}
-			}
-			if err := s.assignIndex(target, Number(float64(b)), value, 0); err != nil {
-				return callResult{}, s.vmWrap(p, pc, err)
-			}
-		case opSetFieldK:
-			target, value, name := regs[a].value, regs[c].value, p.Constants[b].StringValue()
-			if target.kind == TableKind && target.Table().meta == nil {
-				table, cache := target.Table(), &p.FieldCaches[pc]
-				if table.shape != nil && cache.shape == table.shape {
-					table.fields[cache.slot].value = value
-					continue
-				}
-				if slot, ok := s.cachedField(p, pc, table, name); ok {
-					table.fields[slot].value = value
-					continue
-				}
-				table.SetString(name, value)
-				continue
-			}
-			if err := s.assignIndex(target, p.Constants[b], value, 0); err != nil {
-				return callResult{}, s.vmWrap(p, pc, err)
-			}
-		case opNewTable:
-			regs[a].value = TableValue(s.newTable(b, c))
-		case opAdd, opSub, opMul, opDiv, opMod, opPow:
-			left, right := regs[b].value, regs[c].value
-			x, y := left.Number(), right.Number()
-			xok, yok := left.kind == NumberKind, right.kind == NumberKind
-			if !xok {
-				x, xok = toNumber(left)
-			}
-			if !yok {
-				y, yok = toNumber(right)
-			}
-			if !xok || !yok {
-				name := arithmeticMetaName(ins.op())
-				value, ok, err := s.binaryMetamethod(regs[b].value, regs[c].value, name)
-				if err != nil {
-					return callResult{}, err
-				}
-				if !ok {
-					return callResult{}, s.vmError(p, pc, "attempt to perform arithmetic on a %s value", badNumericType(regs[b].value, regs[c].value))
-				}
-				regs[a].value = value
-				continue
-			}
-			switch ins.op() {
-			case opAdd:
-				x += y
-			case opSub:
-				x -= y
-			case opMul:
-				x *= y
-			case opDiv:
-				x /= y
-			case opMod:
-				x = x - math.Floor(x/y)*y
-			case opPow:
-				x = math.Pow(x, y)
-			}
-			regs[a].value = Number(x)
-		case opAddK, opSubK, opMulK, opDivK, opModK, opPowK:
-			left, right := regs[b].value, p.Constants[c]
-			x, y := left.Number(), right.Number()
-			xok, yok := left.kind == NumberKind, right.kind == NumberKind
-			if !xok {
-				x, xok = toNumber(left)
-			}
-			if !yok {
-				y, yok = toNumber(right)
-			}
-			regular := regularConstantOpcode(ins.op())
-			if !xok || !yok {
-				value, ok, err := s.binaryMetamethod(left, right, arithmeticMetaName(regular))
-				if err != nil {
-					return callResult{}, err
-				}
-				if !ok {
-					return callResult{}, s.vmError(p, pc, "attempt to perform arithmetic on a %s value", badNumericType(left, right))
-				}
-				regs[a].value = value
-				continue
-			}
-			switch regular {
-			case opAdd:
-				x += y
-			case opSub:
-				x -= y
-			case opMul:
-				x *= y
-			case opDiv:
-				x /= y
-			case opMod:
-				x = x - math.Floor(x/y)*y
-			case opPow:
-				x = math.Pow(x, y)
-			}
-			regs[a].value = Number(x)
-		case opNeg:
-			x, ok := toNumber(regs[b].value)
-			if !ok {
-				if value, found, err := s.unaryMetamethod(regs[b].value, "__unm"); err != nil {
-					return callResult{}, s.vmWrap(p, pc, err)
-				} else if found {
-					regs[a].value = value
-					continue
-				}
-				return callResult{}, s.vmError(p, pc, "attempt to perform arithmetic on a %s value", regs[b].value.TypeName())
-			}
-			regs[a].value = Number(-x)
-		case opNot:
-			regs[a].value = Bool(!regs[b].value.Truthy())
-		case opLen:
-			v := regs[b].value
-			if v.kind == StringKind {
-				regs[a].value = Number(float64(len(v.StringValue())))
-			} else if v.kind == TableKind && v.Table().meta == nil {
-				regs[a].value = Number(float64(v.Table().Len()))
-			} else if value, ok, err := s.unaryMetamethod(v, "__len"); err != nil {
-				return callResult{}, err
-			} else if ok {
-				regs[a].value = value
-			} else if v.kind == TableKind {
-				regs[a].value = Number(float64(v.Table().Len()))
-			} else {
-				return callResult{}, s.vmError(p, pc, "attempt to get length of a %s value", v.TypeName())
-			}
-		case opConcat:
-			x, xok := stringCoerce(regs[b].value)
-			y, yok := stringCoerce(regs[c].value)
-			if xok && yok {
-				regs[a].value = String(x + y)
-			} else if value, ok, err := s.binaryMetamethod(regs[b].value, regs[c].value, "__concat"); err != nil {
-				return callResult{}, err
-			} else if ok {
-				regs[a].value = value
-			} else {
-				return callResult{}, s.vmError(p, pc, "attempt to concatenate a %s value", badStringType(regs[b].value, regs[c].value))
-			}
-			s.maybeCollectWeakTables()
-		case opEq:
-			left, right := regs[b].value, regs[c].value
-			if equal(left, right) {
-				regs[a].value = True
-			} else if value, ok, err := s.equalityMetamethod(left, right); err != nil {
-				return callResult{}, err
-			} else if ok {
-				regs[a].value = Bool(value.Truthy())
-			} else {
-				regs[a].value = False
-			}
-		case opEqK:
-			left, right := regs[b].value, p.Constants[c]
-			if equal(left, right) {
-				regs[a].value = True
-			} else if value, ok, err := s.equalityMetamethod(left, right); err != nil {
-				return callResult{}, err
-			} else if ok {
-				regs[a].value = Bool(value.Truthy())
-			} else {
-				regs[a].value = False
-			}
-		case opNEK:
-			left, right := regs[b].value, p.Constants[c]
-			if equal(left, right) {
-				regs[a].value = False
-			} else if value, ok, err := s.equalityMetamethod(left, right); err != nil {
-				return callResult{}, err
-			} else if ok {
-				regs[a].value = Bool(!value.Truthy())
-			} else {
-				regs[a].value = True
-			}
-		case opLT, opLE:
-			x, y := regs[b].value, regs[c].value
-			var result bool
-			if x.kind == NumberKind && y.kind == NumberKind {
-				if ins.op() == opLT {
-					result = x.Number() < y.Number()
-				} else {
-					result = x.Number() <= y.Number()
-				}
-			} else if x.kind == StringKind && y.kind == StringKind {
-				if ins.op() == opLT {
-					result = x.StringValue() < y.StringValue()
-				} else {
-					result = x.StringValue() <= y.StringValue()
-				}
-			} else {
-				name := "__lt"
-				if ins.op() == opLE {
-					name = "__le"
-				}
-				value, ok, err := s.comparisonMetamethod(x, y, name)
-				if ins.op() == opLE && !ok && err == nil {
-					value, ok, err = s.comparisonMetamethod(y, x, "__lt")
-					value = Bool(!value.Truthy())
-				}
-				if err != nil {
-					return callResult{}, err
-				}
-				if !ok {
-					return callResult{}, s.vmError(p, pc, "attempt to compare %s with %s", x.TypeName(), y.TypeName())
-				}
-				result = value.Truthy()
-			}
-			regs[a].value = Bool(result)
-		case opLTK, opLEK, opGTK, opGEK:
-			x, y := regs[b].value, p.Constants[c]
-			var result bool
-			if x.kind == NumberKind && y.kind == NumberKind {
-				switch ins.op() {
-				case opLTK:
-					result = x.Number() < y.Number()
-				case opLEK:
-					result = x.Number() <= y.Number()
-				case opGTK:
-					result = x.Number() > y.Number()
-				case opGEK:
-					result = x.Number() >= y.Number()
-				}
-			} else if x.kind == StringKind && y.kind == StringKind {
-				switch ins.op() {
-				case opLTK:
-					result = x.StringValue() < y.StringValue()
-				case opLEK:
-					result = x.StringValue() <= y.StringValue()
-				case opGTK:
-					result = x.StringValue() > y.StringValue()
-				case opGEK:
-					result = x.StringValue() >= y.StringValue()
-				}
-			} else {
-				name, left, right := "__lt", x, y
-				if ins.op() == opLEK {
-					name = "__le"
-				} else if ins.op() == opGTK {
-					left, right = y, x
-				} else if ins.op() == opGEK {
-					name = "__le"
-					left, right = y, x
-				}
-				value, ok, err := s.comparisonMetamethod(left, right, name)
-				if (ins.op() == opLEK || ins.op() == opGEK) && !ok && err == nil {
-					value, ok, err = s.comparisonMetamethod(right, left, "__lt")
-					value = Bool(!value.Truthy())
-				}
-				if err != nil {
-					return callResult{}, err
-				}
-				if !ok {
-					return callResult{}, s.vmError(p, pc, "attempt to compare %s with %s", x.TypeName(), y.TypeName())
-				}
-				result = value.Truthy()
-			}
-			regs[a].value = Bool(result)
-		case opJumpCompareK:
-			left, right, mode := regs[a].value, p.Constants[b], uint8(c)
-			var condition bool
-			if left.kind == NumberKind && right.kind == NumberKind {
+			case opAdd, opSub, opMul, opDiv, opMod, opPow:
+				left, right := regs[b].value, regs[c].value
 				x, y := left.Number(), right.Number()
-				switch mode {
-				case compareEQ:
-					condition = x == y
-				case compareNE:
-					condition = x != y
-				case compareLT:
-					condition = x < y
-				case compareLE:
-					condition = x <= y
-				case compareGT:
-					condition = x > y
-				case compareGE:
-					condition = x >= y
+				xok, yok := left.kind == NumberKind, right.kind == NumberKind
+				if !xok {
+					x, xok = toNumber(left)
 				}
-			} else if left.kind == StringKind && right.kind == StringKind {
-				x, y := left.StringValue(), right.StringValue()
-				switch mode {
-				case compareEQ:
-					condition = x == y
-				case compareNE:
-					condition = x != y
-				case compareLT:
-					condition = x < y
-				case compareLE:
-					condition = x <= y
-				case compareGT:
-					condition = x > y
-				case compareGE:
-					condition = x >= y
+				if !yok {
+					y, yok = toNumber(right)
 				}
-			} else {
-				name, x, y := "__eq", left, right
-				switch mode {
-				case compareLT:
-					name = "__lt"
-				case compareLE:
-					name = "__le"
-				case compareGT:
-					name, x, y = "__lt", right, left
-				case compareGE:
-					name, x, y = "__le", right, left
+				if !xok || !yok {
+					name := arithmeticMetaName(ins.op())
+					value, ok, err := s.binaryMetamethod(regs[b].value, regs[c].value, name)
+					if err != nil {
+						return callResult{}, err
+					}
+					if !ok {
+						return callResult{}, s.vmError(p, pc, "attempt to perform arithmetic on a %s value", badNumericType(regs[b].value, regs[c].value))
+					}
+					regs[a].value = value
+					goto next
 				}
-				if (mode == compareEQ || mode == compareNE) && equal(left, right) {
-					condition = mode == compareEQ
-				} else if value, ok, err := s.relationalMetamethod(x, y, name); err != nil {
+				switch ins.op() {
+				case opAdd:
+					x += y
+				case opSub:
+					x -= y
+				case opMul:
+					x *= y
+				case opDiv:
+					x /= y
+				case opMod:
+					x = x - math.Floor(x/y)*y
+				case opPow:
+					x = math.Pow(x, y)
+				}
+				regs[a].value = Number(x)
+			case opAddK, opSubK, opMulK, opDivK, opModK, opPowK:
+				left, right := regs[b].value, p.Constants[c]
+				x, y := left.Number(), right.Number()
+				xok, yok := left.kind == NumberKind, right.kind == NumberKind
+				if !xok {
+					x, xok = toNumber(left)
+				}
+				if !yok {
+					y, yok = toNumber(right)
+				}
+				regular := regularConstantOpcode(ins.op())
+				if !xok || !yok {
+					value, ok, err := s.binaryMetamethod(left, right, arithmeticMetaName(regular))
+					if err != nil {
+						return callResult{}, err
+					}
+					if !ok {
+						return callResult{}, s.vmError(p, pc, "attempt to perform arithmetic on a %s value", badNumericType(left, right))
+					}
+					regs[a].value = value
+					goto next
+				}
+				switch regular {
+				case opAdd:
+					x += y
+				case opSub:
+					x -= y
+				case opMul:
+					x *= y
+				case opDiv:
+					x /= y
+				case opMod:
+					x = x - math.Floor(x/y)*y
+				case opPow:
+					x = math.Pow(x, y)
+				}
+				regs[a].value = Number(x)
+			case opNeg:
+				x, ok := toNumber(regs[b].value)
+				if !ok {
+					if value, found, err := s.unaryMetamethod(regs[b].value, "__unm"); err != nil {
+						return callResult{}, s.vmWrap(p, pc, err)
+					} else if found {
+						regs[a].value = value
+						goto next
+					}
+					return callResult{}, s.vmError(p, pc, "attempt to perform arithmetic on a %s value", regs[b].value.TypeName())
+				}
+				regs[a].value = Number(-x)
+			case opNot:
+				regs[a].value = Bool(!regs[b].value.Truthy())
+			case opLen:
+				v := regs[b].value
+				if v.kind == StringKind {
+					regs[a].value = Number(float64(len(v.StringValue())))
+				} else if v.kind == TableKind && v.Table().meta == nil {
+					regs[a].value = Number(float64(v.Table().Len()))
+				} else if value, ok, err := s.unaryMetamethod(v, "__len"); err != nil {
 					return callResult{}, err
 				} else if ok {
-					condition = value.Truthy()
-					if mode == compareNE {
-						condition = !condition
-					}
-				} else if mode == compareEQ || mode == compareNE {
-					condition = mode == compareNE
+					regs[a].value = value
+				} else if v.kind == TableKind {
+					regs[a].value = Number(float64(v.Table().Len()))
 				} else {
-					return callResult{}, s.vmError(p, pc, "attempt to compare %s with %s", left.TypeName(), right.TypeName())
+					return callResult{}, s.vmError(p, pc, "attempt to get length of a %s value", v.TypeName())
 				}
-			}
-			offset := p.Code[f.pc].sbx()
-			f.pc++
-			if !condition {
-				f.pc += offset
-			}
-		case opJump:
-			f.pc += ins.sbx()
-		case opJumpFalse:
-			if !regs[a].value.Truthy() {
-				f.pc += ins.sbx()
-			}
-		case opForPrep:
-			initial, iok := toNumber(regs[a].value)
-			limit, lok := toNumber(regs[a+1].value)
-			step, sok := toNumber(regs[a+2].value)
-			if !iok || !lok || !sok {
-				return callResult{}, s.vmError(p, pc, "numeric for values must be numbers")
-			}
-			regs[a].value = Number(initial - step)
-			regs[a+1].value = Number(limit)
-			regs[a+2].value = Number(step)
-			f.pc += ins.sbx()
-		case opForLoop:
-			index := regs[a].value.Number() + regs[a+2].value.Number()
-			limit, step := regs[a+1].value.Number(), regs[a+2].value.Number()
-			regs[a].value = Number(index)
-			if step > 0 && index <= limit || step <= 0 && index >= limit {
-				f.pc += ins.sbx()
-			}
-		case opForLoopV:
-			index := regs[a].value.Number() + regs[a+2].value.Number()
-			limit, step := regs[a+1].value.Number(), regs[a+2].value.Number()
-			indexValue := Number(index)
-			regs[a].value = indexValue
-			offset := p.Code[f.pc].sbx()
-			f.pc++
-			if step > 0 && index <= limit || step <= 0 && index >= limit {
-				regs[b].value = indexValue
-				f.pc += offset
-			}
-		case opClosure:
-			child := p.Children[ins.bx()]
-			closure := &Function{Proto: child, Env: fn.Env, Up: make([]*cell, len(child.Upvalues))}
-			for i, up := range child.Upvalues {
-				if up.Local {
-					opened := f.open[int(up.Index)]
-					if opened == nil {
-						opened = &openUpvalue{cell: &regs[up.Index]}
-						f.open[int(up.Index)] = opened
-					}
-					closure.Up[i] = opened.cell
-					opened.refs = append(opened.refs, upvalueReference{fn: closure, index: i})
+			case opConcat:
+				x, xok := stringCoerce(regs[b].value)
+				y, yok := stringCoerce(regs[c].value)
+				if xok && yok {
+					regs[a].value = String(x + y)
+				} else if value, ok, err := s.binaryMetamethod(regs[b].value, regs[c].value, "__concat"); err != nil {
+					return callResult{}, err
+				} else if ok {
+					regs[a].value = value
 				} else {
-					closure.Up[i] = fn.Up[up.Index]
+					return callResult{}, s.vmError(p, pc, "attempt to concatenate a %s value", badStringType(regs[b].value, regs[c].value))
 				}
-			}
-			regs[a].value = FunctionValue(closure)
-		case opCloseUpvalues:
-			s.closeFrameUpvalues(f, a)
-		case opCall:
-			callee := regs[a].value
-			if c >= 1 && c != 255 && b >= 2 && callee.kind == FunctionKind && callee.Function().NativeNumber2 != nil && regs[a+1].value.kind == NumberKind && regs[a+2].value.kind == NumberKind {
-				regs[a].value = Number(callee.Function().NativeNumber2(regs[a+1].value.Number(), regs[a+2].value.Number()))
-				for i := 1; i < c; i++ {
-					regs[a+i].value = Nil
-				}
-				continue
-			}
-			if c >= 1 && c != 255 && b >= 1 && callee.kind == FunctionKind && callee.Function().NativeNumber1 != nil && regs[a+1].value.kind == NumberKind {
-				regs[a].value = Number(callee.Function().NativeNumber1(regs[a+1].value.Number()))
-				for i := 1; i < c; i++ {
-					regs[a+i].value = Nil
-				}
-				continue
-			}
-			if c == 1 && callee.kind == FunctionKind && callee.Function().Proto != nil && callee.Function().Proto.NumericPure {
-				if value, ok := callNumericPure(callee.Function().Proto, regs, a+1, b); ok {
-					regs[a].value = Number(value)
-					continue
-				}
-			}
-			if callee.kind == FunctionKind && callee.Function().Native == nil && callee.Function().Proto != nil && callee.Function().Proto.Fast {
-				if err := s.pushFastFromRegisters(callee.Function(), regs, a+1, b, a, c); err != nil {
+				s.maybeCollectWeakTables()
+			case opEq:
+				left, right := regs[b].value, regs[c].value
+				if equal(left, right) {
+					regs[a].value = True
+				} else if value, ok, err := s.equalityMetamethod(left, right); err != nil {
 					return callResult{}, err
+				} else if ok {
+					regs[a].value = Bool(value.Truthy())
+				} else {
+					regs[a].value = False
 				}
-				continue
-			}
-			if s.argTop+b > len(s.callArgs) {
-				return callResult{}, s.vmError(p, pc, "Lua argument stack overflow")
-			}
-			argBase := s.argTop
-			s.argTop += b
-			argv := s.callArgs[argBase:s.argTop]
-			for i := 0; i < b; i++ {
-				argv[i] = regs[a+1+i].value
-			}
-			results, err := s.callValue(callee, argv)
-			for i := range argv {
-				argv[i] = Nil
-			}
-			s.argTop = argBase
-			if err != nil {
-				return callResult{}, s.vmWrap(p, pc, err)
-			}
-			f = &s.frames[fi]
-			s.applyFastResults(f, a, c, results)
-		case opTailCall:
-			callee := regs[a].value
-			argv := make([]Value, b)
-			for i := range argv {
-				argv[i] = regs[a+1+i].value
-			}
-			returnBase, returnWant := f.returnBase, f.returnWant
-			s.closeFrameUpvalues(f, 0)
-			if !f.heap {
-				for i := range f.regs {
-					f.regs[i].value = Nil
-				}
-				s.top = f.stackBase
-			}
-			s.frames = s.frames[:fi]
-			if callee.kind == FunctionKind && callee.Function().Native == nil && callee.Function().Proto != nil && callee.Function().Proto.Fast {
-				if err := s.pushFastFrame(callee.Function(), argv, returnBase, returnWant); err != nil {
+			case opEqK:
+				left, right := regs[b].value, p.Constants[c]
+				if equal(left, right) {
+					regs[a].value = True
+				} else if value, ok, err := s.equalityMetamethod(left, right); err != nil {
 					return callResult{}, err
+				} else if ok {
+					regs[a].value = Bool(value.Truthy())
+				} else {
+					regs[a].value = False
 				}
-				continue
-			}
-			results, err := s.callValue(callee, argv)
-			if err != nil {
-				return callResult{}, s.vmWrap(p, pc, err)
-			}
-			if len(s.frames) == start {
-				return results, nil
-			}
-			s.applyFastResults(&s.frames[len(s.frames)-1], returnBase, returnWant, results)
-		case opReturn:
-			if p.Lines[pc] == 0 {
-				if err := s.lineHook(f, p.EndLine); err != nil {
+			case opNEK:
+				left, right := regs[b].value, p.Constants[c]
+				if equal(left, right) {
+					regs[a].value = False
+				} else if value, ok, err := s.equalityMetamethod(left, right); err != nil {
 					return callResult{}, err
+				} else if ok {
+					regs[a].value = Bool(!value.Truthy())
+				} else {
+					regs[a].value = True
 				}
+			case opLT, opLE:
+				x, y := regs[b].value, regs[c].value
+				var result bool
+				if x.kind == NumberKind && y.kind == NumberKind {
+					if ins.op() == opLT {
+						result = x.Number() < y.Number()
+					} else {
+						result = x.Number() <= y.Number()
+					}
+				} else if x.kind == StringKind && y.kind == StringKind {
+					if ins.op() == opLT {
+						result = x.StringValue() < y.StringValue()
+					} else {
+						result = x.StringValue() <= y.StringValue()
+					}
+				} else {
+					name := "__lt"
+					if ins.op() == opLE {
+						name = "__le"
+					}
+					value, ok, err := s.comparisonMetamethod(x, y, name)
+					if ins.op() == opLE && !ok && err == nil {
+						value, ok, err = s.comparisonMetamethod(y, x, "__lt")
+						value = Bool(!value.Truthy())
+					}
+					if err != nil {
+						return callResult{}, err
+					}
+					if !ok {
+						return callResult{}, s.vmError(p, pc, "attempt to compare %s with %s", x.TypeName(), y.TypeName())
+					}
+					result = value.Truthy()
+				}
+				regs[a].value = Bool(result)
+			case opLTK, opLEK, opGTK, opGEK:
+				x, y := regs[b].value, p.Constants[c]
+				var result bool
+				if x.kind == NumberKind && y.kind == NumberKind {
+					switch ins.op() {
+					case opLTK:
+						result = x.Number() < y.Number()
+					case opLEK:
+						result = x.Number() <= y.Number()
+					case opGTK:
+						result = x.Number() > y.Number()
+					case opGEK:
+						result = x.Number() >= y.Number()
+					}
+				} else if x.kind == StringKind && y.kind == StringKind {
+					switch ins.op() {
+					case opLTK:
+						result = x.StringValue() < y.StringValue()
+					case opLEK:
+						result = x.StringValue() <= y.StringValue()
+					case opGTK:
+						result = x.StringValue() > y.StringValue()
+					case opGEK:
+						result = x.StringValue() >= y.StringValue()
+					}
+				} else {
+					name, left, right := "__lt", x, y
+					if ins.op() == opLEK {
+						name = "__le"
+					} else if ins.op() == opGTK {
+						left, right = y, x
+					} else if ins.op() == opGEK {
+						name = "__le"
+						left, right = y, x
+					}
+					value, ok, err := s.comparisonMetamethod(left, right, name)
+					if (ins.op() == opLEK || ins.op() == opGEK) && !ok && err == nil {
+						value, ok, err = s.comparisonMetamethod(right, left, "__lt")
+						value = Bool(!value.Truthy())
+					}
+					if err != nil {
+						return callResult{}, err
+					}
+					if !ok {
+						return callResult{}, s.vmError(p, pc, "attempt to compare %s with %s", x.TypeName(), y.TypeName())
+					}
+					result = value.Truthy()
+				}
+				regs[a].value = Bool(result)
+			case opJumpCompareK:
+				left, right, mode := regs[a].value, p.Constants[b], uint8(c)
+				var condition bool
+				if left.kind == NumberKind && right.kind == NumberKind {
+					x, y := left.Number(), right.Number()
+					switch mode {
+					case compareEQ:
+						condition = x == y
+					case compareNE:
+						condition = x != y
+					case compareLT:
+						condition = x < y
+					case compareLE:
+						condition = x <= y
+					case compareGT:
+						condition = x > y
+					case compareGE:
+						condition = x >= y
+					}
+				} else if left.kind == StringKind && right.kind == StringKind {
+					x, y := left.StringValue(), right.StringValue()
+					switch mode {
+					case compareEQ:
+						condition = x == y
+					case compareNE:
+						condition = x != y
+					case compareLT:
+						condition = x < y
+					case compareLE:
+						condition = x <= y
+					case compareGT:
+						condition = x > y
+					case compareGE:
+						condition = x >= y
+					}
+				} else {
+					name, x, y := "__eq", left, right
+					switch mode {
+					case compareLT:
+						name = "__lt"
+					case compareLE:
+						name = "__le"
+					case compareGT:
+						name, x, y = "__lt", right, left
+					case compareGE:
+						name, x, y = "__le", right, left
+					}
+					if (mode == compareEQ || mode == compareNE) && equal(left, right) {
+						condition = mode == compareEQ
+					} else if value, ok, err := s.relationalMetamethod(x, y, name); err != nil {
+						return callResult{}, err
+					} else if ok {
+						condition = value.Truthy()
+						if mode == compareNE {
+							condition = !condition
+						}
+					} else if mode == compareEQ || mode == compareNE {
+						condition = mode == compareNE
+					} else {
+						return callResult{}, s.vmError(p, pc, "attempt to compare %s with %s", left.TypeName(), right.TypeName())
+					}
+				}
+				offset := p.Code[f.pc].sbx()
+				f.pc++
+				if !condition {
+					f.pc += offset
+				}
+			case opJump:
+				f.pc += ins.sbx()
+			case opBreak:
+				f.pc += ins.sbx()
+			case opJumpFalse:
+				if !regs[a].value.Truthy() {
+					f.pc += ins.sbx()
+				}
+			case opForPrep:
+				initial, iok := toNumber(regs[a].value)
+				limit, lok := toNumber(regs[a+1].value)
+				step, sok := toNumber(regs[a+2].value)
+				if !iok || !lok || !sok {
+					return callResult{}, s.vmError(p, pc, "numeric for values must be numbers")
+				}
+				regs[a].value = Number(initial - step)
+				regs[a+1].value = Number(limit)
+				regs[a+2].value = Number(step)
+				f.pc += ins.sbx()
+			case opForLoop:
+				index := regs[a].value.Number() + regs[a+2].value.Number()
+				limit, step := regs[a+1].value.Number(), regs[a+2].value.Number()
+				regs[a].value = Number(index)
+				if step > 0 && index <= limit || step <= 0 && index >= limit {
+					f.pc += ins.sbx()
+				}
+			case opForLoopV:
+				index := regs[a].value.Number() + regs[a+2].value.Number()
+				limit, step := regs[a+1].value.Number(), regs[a+2].value.Number()
+				indexValue := Number(index)
+				regs[a].value = indexValue
+				offset := p.Code[f.pc].sbx()
+				f.pc++
+				if step > 0 && index <= limit || step <= 0 && index >= limit {
+					regs[b].value = indexValue
+					f.pc += offset
+				}
+			case opClosure:
+				child := p.Children[ins.bx()]
+				closure := &Function{Proto: child, Env: fn.Env, Up: make([]*cell, len(child.Upvalues))}
+				for i, up := range child.Upvalues {
+					if up.Local {
+						opened := f.open[int(up.Index)]
+						if opened == nil {
+							if f.open == nil {
+								f.open = make(map[int]*openUpvalue)
+							}
+							opened = &openUpvalue{cell: &regs[up.Index]}
+							f.open[int(up.Index)] = opened
+						}
+						closure.Up[i] = opened.cell
+						opened.refs = append(opened.refs, upvalueReference{fn: closure, index: i})
+					} else {
+						closure.Up[i] = fn.Up[up.Index]
+					}
+				}
+				regs[a].value = FunctionValue(closure)
+			case opCloseUpvalues:
+				s.closeFrameUpvalues(f, a)
+			case opCall:
+				callee := regs[a].value
+				if c >= 1 && c != 255 && b >= 2 && callee.kind == FunctionKind && callee.Function().NativeNumber2 != nil && regs[a+1].value.kind == NumberKind && regs[a+2].value.kind == NumberKind {
+					regs[a].value = Number(callee.Function().NativeNumber2(regs[a+1].value.Number(), regs[a+2].value.Number()))
+					for i := 1; i < c; i++ {
+						regs[a+i].value = Nil
+					}
+					goto next
+				}
+				if c >= 1 && c != 255 && b >= 1 && callee.kind == FunctionKind && callee.Function().NativeNumber1 != nil && regs[a+1].value.kind == NumberKind {
+					regs[a].value = Number(callee.Function().NativeNumber1(regs[a+1].value.Number()))
+					for i := 1; i < c; i++ {
+						regs[a+i].value = Nil
+					}
+					goto next
+				}
+				if c == 1 && callee.kind == FunctionKind && callee.Function().Proto != nil && callee.Function().Proto.NumericPure {
+					if value, ok := callNumericPure(callee.Function().Proto, regs, a+1, b); ok {
+						regs[a].value = Number(value)
+						goto next
+					}
+				}
+				if callee.kind == FunctionKind && callee.Function().Native == nil && callee.Function().Proto != nil && callee.Function().Proto.Fast {
+					if err := s.pushFastFromRegisters(callee.Function(), regs, a+1, b, a, c); err != nil {
+						return callResult{}, s.vmWrap(p, pc, err)
+					}
+					continue outer
+				}
+				if s.argTop+b > len(s.callArgs) {
+					return callResult{}, s.vmError(p, pc, "Lua argument stack overflow")
+				}
+				argBase := s.argTop
+				s.argTop += b
+				argv := s.callArgs[argBase:s.argTop]
+				for i := 0; i < b; i++ {
+					argv[i] = regs[a+1+i].value
+				}
+				results, err := s.callValue(callee, argv)
+				for i := range argv {
+					argv[i] = Nil
+				}
+				s.argTop = argBase
+				if err != nil {
+					return callResult{}, s.vmWrap(p, pc, err)
+				}
+				hooksActive = s.hook.kind == FunctionKind
+				f = &s.frames[fi]
+				s.applyFastResults(f, a, c, results)
+				continue outer
+			case opTailCall:
+				callee := regs[a].value
+				argv := make([]Value, b)
+				for i := range argv {
+					argv[i] = regs[a+1+i].value
+				}
+				returnBase, returnWant := f.returnBase, f.returnWant
+				tailBelow := append(append([]*Function(nil), f.tailBelow...), f.fn)
+				s.closeFrameUpvalues(f, 0)
+				if !f.heap {
+					clear(f.regs)
+					s.top = f.stackBase
+				}
+				s.frames = s.frames[:fi]
+				if callee.kind == FunctionKind && callee.Function().Native == nil && callee.Function().Proto != nil && callee.Function().Proto.Fast {
+					s.pendingTailBelow = tailBelow
+					if err := s.pushFastFrame(callee.Function(), argv, returnBase, returnWant); err != nil {
+						return callResult{}, err
+					}
+					continue outer
+				}
+				s.pendingTailBelow = tailBelow
+				results, err := s.callValue(callee, argv)
+				s.pendingTailBelow = nil
+				if err != nil {
+					return callResult{}, s.vmWrap(p, pc, err)
+				}
+				hooksActive = s.hook.kind == FunctionKind
+				if len(s.frames) == start {
+					return results, nil
+				}
+				s.applyFastResults(&s.frames[len(s.frames)-1], returnBase, returnWant, results)
+				continue outer
+			case opReturn:
+				if hooksActive && p.Lines[pc] == 0 {
+					if err := s.lineHook(f, p.EndLine); err != nil {
+						return callResult{}, err
+					}
+				}
+				result := callResult{count: b}
+				for i := 0; i < b; i++ {
+					result.inline[i] = regs[a+i].value
+				}
+				done, err := s.fastReturn(start, result)
+				if done || err != nil {
+					return result, err
+				}
+				continue outer
+			default:
+				return callResult{}, s.vmError(p, pc, "opcode %d escaped fast VM", ins.op())
 			}
-			result := callResult{count: b}
-			for i := 0; i < b; i++ {
-				result.inline[i] = regs[a+i].value
+		next:
+			if hooksActive {
+				continue outer
 			}
-			done, err := s.fastReturn(start, result)
-			if done || err != nil {
-				return result, err
-			}
-		default:
-			return callResult{}, s.vmError(p, pc, "opcode %d escaped fast VM", ins.op())
+		}
+		result := callResult{}
+		if done, err := s.fastReturn(start, result); done || err != nil {
+			return result, err
 		}
 	}
 	return callResult{}, nil
@@ -762,24 +813,28 @@ func (s *State) pushFastFrame(fn *Function, args []Value, returnBase, returnWant
 	if size < int(p.Parameters) {
 		size = int(p.Parameters)
 	}
-	frame := frame{fn: fn, returnBase: returnBase, returnWant: returnWant, stackBase: s.top, open: make(map[int]*openUpvalue)}
+	frame := frame{fn: fn, returnBase: returnBase, returnWant: returnWant, stackBase: s.top, tailBelow: s.takePendingTailBelow()}
 	if p.Captured {
 		frame.regs = make([]cell, size)
 		frame.heap = true
 	} else {
 		if s.top+size > len(s.stack) {
-			return runtimeError("Lua stack overflow")
+			return runtimeError("stack overflow")
 		}
 		frame.regs = s.stack[s.top : s.top+size]
 		s.top += size
-		for i := range frame.regs {
-			frame.regs[i].value = Nil
-		}
+		clear(frame.regs)
 	}
 	for i := 0; i < len(args) && i < int(p.Parameters); i++ {
 		frame.regs[i].value = args[i]
 	}
 	s.frames = append(s.frames, frame)
+	if s.hook.kind == FunctionKind {
+		if err := s.eventHook("call", fn); err != nil {
+			s.frames = s.frames[:len(s.frames)-1]
+			return err
+		}
+	}
 	return nil
 }
 func (s *State) pushFastFromRegisters(fn *Function, source []cell, argStart, nargs, returnBase, returnWant int) error {
@@ -796,11 +851,19 @@ func (s *State) pushFastFromRegisters(fn *Function, source []cell, argStart, nar
 func (s *State) fastReturn(start int, result callResult) (bool, error) {
 	i := len(s.frames) - 1
 	finished := s.frames[i]
+	if s.hook.kind == FunctionKind {
+		if err := s.eventHook("return", finished.fn); err != nil {
+			return false, err
+		}
+		for j := len(finished.tailBelow) - 1; j >= 0; j-- {
+			if err := s.eventHook("tail return", finished.tailBelow[j]); err != nil {
+				return false, err
+			}
+		}
+	}
 	s.closeFrameUpvalues(&finished, 0)
 	if !finished.heap {
-		for j := range finished.regs {
-			finished.regs[j].value = Nil
-		}
+		clear(finished.regs)
 		s.top = finished.stackBase
 	}
 	s.frames = s.frames[:i]
@@ -812,6 +875,10 @@ func (s *State) fastReturn(start int, result callResult) (bool, error) {
 	return false, nil
 }
 func (s *State) applyFastResults(f *frame, base, want int, result callResult) {
+	if want == 255 {
+		f.multi = result
+		return
+	}
 	for i := 0; i < want; i++ {
 		if i < result.count {
 			f.regs[base+i].value = result.at(i)

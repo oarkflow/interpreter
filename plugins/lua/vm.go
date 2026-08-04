@@ -32,6 +32,17 @@ func (s *State) DoString(source string) ([]Value, error) {
 func (s *State) GetGlobal(name string) Value        { return s.globals.GetString(name) }
 func (s *State) SetGlobal(name string, value Value) { s.globals.SetString(name, value) }
 
+// Call invokes a Lua function with any number of arguments and returns an
+// owned slice of every result. This generality has a cost: dispatch can
+// route to the general VM, which stores a callee's varargs slice directly
+// in its frame, so Go's escape analysis must (correctly) treat args as
+// escaping for every call through this function, not just vararg ones —
+// escape analysis is a static property of the function body, not of a
+// particular call's runtime arguments. The variadic argument slice and the
+// returned result slice therefore both allocate. For a hot loop, use
+// CallInto (reused argument/result buffers, zero allocation) or CallNumber2
+// (a specialized allocation-free path for two-argument numeric functions)
+// instead.
 func (s *State) Call(function Value, args ...Value) ([]Value, error) {
 	if function.kind != FunctionKind {
 		return nil, runtimeError("attempt to call a %s value", function.TypeName())
@@ -210,6 +221,13 @@ func (r callResult) slice() []Value {
 	}
 	return out
 }
+
+func (s *State) takePendingTailBelow() []*Function {
+	chain := s.pendingTailBelow
+	s.pendingTailBelow = nil
+	return chain
+}
+
 func resultFromSlice(values []Value) callResult {
 	r := callResult{count: len(values)}
 	for i, v := range values {
@@ -225,7 +243,32 @@ func resultFromSlice(values []Value) callResult {
 	return r
 }
 
-func (s *State) dispatch(fn *Function, args []Value) (callResult, error) {
+func (s *State) dispatch(fn *Function, args []Value) (result callResult, err error) {
+	native := fn.NativeNumber1 != nil || fn.NativeNumber2 != nil || fn.Native != nil
+	if native {
+		s.nativeDepth++
+		if s.hook.kind == FunctionKind {
+			if err := s.eventHook("call", fn); err != nil {
+				s.nativeDepth--
+				return callResult{}, err
+			}
+		}
+		defer func() {
+			rootBase := len(s.hookRoots)
+			for i := 0; i < result.count; i++ {
+				s.hookRoots = append(s.hookRoots, result.at(i))
+			}
+			var hookErr error
+			if s.hook.kind == FunctionKind {
+				hookErr = s.eventHook("return", fn)
+			}
+			s.hookRoots = s.hookRoots[:rootBase]
+			if err == nil {
+				err = hookErr
+			}
+			s.nativeDepth--
+		}()
+	}
 	if fn.NativeNumber1 != nil {
 		if len(args) < 1 {
 			return callResult{}, runtimeError("number expected")
@@ -272,7 +315,7 @@ func (s *State) callLua(fn *Function, args []Value) (callResult, error) {
 		regs = make([]cell, size)
 	} else {
 		if stackBase+size > len(s.stack) {
-			return callResult{}, runtimeError("Lua stack overflow")
+			return callResult{}, runtimeError("stack overflow")
 		}
 		regs = s.stack[stackBase : stackBase+size]
 		s.top += size
@@ -301,9 +344,25 @@ func (s *State) callLua(fn *Function, args []Value) (callResult, error) {
 		compat.SetString("n", Number(float64(len(varargs))))
 		regs[int(p.Parameters)].value = TableValue(compat)
 	}
-	f := frame{fn: fn, regs: regs, varargs: varargs, open: make(map[int]*openUpvalue)}
+	f := frame{fn: fn, regs: regs, varargs: varargs, tailBelow: s.takePendingTailBelow()}
 	s.frames = append(s.frames, f)
+	if s.hook.kind == FunctionKind {
+		if err := s.eventHook("call", fn); err != nil {
+			s.frames = s.frames[:len(s.frames)-1]
+			return callResult{}, err
+		}
+	}
 	defer func() {
+		if s.hook.kind == FunctionKind {
+			event := "return"
+			if len(s.frames) > 0 && s.frames[len(s.frames)-1].tail {
+				event = "tail return"
+			}
+			_ = s.eventHook(event, fn)
+			for i := len(f.tailBelow) - 1; i >= 0; i-- {
+				_ = s.eventHook("tail return", f.tailBelow[i])
+			}
+		}
 		s.closeFrameUpvalues(&f, 0)
 		s.frames = s.frames[:len(s.frames)-1]
 	}()
@@ -312,8 +371,10 @@ func (s *State) callLua(fn *Function, args []Value) (callResult, error) {
 		ins := p.Code[pc]
 		f.pc++
 		s.frames[len(s.frames)-1].pc = f.pc
-		if err := s.instructionHook(&f, p, pc); err != nil {
-			return callResult{}, s.vmWrap(p, pc, err)
+		if s.hook.kind == FunctionKind {
+			if err := s.instructionHook(&f, p, pc); err != nil {
+				return callResult{}, s.vmWrap(p, pc, err)
+			}
 		}
 		a, b, c := ins.a(), ins.b(), ins.c()
 		switch ins.op() {
@@ -829,6 +890,8 @@ func (s *State) callLua(fn *Function, args []Value) (callResult, error) {
 			}
 		case opJump:
 			f.pc += ins.sbx()
+		case opBreak:
+			f.pc += ins.sbx()
 		case opJumpFalse:
 			if !regs[a].value.Truthy() {
 				f.pc += ins.sbx()
@@ -899,6 +962,9 @@ func (s *State) callLua(fn *Function, args []Value) (callResult, error) {
 				if up.Local {
 					opened := f.open[int(up.Index)]
 					if opened == nil {
+						if f.open == nil {
+							f.open = make(map[int]*openUpvalue)
+						}
 						opened = &openUpvalue{cell: &regs[up.Index]}
 						f.open[int(up.Index)] = opened
 					}
@@ -967,6 +1033,7 @@ func (s *State) callLua(fn *Function, args []Value) (callResult, error) {
 			for i := range argv {
 				argv[i] = regs[a+1+i].value
 			}
+			s.frames[len(s.frames)-1].tail = true
 			result, err := s.callValue(callee, argv)
 			if err != nil {
 				return callResult{}, s.vmWrap(p, pc, err)
@@ -997,7 +1064,7 @@ func (s *State) callLua(fn *Function, args []Value) (callResult, error) {
 				}
 			}
 		case opReturn:
-			if p.Lines[pc] == 0 {
+			if s.hook.kind == FunctionKind && p.Lines[pc] == 0 {
 				if err := s.lineHook(&f, p.EndLine); err != nil {
 					return callResult{}, err
 				}
@@ -1037,17 +1104,27 @@ func (s *State) callLua(fn *Function, args []Value) (callResult, error) {
 }
 
 func (s *State) vmError(p *Prototype, pc int, format string, args ...any) error {
+	if s.captureErrors && len(s.savedTrace) == 0 {
+		s.captureErrorTrace("")
+	}
 	line := 0
 	if pc < len(p.Lines) {
 		line = p.Lines[pc]
 	}
-	return &Error{Source: p.Source, Line: line, Msg: fmt.Sprintf(format, args...)}
+	message := fmt.Sprintf(format, args...)
+	if contexts := p.ErrorContexts[pc]; len(contexts) > 0 {
+		message += " (" + strings.Join(contexts, ", ") + ")"
+	}
+	return &Error{Source: p.Source, Line: line, Msg: message}
 }
 func (s *State) vmWrap(p *Prototype, pc int, err error) error {
 	if _, ok := err.(*luaValueError); ok {
 		return err
 	}
-	if _, ok := err.(*Error); ok {
+	if luaErr, ok := err.(*Error); ok {
+		if luaErr.Source != "" {
+			return err
+		}
 		return s.vmError(p, pc, "%s", err)
 	}
 	return err
@@ -1304,6 +1381,9 @@ func (s *State) relationalMetamethod(a, b Value, name string) (Value, bool, erro
 	return s.comparisonMetamethod(a, b, name)
 }
 func (s *State) closeFrameUpvalues(frame *frame, from int) {
+	if frame.open == nil {
+		return
+	}
 	for register, opened := range frame.open {
 		if register < from {
 			continue
@@ -1330,10 +1410,19 @@ func (s *State) instructionHook(frame *frame, proto *Prototype, pc int) error {
 	}
 	event := ""
 	lineEvent := insProducesLineEvent(proto.Code[pc].op())
-	if lineEvent && strings.ContainsRune(s.hookMask, 'l') && line > 0 && line != frame.lastHookLine {
+	loopInstruction := proto.Code[pc].op() == opForLoop || proto.Code[pc].op() == opForLoopV || proto.Code[pc].op() == opTForCall
+	repeatedLoopLine := false
+	if loopInstruction {
+		if frame.hookLoops == nil {
+			frame.hookLoops = make(map[int]bool)
+		}
+		repeatedLoopLine = frame.hookLoops[pc]
+		frame.hookLoops[pc] = true
+	}
+	if lineEvent && strings.ContainsRune(s.hookMask, 'l') && line > 0 && (line != frame.lastHookLine || repeatedLoopLine) {
 		event = "line"
 		frame.lastHookLine = line
-	} else if s.hookCount > 0 {
+	} else if s.hookCount > 0 && insProducesCountEvent(proto.Code[pc].op()) {
 		s.hookCounter++
 		if s.hookCounter >= s.hookCount {
 			s.hookCounter = 0
@@ -1348,9 +1437,19 @@ func (s *State) instructionHook(frame *frame, proto *Prototype, pc int) error {
 	s.hookActive = false
 	return err
 }
+func insProducesCountEvent(op opcode) bool {
+	switch op {
+	case opLoadK, opLoadKX, opLoadNil, opLoadBool:
+		// Constants are often materialized by extra instructions in this VM.
+		// Do not let those implementation details inflate Lua's VM count hook.
+		return false
+	default:
+		return true
+	}
+}
 func insProducesLineEvent(op opcode) bool {
 	switch op {
-	case opJump, opJumpFalse, opJumpCompareK, opForPrep, opForLoop, opForLoopV:
+	case opJump:
 		return false
 	default:
 		return true
@@ -1363,6 +1462,24 @@ func (s *State) lineHook(frame *frame, line int) error {
 	frame.lastHookLine = line
 	s.hookActive = true
 	_, err := s.callValue(s.hook, []Value{String("line"), Number(float64(line))})
+	s.hookActive = false
+	return err
+}
+func (s *State) eventHook(event string, fn *Function) error {
+	if s.hook.kind != FunctionKind || s.hookActive {
+		return nil
+	}
+	mask := byte('c')
+	if event == "return" || event == "tail return" {
+		mask = 'r'
+	}
+	if !strings.ContainsRune(s.hookMask, rune(mask)) {
+		return nil
+	}
+	s.hookActive = true
+	s.hookSubject = fn
+	_, err := s.callValue(s.hook, []Value{String(event), Nil})
+	s.hookSubject = nil
 	s.hookActive = false
 	return err
 }

@@ -59,6 +59,7 @@ const (
 type token struct {
 	kind tokenKind
 	lit  string
+	raw  string
 	num  float64
 	line int
 }

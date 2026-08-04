@@ -80,6 +80,21 @@ func (s *State) openIOLibrary() {
 		}
 		return []Value{String("file (" + file.file.Name() + ")")}, nil
 	}))
+	meta.SetString("__gc", Native(func(_ *State, args []Value) ([]Value, error) {
+		if len(args) == 0 {
+			return nil, runtimeError("no value")
+		}
+		file, err := fileFromValue(args[0])
+		if err != nil || !file.closeable {
+			return nil, nil
+		}
+		if file.writer != nil {
+			_ = file.writer.Flush()
+		}
+		_ = file.file.Close()
+		file.closed = true
+		return nil, nil
+	}))
 	wrapped := make(map[*luaFile]Value)
 	wrap := func(file *luaFile) Value {
 		if value, ok := wrapped[file]; ok {

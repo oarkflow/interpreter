@@ -88,9 +88,27 @@ func (s *State) openLibraries() {
 		}
 		return args, nil
 	}))
-	s.globals.SetString("error", Native(func(_ *State, args []Value) ([]Value, error) {
+	s.globals.SetString("error", Native(func(state *State, args []Value) ([]Value, error) {
+		state.captureErrorTrace("error")
 		if len(args) == 0 {
 			return nil, &luaValueError{value: Nil}
+		}
+		level := 1
+		if len(args) > 1 {
+			if number, ok := toNumber(args[1]); ok {
+				level = int(number)
+			}
+		}
+		if level > 0 && args[0].kind == StringKind {
+			fn, tail, index, ok := state.debugStackEntry(level)
+			if ok && !tail && fn != nil && fn.Proto != nil && index >= 0 {
+				line := 0
+				pc := state.frames[index].pc - 1
+				if pc >= 0 && pc < len(fn.Proto.Lines) {
+					line = fn.Proto.Lines[pc]
+				}
+				return nil, &Error{Source: fn.Proto.Source, Line: line, Msg: args[0].StringValue()}
+			}
 		}
 		return nil, &luaValueError{value: args[0]}
 	}))
@@ -287,6 +305,33 @@ func (s *State) openLibraries() {
 			values[i+1] = result.at(i)
 		}
 		return values, nil
+	}))
+	s.globals.SetString("xpcall", Native(func(state *State, args []Value) ([]Value, error) {
+		if len(args) < 2 || args[0].kind != FunctionKind || args[1].kind != FunctionKind {
+			return []Value{False, String("function expected")}, nil
+		}
+		state.savedTrace = nil
+		state.captureErrors = true
+		result, callErr := state.callValue(args[0], nil)
+		state.captureErrors = false
+		if callErr == nil {
+			values := make([]Value, result.count+1)
+			values[0] = True
+			for i := 0; i < result.count; i++ {
+				values[i+1] = result.at(i)
+			}
+			return values, nil
+		}
+		handled, handlerErr := state.callValue(args[1], []Value{errorValue(callErr)})
+		state.savedTrace = nil
+		if handlerErr != nil {
+			return []Value{False, String("error in error handling")}, nil
+		}
+		value := Nil
+		if handled.count > 0 {
+			value = handled.at(0)
+		}
+		return []Value{False, value}, nil
 	}))
 	loadString := Native(func(state *State, args []Value) ([]Value, error) {
 		source, err := needString(args, 0)
@@ -643,11 +688,11 @@ func (s *State) functionEnvironment(args []Value, setting bool) (*Table, *Functi
 	if level == 0 {
 		return s.globals, nil, nil
 	}
-	index := len(s.frames) - int(level)
-	if index < 0 || index >= len(s.frames) {
+	logicalLevel := int(level) - (s.nativeDepth - 1)
+	fn, tail, _, ok := s.debugStackEntry(logicalLevel)
+	if !ok || tail {
 		return nil, nil, runtimeError("invalid level")
 	}
-	fn := s.frames[index].fn
 	if fn.Env == nil {
 		return s.globals, fn, nil
 	}

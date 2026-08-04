@@ -72,6 +72,7 @@ const (
 	opLoadKX
 	opGetGlobalX
 	opSetGlobalX
+	opBreak
 )
 
 const (
@@ -122,6 +123,7 @@ type Prototype struct {
 	NumericFormula   *numericFormula
 	FieldCaches      []fieldCache
 	ExtraConstants   map[int]int
+	ErrorContexts    map[int][]string
 }
 
 type LocalVariableInfo struct {
@@ -146,6 +148,7 @@ type UpvalueDescriptor struct {
 
 type State struct {
 	globals          *Table
+	registry         *Table
 	stack            []cell
 	top              int
 	frames           []frame
@@ -178,6 +181,12 @@ type State struct {
 	hookActive       bool
 	hookSkipFunction *Function
 	hookSkipLine     int
+	hookSubject      *Function
+	hookRoots        []Value
+	pendingTailBelow []*Function
+	nativeDepth      int
+	savedTrace       []string
+	captureErrors    bool
 }
 
 type frame struct {
@@ -192,6 +201,9 @@ type frame struct {
 	returnWant   int
 	open         map[int]*openUpvalue
 	lastHookLine int
+	hookLoops    map[int]bool
+	tail         bool
+	tailBelow    []*Function
 }
 
 type upvalueReference struct {
@@ -207,6 +219,7 @@ type openUpvalue struct {
 func NewState() *State {
 	s := &State{
 		globals:     NewTable(0, 64),
+		registry:    NewTable(0, 8),
 		stack:       make([]cell, 8192),
 		frames:      make([]frame, 0, 32),
 		callArgs:    make([]Value, 8192),

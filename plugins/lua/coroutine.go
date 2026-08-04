@@ -23,12 +23,20 @@ type threadEvent struct {
 func newCoroutineState(parent *State, thread *Thread) *State {
 	return &State{
 		globals:        parent.globals,
+		registry:       parent.registry,
 		stack:          make([]cell, len(parent.stack)),
 		frames:         make([]frame, 0, 32),
 		callArgs:       make([]Value, len(parent.callArgs)),
 		Output:         parent.Output,
 		nextCollection: 1024,
 		currentThread:  thread,
+		shapes:         parent.shapes,
+		randomState:    parent.randomState,
+		gcPercent:      parent.gcPercent,
+		gcPause:        parent.gcPause,
+		gcStepMul:      parent.gcStepMul,
+		dumped:         parent.dumped,
+		typeMetatables: parent.typeMetatables,
 	}
 }
 

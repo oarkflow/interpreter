@@ -253,11 +253,7 @@ func markFastPrototypes(p *Prototype) bool {
 	}
 	for _, ins := range p.Code {
 		switch ins.op() {
-		case opMove, opLoadK, opLoadKX, opLoadNil, opLoadBool, opGetUp, opSetUp, opGetGlobal, opGetGlobalX, opSetGlobal, opSetGlobalX, opGetTable, opGetTableK, opGetArrayI, opGetFieldK, opSetTable, opSetTableK, opSetArrayI, opSetFieldK, opSwapTable, opAddTable, opNewTable, opAdd, opAddK, opSub, opSubK, opMul, opMulK, opDiv, opDivK, opMod, opModK, opPow, opPowK, opNeg, opNot, opLen, opConcat, opEq, opEqK, opNEK, opLT, opLTK, opGTK, opLE, opLEK, opGEK, opJumpCompareK, opJump, opJumpFalse, opForPrep, opForLoop, opForLoopV, opClosure, opCloseUpvalues:
-		case opCall, opTailCall:
-			if ins.c() == 255 {
-				ok = false
-			}
+		case opMove, opLoadK, opLoadKX, opLoadNil, opLoadBool, opGetUp, opSetUp, opGetGlobal, opGetGlobalX, opSetGlobal, opSetGlobalX, opGetTable, opGetTableK, opGetArrayI, opGetFieldK, opSetTable, opSetTableK, opSetArrayI, opSetFieldK, opSwapTable, opAddTable, opNewTable, opSetListMulti, opAdd, opAddK, opSub, opSubK, opMul, opMulK, opDiv, opDivK, opMod, opModK, opPow, opPowK, opNeg, opNot, opLen, opConcat, opEq, opEqK, opNEK, opLT, opLTK, opGTK, opLE, opLEK, opGEK, opJumpCompareK, opJump, opBreak, opJumpFalse, opForPrep, opForLoop, opForLoopV, opClosure, opCloseUpvalues, opCall, opTailCall:
 		case opReturn:
 			if ins.b() == 255 || ins.b() > 4 {
 				ok = false
@@ -289,6 +285,48 @@ func (c *compiler) emit(i Instruction, line int) int {
 	}
 	c.proto.LiveRegisters = append(c.proto.LiveRegisters, uint8(live))
 	return pc
+}
+func (c *compiler) markErrorContext(pc int, expressions ...expression) {
+	for _, expr := range expressions {
+		if context := c.expressionContext(expr); context != "" {
+			if c.proto.ErrorContexts == nil {
+				c.proto.ErrorContexts = make(map[int][]string)
+			}
+			c.proto.ErrorContexts[pc] = append(c.proto.ErrorContexts[pc], context)
+		}
+	}
+}
+func (c *compiler) expressionContext(expr expression) string {
+	switch value := expr.(type) {
+	case *nameExpression:
+		resolved := c.resolve(value.name)
+		class := "global"
+		if resolved.class == localVariable {
+			class = "local"
+		} else if resolved.class == upvalueVariable {
+			class = "upvalue"
+		}
+		return fmt.Sprintf("%s '%s'", class, value.name)
+	case *indexExpression:
+		if literal, ok := value.key.(*literalExpression); ok && literal.value.kind == StringKind {
+			return fmt.Sprintf("field '%s'", literal.value.StringValue())
+		}
+	}
+	return ""
+}
+func (c *compiler) markCallErrorContext(pc int, call *callExpression) {
+	if call.receiver != nil {
+		if indexed, ok := call.function.(*indexExpression); ok {
+			if literal, ok := indexed.key.(*literalExpression); ok && literal.value.kind == StringKind {
+				if c.proto.ErrorContexts == nil {
+					c.proto.ErrorContexts = make(map[int][]string)
+				}
+				c.proto.ErrorContexts[pc] = append(c.proto.ErrorContexts[pc], fmt.Sprintf("method '%s'", literal.value.StringValue()))
+				return
+			}
+		}
+	}
+	c.markErrorContext(pc, call.function)
 }
 func (c *compiler) patch(pc, target int) {
 	i := c.proto.Code[pc]
@@ -493,7 +531,7 @@ func (c *compiler) compileStatement(stmt statement) error {
 		}
 		i := len(c.loops) - 1
 		c.closeCapturedFrom(c.loops[i].closeFrom, n.line)
-		pc := c.emit(abx(opJump, 0, 0), n.line)
+		pc := c.emit(abx(opBreak, 0, 0), n.line)
 		c.loops[i].breaks = append(c.loops[i].breaks, pc)
 		return nil
 	case *doStatement:
@@ -581,10 +619,24 @@ func (c *compiler) compileAssignment(n *assignStatement) error {
 	if err != nil {
 		return err
 	}
-	valueBase := c.allocN(len(values))
-	for i, value := range values {
-		c.emit(abc(opMove, uint8(valueBase+i), uint8(value), 0), n.line)
-		values[i] = valueBase + i
+	snapshotValues := false
+	for _, target := range targets {
+		if target.variable == nil || target.variable.class != localVariable {
+			continue
+		}
+		for _, value := range values {
+			if target.variable.index == value {
+				snapshotValues = true
+				break
+			}
+		}
+	}
+	if snapshotValues {
+		valueBase := c.allocN(len(values))
+		for i, value := range values {
+			c.emit(abc(opMove, uint8(valueBase+i), uint8(value), 0), n.line)
+			values[i] = valueBase + i
+		}
 	}
 	for i, t := range targets {
 		if t.variable != nil {
@@ -799,7 +851,8 @@ func (c *compiler) compileTo(e expression, target int) error {
 			return err
 		}
 		ops := map[tokenKind]opcode{tMinus: opNeg, tNot: opNot, tHash: opLen}
-		c.emit(abc(ops[n.operator], uint8(target), uint8(v), 0), n.line)
+		pc := c.emit(abc(ops[n.operator], uint8(target), uint8(v), 0), n.line)
+		c.markErrorContext(pc, n.value)
 		return nil
 	case *binaryExpression:
 		return c.compileBinary(n, target)
@@ -810,7 +863,8 @@ func (c *compiler) compileTo(e expression, target int) error {
 		}
 		if literal, ok := n.key.(*literalExpression); ok {
 			if index, ok := literalArrayIndex(literal); ok {
-				c.emit(abc(opGetArrayI, uint8(target), uint8(t), index), n.line)
+				pc := c.emit(abc(opGetArrayI, uint8(target), uint8(t), index), n.line)
+				c.markErrorContext(pc, n.table)
 				return nil
 			}
 			index := c.constant(literal.value)
@@ -819,7 +873,8 @@ func (c *compiler) compileTo(e expression, target int) error {
 				if literal.value.kind == StringKind {
 					op = opGetFieldK
 				}
-				c.emit(abc(op, uint8(target), uint8(t), uint8(index)), n.line)
+				pc := c.emit(abc(op, uint8(target), uint8(t), uint8(index)), n.line)
+				c.markErrorContext(pc, n.table)
 				return nil
 			}
 		}
@@ -827,7 +882,8 @@ func (c *compiler) compileTo(e expression, target int) error {
 		if err != nil {
 			return err
 		}
-		c.emit(abc(opGetTable, uint8(target), uint8(t), uint8(k)), n.line)
+		pc := c.emit(abc(opGetTable, uint8(target), uint8(t), uint8(k)), n.line)
+		c.markErrorContext(pc, n.table)
 		return nil
 	case *tableExpression:
 		arrayHint, hashHint := 0, 0
@@ -968,7 +1024,8 @@ func (c *compiler) compileBinary(n *binaryExpression, target int) error {
 		if op, exists := variants[n.operator]; exists {
 			index := c.constant(literal.value)
 			if index <= math.MaxUint8 {
-				c.emit(abc(op, uint8(target), uint8(left), uint8(index)), n.line)
+				pc := c.emit(abc(op, uint8(target), uint8(left), uint8(index)), n.line)
+				c.markErrorContext(pc, n.left)
 				return nil
 			}
 		}
@@ -995,7 +1052,8 @@ func (c *compiler) compileBinary(n *binaryExpression, target int) error {
 			return c.error(n.line, "unsupported binary operator")
 		}
 	}
-	c.emit(abc(op, uint8(target), uint8(left), uint8(right)), n.line)
+	pc := c.emit(abc(op, uint8(target), uint8(left), uint8(right)), n.line)
+	c.markErrorContext(pc, n.left, n.right)
 	return nil
 }
 func (c *compiler) compileCall(n *callExpression, want int) (int, error) {
@@ -1031,20 +1089,23 @@ func (c *compiler) compileCall(n *callExpression, want int) (int, error) {
 				if literal.value.kind == StringKind {
 					op = opGetFieldK
 				}
-				c.emit(abc(op, uint8(base), uint8(base+1), uint8(constant)), n.line)
+				pc := c.emit(abc(op, uint8(base), uint8(base+1), uint8(constant)), n.line)
+				c.markErrorContext(pc, n.receiver)
 			} else {
 				key := c.alloc()
 				if err := c.loadConstant(key, literal.value, n.line); err != nil {
 					return 0, err
 				}
-				c.emit(abc(opGetTable, uint8(base), uint8(base+1), uint8(key)), n.line)
+				pc := c.emit(abc(opGetTable, uint8(base), uint8(base+1), uint8(key)), n.line)
+				c.markErrorContext(pc, n.receiver)
 			}
 		} else {
 			key, err := c.compileExpression(method.key)
 			if err != nil {
 				return 0, err
 			}
-			c.emit(abc(opGetTable, uint8(base), uint8(base+1), uint8(key)), n.line)
+			pc := c.emit(abc(opGetTable, uint8(base), uint8(base+1), uint8(key)), n.line)
+			c.markErrorContext(pc, n.receiver)
 		}
 		nargs++
 	} else if err := c.compileTo(n.function, base); err != nil {
@@ -1067,9 +1128,11 @@ func (c *compiler) compileCall(n *callExpression, want int) (int, error) {
 			r := c.alloc()
 			c.emit(abc(opVararg, uint8(r), 255, 0), value.line)
 		}
-		c.emit(abc(opCallTail, uint8(base), uint8(nargs), uint8(want)), n.line)
+		pc := c.emit(abc(opCallTail, uint8(base), uint8(nargs), uint8(want)), n.line)
+		c.markCallErrorContext(pc, n)
 	} else {
-		c.emit(abc(opCall, uint8(base), uint8(nargs), uint8(want)), n.line)
+		pc := c.emit(abc(opCall, uint8(base), uint8(nargs), uint8(want)), n.line)
+		c.markCallErrorContext(pc, n)
 	}
 	return base, nil
 }
@@ -1107,7 +1170,7 @@ func (c *compiler) compileTailReturn(line int, prefix []expression, tail func() 
 func (c *compiler) compileWhile(n *whileStatement) error {
 	start := len(c.proto.Code)
 	conditionMark := c.free
-	exit, err := c.compileConditionJumpFalse(n.condition, n.line)
+	exit, err := c.compileConditionJumpFalse(n.condition, n.condition.lineNumber())
 	if err != nil {
 		return err
 	}
@@ -1144,7 +1207,7 @@ func (c *compiler) compileRepeat(n *repeatStatement) error {
 		return err
 	}
 	c.endScope()
-	exit := c.emit(abx(opJumpFalse, uint8(condition), 0), n.line)
+	exit := c.emit(abx(opJumpFalse, uint8(condition), 0), n.condition.lineNumber())
 	c.patch(exit, start)
 	end := len(c.proto.Code)
 	c.finishLoop(end)
@@ -1153,7 +1216,7 @@ func (c *compiler) compileRepeat(n *repeatStatement) error {
 func (c *compiler) compileIf(n *ifStatement) error {
 	var exits []int
 	for _, branch := range n.branches {
-		next, err := c.compileConditionJumpFalse(branch.condition, n.line)
+		next, err := c.compileConditionJumpFalse(branch.condition, branch.condition.lineNumber())
 		if err != nil {
 			return err
 		}
@@ -1243,16 +1306,20 @@ func (c *compiler) compileGenericFor(n *genericForStatement) error {
 		return err
 	}
 	c.beginScope()
+	iterationLine := n.line
+	if len(n.values) > 0 {
+		iterationLine = n.values[0].lineNumber()
+	}
 	base := c.allocN(3)
 	for i, r := range values {
-		c.emit(abc(opMove, uint8(base+i), uint8(r), 0), n.line)
+		c.emit(abc(opMove, uint8(base+i), uint8(r), 0), iterationLine)
 	}
 	vars := make([]int, len(n.names))
 	for i, name := range n.names {
 		vars[i] = c.addLocal(name)
 	}
 	start := len(c.proto.Code)
-	c.emit(abc(opTForCall, uint8(base), uint8(len(vars)), 0), n.line)
+	c.emit(abc(opTForCall, uint8(base), uint8(len(vars)), 0), iterationLine)
 	exit := c.emit(abx(opJumpFalse, uint8(vars[0]), 0), n.line)
 	c.loops = append(c.loops, loopContext{closeFrom: vars[0]})
 	if err = c.compileBlock(n.body); err != nil {

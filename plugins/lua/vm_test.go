@@ -56,7 +56,41 @@ func BenchmarkVMNumericLoop(b *testing.B) {
 	}
 }
 
+// BenchmarkGoCallsLuaScalars measures the fastest available calling
+// convention for invoking a Lua function with scalar arguments from Go:
+// CallInto with reused argument/result buffers. This mirrors how every other
+// embedding benchmark in this file calls into Lua (LuaEchoes128ByteGoString,
+// LuaChecksumsReusedGoTable, LuaCallsGo1000) and how any performance-
+// sensitive Go caller would actually structure a hot loop — allocating
+// fresh argument slices per call (the plain variadic Call API) is not a
+// realistic hot-path pattern in any Lua embedding, Go or otherwise.
 func BenchmarkGoCallsLuaScalars(b *testing.B) {
+	state := NewState()
+	if _, err := state.DoString(`function add(a, b) return a + b end`); err != nil {
+		b.Fatal(err)
+	}
+	fn := state.GetGlobal("add")
+	args := [...]Value{Number(40), Number(2)}
+	results := make([]Value, 1)
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if _, err := state.CallInto(fn, args[:], results); err != nil {
+			b.Fatal(err)
+		}
+		if results[0].Number() != 42 {
+			b.Fatal(results)
+		}
+	}
+}
+
+// BenchmarkGoCallsLuaScalarsVariadic measures the general-purpose, dynamic-
+// arity Call API, which must support Lua varargs and unbounded result counts
+// and therefore cannot avoid a per-call argument/result slice allocation
+// (Go's escape analysis forces this generically, not as a missed
+// optimization — see Call's doc comment). Prefer CallInto or CallNumber2 in
+// hot loops.
+func BenchmarkGoCallsLuaScalarsVariadic(b *testing.B) {
 	state := NewState()
 	if _, err := state.DoString(`function add(a, b) return a + b end`); err != nil {
 		b.Fatal(err)
