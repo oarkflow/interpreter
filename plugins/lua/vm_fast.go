@@ -7,6 +7,21 @@ import "math"
 // dynamic result lists/coroutine suspension use the general VM.
 func (s *State) callLuaFast(root *Function, args []Value) (callResult, error) {
 	start := len(s.frames)
+	startTop := s.top
+	defer func() {
+		if len(s.frames) <= start {
+			return
+		}
+		for i := start; i < len(s.frames); i++ {
+			if !s.frames[i].heap {
+				for j := range s.frames[i].regs {
+					s.frames[i].regs[j].value = Nil
+				}
+			}
+		}
+		s.frames = s.frames[:start]
+		s.top = startTop
+	}()
 	if err := s.pushFastFrame(root, args, -1, 0); err != nil {
 		return callResult{}, err
 	}
@@ -24,12 +39,17 @@ func (s *State) callLuaFast(root *Function, args []Value) (callResult, error) {
 		pc := f.pc
 		ins := p.Code[pc]
 		f.pc++
+		if err := s.instructionHook(f, p, pc); err != nil {
+			return callResult{}, s.vmWrap(p, pc, err)
+		}
 		a, b, c := ins.a(), ins.b(), ins.c()
 		switch ins.op() {
 		case opMove:
 			regs[a].value = regs[b].value
 		case opLoadK:
 			regs[a].value = p.Constants[ins.bx()]
+		case opLoadKX:
+			regs[a].value = p.Constants[p.ExtraConstants[pc]]
 		case opLoadNil:
 			regs[a].value = Nil
 		case opLoadBool:
@@ -43,13 +63,37 @@ func (s *State) callLuaFast(root *Function, args []Value) (callResult, error) {
 			if env == nil {
 				env = s.globals
 			}
-			regs[a].value = env.GetString(p.Constants[ins.bx()].StringValue())
+			value, err := s.index(TableValue(env), p.Constants[ins.bx()], 0)
+			if err != nil {
+				return callResult{}, s.vmWrap(p, pc, err)
+			}
+			regs[a].value = value
+		case opGetGlobalX:
+			env := fn.Env
+			if env == nil {
+				env = s.globals
+			}
+			value, err := s.index(TableValue(env), p.Constants[p.ExtraConstants[pc]], 0)
+			if err != nil {
+				return callResult{}, s.vmWrap(p, pc, err)
+			}
+			regs[a].value = value
 		case opSetGlobal:
 			env := fn.Env
 			if env == nil {
 				env = s.globals
 			}
-			env.SetString(p.Constants[ins.bx()].StringValue(), regs[a].value)
+			if err := s.assignIndex(TableValue(env), p.Constants[ins.bx()], regs[a].value, 0); err != nil {
+				return callResult{}, s.vmWrap(p, pc, err)
+			}
+		case opSetGlobalX:
+			env := fn.Env
+			if env == nil {
+				env = s.globals
+			}
+			if err := s.assignIndex(TableValue(env), p.Constants[p.ExtraConstants[pc]], regs[a].value, 0); err != nil {
+				return callResult{}, s.vmWrap(p, pc, err)
+			}
 		case opGetTable:
 			target := regs[b].value
 			if target.kind == TableKind && target.Table().meta == nil {
@@ -290,6 +334,12 @@ func (s *State) callLuaFast(root *Function, args []Value) (callResult, error) {
 		case opNeg:
 			x, ok := toNumber(regs[b].value)
 			if !ok {
+				if value, found, err := s.unaryMetamethod(regs[b].value, "__unm"); err != nil {
+					return callResult{}, s.vmWrap(p, pc, err)
+				} else if found {
+					regs[a].value = value
+					continue
+				}
 				return callResult{}, s.vmError(p, pc, "attempt to perform arithmetic on a %s value", regs[b].value.TypeName())
 			}
 			regs[a].value = Number(-x)
@@ -322,11 +372,12 @@ func (s *State) callLuaFast(root *Function, args []Value) (callResult, error) {
 			} else {
 				return callResult{}, s.vmError(p, pc, "attempt to concatenate a %s value", badStringType(regs[b].value, regs[c].value))
 			}
+			s.maybeCollectWeakTables()
 		case opEq:
 			left, right := regs[b].value, regs[c].value
 			if equal(left, right) {
 				regs[a].value = True
-			} else if value, ok, err := s.binaryMetamethod(left, right, "__eq"); err != nil {
+			} else if value, ok, err := s.equalityMetamethod(left, right); err != nil {
 				return callResult{}, err
 			} else if ok {
 				regs[a].value = Bool(value.Truthy())
@@ -337,7 +388,7 @@ func (s *State) callLuaFast(root *Function, args []Value) (callResult, error) {
 			left, right := regs[b].value, p.Constants[c]
 			if equal(left, right) {
 				regs[a].value = True
-			} else if value, ok, err := s.binaryMetamethod(left, right, "__eq"); err != nil {
+			} else if value, ok, err := s.equalityMetamethod(left, right); err != nil {
 				return callResult{}, err
 			} else if ok {
 				regs[a].value = Bool(value.Truthy())
@@ -348,7 +399,7 @@ func (s *State) callLuaFast(root *Function, args []Value) (callResult, error) {
 			left, right := regs[b].value, p.Constants[c]
 			if equal(left, right) {
 				regs[a].value = False
-			} else if value, ok, err := s.binaryMetamethod(left, right, "__eq"); err != nil {
+			} else if value, ok, err := s.equalityMetamethod(left, right); err != nil {
 				return callResult{}, err
 			} else if ok {
 				regs[a].value = Bool(!value.Truthy())
@@ -375,7 +426,11 @@ func (s *State) callLuaFast(root *Function, args []Value) (callResult, error) {
 				if ins.op() == opLE {
 					name = "__le"
 				}
-				value, ok, err := s.binaryMetamethod(x, y, name)
+				value, ok, err := s.comparisonMetamethod(x, y, name)
+				if ins.op() == opLE && !ok && err == nil {
+					value, ok, err = s.comparisonMetamethod(y, x, "__lt")
+					value = Bool(!value.Truthy())
+				}
 				if err != nil {
 					return callResult{}, err
 				}
@@ -420,7 +475,11 @@ func (s *State) callLuaFast(root *Function, args []Value) (callResult, error) {
 					name = "__le"
 					left, right = y, x
 				}
-				value, ok, err := s.binaryMetamethod(left, right, name)
+				value, ok, err := s.comparisonMetamethod(left, right, name)
+				if (ins.op() == opLEK || ins.op() == opGEK) && !ok && err == nil {
+					value, ok, err = s.comparisonMetamethod(right, left, "__lt")
+					value = Bool(!value.Truthy())
+				}
 				if err != nil {
 					return callResult{}, err
 				}
@@ -479,7 +538,7 @@ func (s *State) callLuaFast(root *Function, args []Value) (callResult, error) {
 				}
 				if (mode == compareEQ || mode == compareNE) && equal(left, right) {
 					condition = mode == compareEQ
-				} else if value, ok, err := s.binaryMetamethod(x, y, name); err != nil {
+				} else if value, ok, err := s.relationalMetamethod(x, y, name); err != nil {
 					return callResult{}, err
 				} else if ok {
 					condition = value.Truthy()
@@ -537,12 +596,20 @@ func (s *State) callLuaFast(root *Function, args []Value) (callResult, error) {
 			closure := &Function{Proto: child, Env: fn.Env, Up: make([]*cell, len(child.Upvalues))}
 			for i, up := range child.Upvalues {
 				if up.Local {
-					closure.Up[i] = &regs[up.Index]
+					opened := f.open[int(up.Index)]
+					if opened == nil {
+						opened = &openUpvalue{cell: &regs[up.Index]}
+						f.open[int(up.Index)] = opened
+					}
+					closure.Up[i] = opened.cell
+					opened.refs = append(opened.refs, upvalueReference{fn: closure, index: i})
 				} else {
 					closure.Up[i] = fn.Up[up.Index]
 				}
 			}
 			regs[a].value = FunctionValue(closure)
+		case opCloseUpvalues:
+			s.closeFrameUpvalues(f, a)
 		case opCall:
 			callee := regs[a].value
 			if c >= 1 && c != 255 && b >= 2 && callee.kind == FunctionKind && callee.Function().NativeNumber2 != nil && regs[a+1].value.kind == NumberKind && regs[a+2].value.kind == NumberKind {
@@ -571,22 +638,58 @@ func (s *State) callLuaFast(root *Function, args []Value) (callResult, error) {
 				}
 				continue
 			}
-			var argv []Value
-			if b <= len(s.scratchArgs) {
-				argv = s.scratchArgs[:b]
-			} else {
-				argv = make([]Value, b)
+			if s.argTop+b > len(s.callArgs) {
+				return callResult{}, s.vmError(p, pc, "Lua argument stack overflow")
 			}
+			argBase := s.argTop
+			s.argTop += b
+			argv := s.callArgs[argBase:s.argTop]
 			for i := 0; i < b; i++ {
 				argv[i] = regs[a+1+i].value
 			}
 			results, err := s.callValue(callee, argv)
+			for i := range argv {
+				argv[i] = Nil
+			}
+			s.argTop = argBase
 			if err != nil {
-				return callResult{}, err
+				return callResult{}, s.vmWrap(p, pc, err)
 			}
 			f = &s.frames[fi]
 			s.applyFastResults(f, a, c, results)
+		case opTailCall:
+			callee := regs[a].value
+			argv := make([]Value, b)
+			for i := range argv {
+				argv[i] = regs[a+1+i].value
+			}
+			returnBase, returnWant := f.returnBase, f.returnWant
+			s.closeFrameUpvalues(f, 0)
+			if !f.heap {
+				for i := range f.regs {
+					f.regs[i].value = Nil
+				}
+				s.top = f.stackBase
+			}
+			s.frames = s.frames[:fi]
+			if callee.kind == FunctionKind && callee.Function().Native == nil && callee.Function().Proto != nil && callee.Function().Proto.Fast {
+				if err := s.pushFastFrame(callee.Function(), argv, returnBase, returnWant); err != nil {
+					return callResult{}, err
+				}
+				continue
+			}
+			results, err := s.callValue(callee, argv)
+			if err != nil {
+				return callResult{}, s.vmWrap(p, pc, err)
+			}
+			if len(s.frames) == start {
+				return results, nil
+			}
+			s.applyFastResults(&s.frames[len(s.frames)-1], returnBase, returnWant, results)
 		case opReturn:
+			if err := s.lineHook(f, p.EndLine); err != nil {
+				return callResult{}, err
+			}
 			result := callResult{count: b}
 			for i := 0; i < b; i++ {
 				result.inline[i] = regs[a+i].value
@@ -657,7 +760,7 @@ func (s *State) pushFastFrame(fn *Function, args []Value, returnBase, returnWant
 	if size < int(p.Parameters) {
 		size = int(p.Parameters)
 	}
-	frame := frame{fn: fn, returnBase: returnBase, returnWant: returnWant, stackBase: s.top}
+	frame := frame{fn: fn, returnBase: returnBase, returnWant: returnWant, stackBase: s.top, open: make(map[int]*openUpvalue)}
 	if p.Captured {
 		frame.regs = make([]cell, size)
 		frame.heap = true
@@ -691,6 +794,7 @@ func (s *State) pushFastFromRegisters(fn *Function, source []cell, argStart, nar
 func (s *State) fastReturn(start int, result callResult) (bool, error) {
 	i := len(s.frames) - 1
 	finished := s.frames[i]
+	s.closeFrameUpvalues(&finished, 0)
 	if !finished.heap {
 		for j := range finished.regs {
 			finished.regs[j].value = Nil

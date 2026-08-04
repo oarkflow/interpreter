@@ -15,16 +15,16 @@ type Table struct {
 	// inline stores the overwhelmingly common one- and two-element arrays
 	// inside the table itself. This avoids a second Go heap allocation for
 	// tuple-like Lua tables while array transparently grows for larger values.
-	inline  [2]Value
-	fields  []fieldEntry
-	shape   *tableShape
-	str     map[string]Value
-	other   map[tableKey]Value
-	meta    *Table
-	order   []tableKey
-	marked  bool
-	escaped bool
-	pooled  bool
+	inline         [2]Value
+	fields         []fieldEntry
+	shape          *tableShape
+	str            map[string]Value
+	other          map[tableKey]Value
+	meta           *Table
+	order          []tableKey
+	markGeneration uint64
+	escaped        bool
+	pooled         bool
 }
 
 type fieldEntry struct {
@@ -68,7 +68,7 @@ func (t *Table) reset(arrayHint, hashHint int) {
 	}
 	t.meta = nil
 	t.order = t.order[:0]
-	t.marked = false
+	t.markGeneration = 0
 	t.escaped = false
 	t.pooled = false
 }

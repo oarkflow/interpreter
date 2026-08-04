@@ -26,15 +26,52 @@ func (s *State) openLibraries() {
 		}
 		return []Value{String(args[0].TypeName())}, nil
 	}))
-	s.globals.SetString("tostring", Native(func(_ *State, args []Value) ([]Value, error) {
+	s.globals.SetString("tostring", Native(func(state *State, args []Value) ([]Value, error) {
 		if len(args) < 1 {
-			return []Value{String("nil")}, nil
+			return nil, runtimeError("value expected")
+		}
+		if method := state.metaField(args[0], "__tostring"); method.kind == FunctionKind {
+			result, err := state.callValue(method, args[:1])
+			if err != nil {
+				return nil, err
+			}
+			if result.count == 0 {
+				return []Value{Nil}, nil
+			}
+			return []Value{result.at(0)}, nil
 		}
 		return []Value{String(args[0].Repr())}, nil
 	}))
 	s.globals.SetString("tonumber", Native(func(_ *State, args []Value) ([]Value, error) {
 		if len(args) < 1 {
-			return []Value{Nil}, nil
+			return nil, runtimeError("value expected")
+		}
+		if len(args) > 1 && args[1].kind != NilKind {
+			base, ok := toNumber(args[1])
+			if !ok || math.Trunc(base) != base || base < 2 || base > 36 {
+				return nil, runtimeError("base out of range")
+			}
+			if args[0].kind != StringKind {
+				return nil, runtimeError("string expected")
+			}
+			text := strings.TrimSpace(args[0].StringValue())
+			negative := false
+			if len(text) > 0 && (text[0] == '+' || text[0] == '-') {
+				negative = text[0] == '-'
+				text = text[1:]
+			}
+			if text == "" {
+				return []Value{Nil}, nil
+			}
+			integer, err := strconv.ParseUint(text, int(base), 64)
+			if err != nil {
+				return []Value{Nil}, nil
+			}
+			value := float64(integer)
+			if negative {
+				value = -value
+			}
+			return []Value{Number(value)}, nil
 		}
 		if n, ok := toNumber(args[0]); ok {
 			return []Value{Number(n)}, nil
@@ -52,11 +89,10 @@ func (s *State) openLibraries() {
 		return args, nil
 	}))
 	s.globals.SetString("error", Native(func(_ *State, args []Value) ([]Value, error) {
-		message := "error"
-		if len(args) > 0 {
-			message = args[0].Repr()
+		if len(args) == 0 {
+			return nil, &luaValueError{value: Nil}
 		}
-		return nil, runtimeError("%s", message)
+		return nil, &luaValueError{value: args[0]}
 	}))
 	s.globals.SetString("print", Native(func(state *State, args []Value) ([]Value, error) {
 		w := state.Output
@@ -77,7 +113,7 @@ func (s *State) openLibraries() {
 			return nil, runtimeError("table expected")
 		}
 		previous := Nil
-		if len(args) > 1 {
+		if len(args) > 1 && args[1].kind != NilKind {
 			previous = args[1]
 		}
 		key, value, ok := args[0].Table().Next(previous)
@@ -114,11 +150,11 @@ func (s *State) openLibraries() {
 		}
 		return []Value{ipairsIterator, args[0], Number(0)}, nil
 	}))
-	s.globals.SetString("getmetatable", Native(func(_ *State, args []Value) ([]Value, error) {
-		if len(args) < 1 || args[0].kind != TableKind {
+	s.globals.SetString("getmetatable", Native(func(state *State, args []Value) ([]Value, error) {
+		if len(args) < 1 {
 			return []Value{Nil}, nil
 		}
-		meta := args[0].Table().Metatable()
+		meta := state.metatable(args[0])
 		if meta == nil {
 			return []Value{Nil}, nil
 		}
@@ -127,7 +163,7 @@ func (s *State) openLibraries() {
 		}
 		return []Value{TableValue(meta)}, nil
 	}))
-	s.globals.SetString("setmetatable", Native(func(_ *State, args []Value) ([]Value, error) {
+	s.globals.SetString("setmetatable", Native(func(state *State, args []Value) ([]Value, error) {
 		if len(args) < 2 || args[0].kind != TableKind {
 			return nil, runtimeError("table expected")
 		}
@@ -138,10 +174,31 @@ func (s *State) openLibraries() {
 			args[0].Table().SetMetatable(nil)
 		} else if args[1].kind == TableKind {
 			args[0].Table().SetMetatable(args[1].Table())
+			weakKeys, weakValues := tableWeakMode(args[0].Table())
+			state.weakTables = state.weakTables || weakKeys || weakValues
 		} else {
 			return nil, runtimeError("nil or table expected")
 		}
 		return []Value{args[0]}, nil
+	}))
+	s.globals.SetString("newproxy", Native(func(state *State, args []Value) ([]Value, error) {
+		var meta *Table
+		if len(args) > 0 && args[0].Truthy() {
+			switch args[0].kind {
+			case BoolKind:
+				meta = state.newTable(0, 4)
+			case UserdataKind:
+				if args[0].ptr != nil {
+					meta = (*userdataBox)(args[0].ptr).meta
+				}
+				if meta == nil {
+					return nil, runtimeError("boolean or proxy expected")
+				}
+			default:
+				return nil, runtimeError("boolean or proxy expected")
+			}
+		}
+		return []Value{UserdataWithMetatable(&struct{}{}, meta)}, nil
 	}))
 	s.globals.SetString("rawget", Native(func(_ *State, args []Value) ([]Value, error) {
 		if len(args) < 2 || args[0].kind != TableKind {
@@ -169,14 +226,14 @@ func (s *State) openLibraries() {
 			return nil, runtimeError("table expected")
 		}
 		start, end := 1, args[0].Table().Len()
-		if len(args) > 1 {
+		if len(args) > 1 && args[1].kind != NilKind {
 			n, ok := toNumber(args[1])
 			if !ok {
 				return nil, runtimeError("number expected")
 			}
 			start = int(n)
 		}
-		if len(args) > 2 {
+		if len(args) > 2 && args[2].kind != NilKind {
 			n, ok := toNumber(args[2])
 			if !ok {
 				return nil, runtimeError("number expected")
@@ -222,7 +279,7 @@ func (s *State) openLibraries() {
 		}
 		result, err := state.callValue(args[0], args[1:])
 		if err != nil {
-			return []Value{False, String(err.Error())}, nil
+			return []Value{False, errorValue(err)}, nil
 		}
 		values := make([]Value, result.count+1)
 		values[0] = True
@@ -231,13 +288,13 @@ func (s *State) openLibraries() {
 		}
 		return values, nil
 	}))
-	s.globals.SetString("loadstring", Native(func(state *State, args []Value) ([]Value, error) {
+	loadString := Native(func(state *State, args []Value) ([]Value, error) {
 		source, err := needString(args, 0)
 		if err != nil {
 			return nil, err
 		}
 		name := source
-		if len(args) > 1 {
+		if len(args) > 1 && args[1].kind != NilKind {
 			name, err = needString(args, 1)
 			if err != nil {
 				return nil, err
@@ -250,6 +307,54 @@ func (s *State) openLibraries() {
 			return []Value{Nil, String(loadErr.Error())}, nil
 		}
 		return []Value{fn}, nil
+	})
+	s.globals.SetString("loadstring", loadString)
+	s.globals.SetString("load", Native(func(state *State, args []Value) ([]Value, error) {
+		if len(args) == 0 || args[0].kind != FunctionKind {
+			return nil, runtimeError("function expected")
+		}
+		var source strings.Builder
+		reads := 0
+		for {
+			part, callErr := state.callValue(args[0], nil)
+			reads++
+			if callErr != nil {
+				return []Value{Nil, String(callErr.Error())}, nil
+			}
+			if part.count == 0 || part.at(0).kind == NilKind {
+				break
+			}
+			if part.at(0).kind != StringKind {
+				return nil, runtimeError("reader function must return a string")
+			}
+			text := part.at(0).StringValue()
+			if text == "" {
+				break
+			}
+			source.WriteString(text)
+			trimmed := strings.TrimLeft(source.String(), " \t\r\n\f\v")
+			if reads >= 2 && len(trimmed) > 0 && strings.ContainsRune("*/%^=~>,;)]}", rune(trimmed[0])) {
+				name := "=(load)"
+				if len(args) > 1 && args[1].kind == StringKind {
+					name = args[1].StringValue()
+				}
+				if _, syntaxErr := state.Load(source.String(), name); syntaxErr != nil {
+					return []Value{Nil, String(syntaxErr.Error())}, nil
+				}
+			}
+		}
+		name := String("=(load)")
+		if len(args) > 1 && args[1].kind != NilKind {
+			if args[1].kind != StringKind {
+				return nil, runtimeError("string expected")
+			}
+			name = args[1]
+		}
+		loaded, callErr := state.callValue(loadString, []Value{String(source.String()), name})
+		if callErr != nil {
+			return nil, callErr
+		}
+		return loaded.slice(), nil
 	}))
 	s.globals.SetString("getfenv", Native(func(state *State, args []Value) ([]Value, error) {
 		env, _, err := state.functionEnvironment(args, false)
@@ -271,6 +376,9 @@ func (s *State) openLibraries() {
 			state.globals = args[1].Table()
 		} else {
 			fn.Env = args[1].Table()
+		}
+		if args[0].kind == NumberKind {
+			return []Value{FunctionValue(fn)}, nil
 		}
 		return []Value{args[0]}, nil
 	}))
@@ -321,6 +429,7 @@ func (s *State) openLibraries() {
 	}))
 	mathTable.SetString("pow", numericBinary(math.Pow))
 	mathTable.SetString("fmod", numericBinary(math.Mod))
+	mathTable.SetString("mod", numericBinary(math.Mod))
 	s.globals.SetString("math", TableValue(mathTable))
 
 	stringTable := NewTable(0, 16)
@@ -331,10 +440,10 @@ func (s *State) openLibraries() {
 		}
 		return []Value{Number(float64(len(v)))}, nil
 	}))
-	stringTable.SetString("lower", stringUnary(strings.ToLower))
-	stringTable.SetString("upper", stringUnary(strings.ToUpper))
+	stringTable.SetString("lower", stringUnary(func(value string) string { return asciiCase(value, false) }))
+	stringTable.SetString("upper", stringUnary(func(value string) string { return asciiCase(value, true) }))
 	stringTable.SetString("reverse", stringUnary(func(v string) string {
-		r := []rune(v)
+		r := []byte(v)
 		for i, j := 0, len(r)-1; i < j; i, j = i+1, j-1 {
 			r[i], r[j] = r[j], r[i]
 		}
@@ -364,6 +473,15 @@ func (s *State) openLibraries() {
 			return nil, err
 		}
 		return []Value{String(formatted)}, nil
+	}))
+	stringTable.SetString("dump", Native(func(state *State, args []Value) ([]Value, error) {
+		if len(args) == 0 || args[0].kind != FunctionKind || args[0].Function().Proto == nil {
+			return nil, runtimeError("Lua function expected")
+		}
+		state.nextDump++
+		key := "\x1bGoLua:" + strconv.FormatUint(state.nextDump, 10)
+		state.dumped[key] = args[0].Function()
+		return []Value{String(key)}, nil
 	}))
 	s.globals.SetString("string", TableValue(stringTable))
 
@@ -397,9 +515,31 @@ func (s *State) openLibraries() {
 			sep = args[1].Repr()
 		}
 		t := args[0].Table()
-		parts := make([]string, t.Len())
+		start, end := 1, t.Len()
+		if len(args) > 2 {
+			n, ok := toNumber(args[2])
+			if !ok {
+				return nil, runtimeError("number expected")
+			}
+			start = int(n)
+		}
+		if len(args) > 3 {
+			n, ok := toNumber(args[3])
+			if !ok {
+				return nil, runtimeError("number expected")
+			}
+			end = int(n)
+		}
+		if end < start {
+			return []Value{String("")}, nil
+		}
+		parts := make([]string, end-start+1)
 		for i := range parts {
-			parts[i] = t.Get(Number(float64(i + 1))).Repr()
+			value := t.Get(Number(float64(start + i)))
+			if value.kind != StringKind && value.kind != NumberKind {
+				return nil, runtimeError("invalid value (%s) at index %d in table for 'concat'", value.TypeName(), start+i)
+			}
+			parts[i] = valueString(value)
 		}
 		return []Value{String(strings.Join(parts, sep))}, nil
 	}))
@@ -430,7 +570,7 @@ func (s *State) openLibraries() {
 		}
 		values, err := args[0].Thread().Resume(args[1:])
 		if err != nil {
-			return []Value{False, String(err.Error())}, nil
+			return []Value{False, errorValue(err)}, nil
 		}
 		result := make([]Value, len(values)+1)
 		result[0] = True
@@ -475,7 +615,7 @@ func (s *State) openLibraries() {
 // shared by getfenv and setfenv. Native calls do not add a VM frame, so level
 // one is the topmost Lua frame.
 func (s *State) functionEnvironment(args []Value, setting bool) (*Table, *Function, error) {
-	if len(args) == 0 {
+	if len(args) == 0 || args[0].kind == NilKind {
 		if len(s.frames) == 0 {
 			return s.globals, nil, nil
 		}
@@ -536,7 +676,7 @@ func needString(args []Value, index int) (string, error) {
 		return v.StringValue(), nil
 	}
 	if v.kind == NumberKind {
-		return strconv.FormatFloat(v.Number(), 'g', -1, 64), nil
+		return strconv.FormatFloat(v.Number(), 'g', 14, 64), nil
 	}
 	return "", runtimeError("string expected, got %s", v.TypeName())
 }
@@ -548,6 +688,18 @@ func stringUnary(fn func(string) string) Value {
 		}
 		return []Value{String(fn(v))}, nil
 	})
+}
+
+func asciiCase(value string, upper bool) string {
+	converted := []byte(value)
+	for i, char := range converted {
+		if upper && char >= 'a' && char <= 'z' {
+			converted[i] = char - ('a' - 'A')
+		} else if !upper && char >= 'A' && char <= 'Z' {
+			converted[i] = char + ('a' - 'A')
+		}
+	}
+	return string(converted)
 }
 
 func luaStringFormat(format string, args []Value) (string, error) {
@@ -615,13 +767,13 @@ func luaStringFormat(format string, args []Value) (string, error) {
 			if !ok {
 				return "", runtimeError("number expected")
 			}
-			rendered = fmt.Sprintf(spec, rune(int(n)))
+			rendered = fmt.Sprintf(spec[:len(spec)-1]+"s", string([]byte{byte(int(n))}))
 		case 'q':
 			s, err := needString([]Value{value}, 0)
 			if err != nil {
 				return "", err
 			}
-			rendered = strconv.Quote(s)
+			rendered = luaQuote(s)
 		case 's':
 			s, err := needString([]Value{value}, 0)
 			if err != nil {
@@ -634,6 +786,33 @@ func luaStringFormat(format string, args []Value) (string, error) {
 		out.WriteString(rendered)
 	}
 	return out.String(), nil
+}
+
+func luaQuote(value string) string {
+	var out strings.Builder
+	out.Grow(len(value) + 2)
+	out.WriteByte('"')
+	for i := 0; i < len(value); i++ {
+		c := value[i]
+		switch c {
+		case '"', '\\':
+			out.WriteByte('\\')
+			out.WriteByte(c)
+		case '\n':
+			out.WriteString("\\\n")
+		default:
+			if c < 32 || c == 127 {
+				out.WriteByte('\\')
+				out.WriteByte('0' + c/100)
+				out.WriteByte('0' + (c/10)%10)
+				out.WriteByte('0' + c%10)
+			} else {
+				out.WriteByte(c)
+			}
+		}
+	}
+	out.WriteByte('"')
+	return out.String()
 }
 
 func (s *State) String() string { return fmt.Sprintf("Lua 5.1 state (%d globals)", len(s.globals.str)) }

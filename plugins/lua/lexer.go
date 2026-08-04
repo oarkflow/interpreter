@@ -12,7 +12,24 @@ type lexer struct {
 	line   int
 }
 
-func newLexer(source, name string) *lexer { return &lexer{source: source, name: name, line: 1} }
+func newLexer(source, name string) *lexer {
+	l := &lexer{source: source, name: name, line: 1}
+	if strings.HasPrefix(source, "\xef\xbb\xbf") {
+		l.pos = 3
+	}
+	// Lua's file loader accepts a Unix interpreter directive on the first
+	// physical line. Treat it as a comment while retaining source line numbers.
+	if l.pos < len(source) && source[l.pos] == '#' {
+		for l.pos < len(source) && source[l.pos] != '\n' {
+			l.pos++
+		}
+		if l.pos < len(source) {
+			l.pos++
+			l.line++
+		}
+	}
+	return l
+}
 
 func (l *lexer) next() (token, error) {
 	if err := l.skipSpaceAndComments(); err != nil {
@@ -113,12 +130,12 @@ func (l *lexer) next() (token, error) {
 func (l *lexer) skipSpaceAndComments() error {
 	for l.pos < len(l.source) {
 		c := l.source[l.pos]
-		if c == ' ' || c == '\t' || c == '\r' || c == '\f' || c == '\v' {
+		if c == ' ' || c == '\t' || c == '\f' || c == '\v' {
 			l.pos++
 			continue
 		}
-		if c == '\n' {
-			l.pos++
+		if c == '\n' || c == '\r' {
+			l.consumeNewline()
 			l.line++
 			continue
 		}
@@ -134,7 +151,7 @@ func (l *lexer) skipSpaceAndComments() error {
 				continue
 			}
 		}
-		for l.pos < len(l.source) && l.source[l.pos] != '\n' {
+		for l.pos < len(l.source) && l.source[l.pos] != '\n' && l.source[l.pos] != '\r' {
 			l.pos++
 		}
 	}
@@ -184,7 +201,9 @@ func (l *lexer) scanNumber() (token, error) {
 	lit := l.source[start:l.pos]
 	n, err := strconv.ParseFloat(lit, 64)
 	if err != nil {
-		return token{}, &Error{Source: l.name, Line: line, Msg: "malformed number " + lit}
+		if numberErr, ok := err.(*strconv.NumError); !ok || numberErr.Err != strconv.ErrRange {
+			return token{}, &Error{Source: l.name, Line: line, Msg: "malformed number " + lit}
+		}
 	}
 	return token{kind: tNumber, lit: lit, num: n, line: line}, nil
 }
@@ -228,7 +247,12 @@ func (l *lexer) scanQuoted(quote byte) (token, error) {
 			out.WriteByte('\v')
 		case '\\', '\'', '"':
 			out.WriteByte(c)
-		case '\n':
+		case '\n', '\r':
+			if c == '\r' && l.pos < len(l.source) && l.source[l.pos] == '\n' {
+				l.pos++
+			} else if c == '\n' && l.pos < len(l.source) && l.source[l.pos] == '\r' {
+				l.pos++
+			}
 			l.line++
 			out.WriteByte('\n')
 		default:
@@ -264,8 +288,12 @@ func (l *lexer) scanLongBracket(start int) (level int, content string, ok bool, 
 	}
 	level = i - start - 1
 	contentStart := i + 1
-	if contentStart < len(l.source) && l.source[contentStart] == '\n' {
+	if contentStart < len(l.source) && (l.source[contentStart] == '\n' || l.source[contentStart] == '\r') {
+		first := l.source[contentStart]
 		contentStart++
+		if contentStart < len(l.source) && (first == '\n' && l.source[contentStart] == '\r' || first == '\r' && l.source[contentStart] == '\n') {
+			contentStart++
+		}
 		l.line++
 	}
 	close := "]" + strings.Repeat("=", level) + "]"
@@ -274,10 +302,40 @@ func (l *lexer) scanLongBracket(start int) (level int, content string, ok bool, 
 		return level, "", true, &Error{Source: l.name, Line: l.line, Msg: "unfinished long string or comment"}
 	}
 	end := contentStart + endRel
-	content = l.source[contentStart:end]
-	l.line += strings.Count(content, "\n")
+	content, lineCount := normalizeLuaNewlines(l.source[contentStart:end])
+	l.line += lineCount
 	l.pos = end + len(close)
 	return level, content, true, nil
+}
+
+func (l *lexer) consumeNewline() {
+	first := l.source[l.pos]
+	l.pos++
+	if l.pos < len(l.source) && (first == '\n' && l.source[l.pos] == '\r' || first == '\r' && l.source[l.pos] == '\n') {
+		l.pos++
+	}
+}
+
+func normalizeLuaNewlines(value string) (string, int) {
+	if !strings.ContainsAny(value, "\r\n") {
+		return value, 0
+	}
+	var out strings.Builder
+	out.Grow(len(value))
+	lines := 0
+	for i := 0; i < len(value); i++ {
+		if value[i] != '\r' && value[i] != '\n' {
+			out.WriteByte(value[i])
+			continue
+		}
+		first := value[i]
+		if i+1 < len(value) && (first == '\n' && value[i+1] == '\r' || first == '\r' && value[i+1] == '\n') {
+			i++
+		}
+		out.WriteByte('\n')
+		lines++
+	}
+	return out.String(), lines
 }
 
 func (l *lexer) take(c byte) bool {

@@ -66,6 +66,12 @@ const (
 	opSetFieldK
 	opSwapTable
 	opAddTable
+	opSetListMulti
+	opTailCall
+	opCloseUpvalues
+	opLoadKX
+	opGetGlobalX
+	opSetGlobalX
 )
 
 const (
@@ -92,14 +98,22 @@ func (i Instruction) sbx() int   { return int(int16(i >> 16)) }
 
 type Prototype struct {
 	Source           string
+	DefinedLine      int
+	LastDefinedLine  int
+	EndLine          int
 	Code             []Instruction
 	Constants        []Value
 	Children         []*Prototype
 	Upvalues         []UpvalueDescriptor
+	UpvalueNames     []string
+	RegisterNames    map[int]string
+	LocalVariables   []LocalVariableInfo
 	Lines            []int
+	LiveRegisters    []uint8
 	Parameters       uint8
 	MaxRegisters     uint8
 	Vararg           bool
+	UsesDots         bool
 	Captured         bool
 	Fast             bool
 	NumericPure      bool
@@ -107,6 +121,14 @@ type Prototype struct {
 	NumericRegisters uint8
 	NumericFormula   *numericFormula
 	FieldCaches      []fieldCache
+	ExtraConstants   map[int]int
+}
+
+type LocalVariableInfo struct {
+	Name     string
+	Register int
+	StartPC  int
+	EndPC    int
 }
 
 // numericFormula is a compiler-produced straight-line specialization for a
@@ -141,18 +163,45 @@ type State struct {
 	currentThread    *Thread
 	shapes           map[string]*tableShape
 	randomState      uint64
+	gcPercent        int
+	gcPause          int
+	gcStepMul        int
+	dumped           map[string]*Function
+	nextDump         uint64
+	typeMetatables   [ThreadKind + 1]*Table
+	weakTables       bool
+	weakTicks        int
+	hook             Value
+	hookMask         string
+	hookCount        int
+	hookCounter      int
+	hookActive       bool
+	hookSkipFunction *Function
+	hookSkipLine     int
 }
 
 type frame struct {
-	fn         *Function
-	regs       []cell
-	pc         int
-	varargs    []Value
-	multi      callResult
-	stackBase  int
-	heap       bool
-	returnBase int
-	returnWant int
+	fn           *Function
+	regs         []cell
+	pc           int
+	varargs      []Value
+	multi        callResult
+	stackBase    int
+	heap         bool
+	returnBase   int
+	returnWant   int
+	open         map[int]*openUpvalue
+	lastHookLine int
+}
+
+type upvalueReference struct {
+	fn    *Function
+	index int
+}
+
+type openUpvalue struct {
+	cell *cell
+	refs []upvalueReference
 }
 
 func NewState() *State {
@@ -162,6 +211,10 @@ func NewState() *State {
 		frames:      make([]frame, 0, 32),
 		callArgs:    make([]Value, 8192),
 		randomState: 0x9e3779b97f4a7c15,
+		gcPercent:   100,
+		gcPause:     200,
+		gcStepMul:   200,
+		dumped:      make(map[string]*Function),
 	}
 	s.openLibraries()
 	s.nextCollection = 1024

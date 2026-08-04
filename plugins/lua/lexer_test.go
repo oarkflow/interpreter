@@ -25,6 +25,13 @@ world]=]
 	}
 }
 
+func TestLexerAcceptsBOMAndInterpreterDirective(t *testing.T) {
+	results := runLua(t, "\xef\xbb\xbf#!/usr/bin/env lua\nreturn 40 + 2")
+	if len(results) != 1 || results[0].Number() != 42 {
+		t.Fatalf("results = %#v", results)
+	}
+}
+
 func TestHybridTableDenseAndStringPaths(t *testing.T) {
 	table := NewTable(4, 2)
 	for i := 1; i <= 4; i++ {

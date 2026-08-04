@@ -33,6 +33,16 @@ type varargExpression struct{ line int }
 func (*varargExpression) expressionNode()   {}
 func (n *varargExpression) lineNumber() int { return n.line }
 
+// parenthesizedExpression preserves Lua's result-adjustment rule: wrapping a
+// function call or vararg expression forces it to exactly one value.
+type parenthesizedExpression struct {
+	line  int
+	value expression
+}
+
+func (*parenthesizedExpression) expressionNode()   {}
+func (n *parenthesizedExpression) lineNumber() int { return n.line }
+
 type unaryExpression struct {
 	line     int
 	operator tokenKind
@@ -71,6 +81,7 @@ func (n *callExpression) lineNumber() int { return n.line }
 
 type functionExpression struct {
 	line       int
+	lastLine   int
 	parameters []string
 	vararg     bool
 	body       *block

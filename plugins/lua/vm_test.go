@@ -345,3 +345,58 @@ func TestFusedLiteralComparisonUsesMetamethods(t *testing.T) {
 		}
 	}
 }
+
+func TestLuaPatternLibrary(t *testing.T) {
+	results := runLua(t, `
+		local a, b, word, digits = string.find("xx abc-123 yy", "(%a+)%-(%d+)")
+		local balanced = string.match("before (a(b)c) after", "%b()")
+		local repeated = string.match("hello hello", "(%a+)%s+%1")
+		local frontier = string.match("one two", "%f[%a]two%f[%A]")
+		local changed, count = string.gsub("a1 b22", "(%a)(%d+)", "%2%1")
+		local mapped = string.gsub("a b c", "%a", {a="A", b="B"})
+		local called = string.gsub("1 2", "%d", function(v) return tonumber(v) * 2 end)
+		local words = ""
+		for value in string.gmatch("a1 bb2", "%a+") do words = words .. value end
+		local position = string.match("abc", "()b")
+		return a,b,word,digits,balanced,repeated,frontier,changed,count,mapped,called,words,position
+	`)
+	if len(results) != 13 || results[0].Number() != 4 || results[1].Number() != 10 ||
+		results[2].StringValue() != "abc" || results[3].StringValue() != "123" ||
+		results[4].StringValue() != "(a(b)c)" || results[5].StringValue() != "hello" ||
+		results[6].StringValue() != "two" || results[7].StringValue() != "1a 22b" ||
+		results[8].Number() != 2 || results[9].StringValue() != "A B c" ||
+		results[10].StringValue() != "2 4" || results[11].StringValue() != "abb" ||
+		results[12].Number() != 2 {
+		t.Fatalf("results = %#v", results)
+	}
+}
+
+func TestTableConstructorExpandsOnlyFinalExpression(t *testing.T) {
+	results := runLua(t, `
+		local function values(n) return n, n-1, n-2 end
+		local t = {values(3), values(5), values(10)}
+		return #t, t[1], t[2], t[3], t[4], t[5]
+	`)
+	if len(results) != 6 || results[0].Number() != 5 || results[1].Number() != 3 ||
+		results[2].Number() != 5 || results[3].Number() != 10 || results[4].Number() != 9 || results[5].Number() != 8 {
+		t.Fatalf("results = %#v", results)
+	}
+}
+
+func TestNativeIOTemporaryFile(t *testing.T) {
+	results := runLua(t, `
+		local file = assert(io.tmpfile())
+		assert(io.type(file) == "file")
+		assert(file:write("12\nabc\n"))
+		assert(file:seek("set", 0) == 0)
+		local number = file:read("*n")
+		local line = file:read("*l")
+		local rest = file:read("*a")
+		local closed = file:close()
+		return number, line, rest, closed, io.type(file)
+	`)
+	if len(results) != 5 || results[0].Number() != 12 || results[1].StringValue() != "" ||
+		results[2].StringValue() != "abc\n" || !results[3].Bool() || results[4].StringValue() != "closed file" {
+		t.Fatalf("results = %#v", results)
+	}
+}

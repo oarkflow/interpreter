@@ -3,6 +3,7 @@ package lua
 import (
 	"fmt"
 	"math"
+	"strings"
 )
 
 type variableClass uint8
@@ -16,13 +17,17 @@ const (
 type localBinding struct {
 	name            string
 	register, depth int
+	startPC         int
 }
 type resolvedVariable struct {
 	class variableClass
 	index int
 	name  string
 }
-type loopContext struct{ breaks []int }
+type loopContext struct {
+	breaks    []int
+	closeFrom int
+}
 
 type compiler struct {
 	parent           *compiler
@@ -31,6 +36,7 @@ type compiler struct {
 	upvalueNames     []string
 	depth, free, max int
 	loops            []loopContext
+	captured         map[int]bool
 }
 
 func Compile(source, name string) (*Prototype, error) {
@@ -39,12 +45,15 @@ func Compile(source, name string) (*Prototype, error) {
 		return nil, err
 	}
 	c := newCompiler(nil, name, nil, false)
+	normalized, _ := normalizeLuaNewlines(source)
+	c.proto.EndLine = strings.Count(strings.TrimRight(normalized, "\n"), "\n") + 1
 	if err = c.compileBlock(ast); err != nil {
 		return nil, err
 	}
 	if len(c.proto.Code) == 0 || c.proto.Code[len(c.proto.Code)-1].op() != opReturn {
 		c.emit(abc(opReturn, 0, 0, 0), 0)
 	}
+	c.finalizeLocals()
 	if c.max > 255 {
 		return nil, c.error(0, "function needs more than 255 registers")
 	}
@@ -244,8 +253,8 @@ func markFastPrototypes(p *Prototype) bool {
 	}
 	for _, ins := range p.Code {
 		switch ins.op() {
-		case opMove, opLoadK, opLoadNil, opLoadBool, opGetUp, opSetUp, opGetGlobal, opSetGlobal, opGetTable, opGetTableK, opGetArrayI, opGetFieldK, opSetTable, opSetTableK, opSetArrayI, opSetFieldK, opSwapTable, opAddTable, opNewTable, opAdd, opAddK, opSub, opSubK, opMul, opMulK, opDiv, opDivK, opMod, opModK, opPow, opPowK, opNeg, opNot, opLen, opConcat, opEq, opEqK, opNEK, opLT, opLTK, opGTK, opLE, opLEK, opGEK, opJumpCompareK, opJump, opJumpFalse, opForPrep, opForLoop, opForLoopV, opClosure:
-		case opCall:
+		case opMove, opLoadK, opLoadKX, opLoadNil, opLoadBool, opGetUp, opSetUp, opGetGlobal, opGetGlobalX, opSetGlobal, opSetGlobalX, opGetTable, opGetTableK, opGetArrayI, opGetFieldK, opSetTable, opSetTableK, opSetArrayI, opSetFieldK, opSwapTable, opAddTable, opNewTable, opAdd, opAddK, opSub, opSubK, opMul, opMulK, opDiv, opDivK, opMod, opModK, opPow, opPowK, opNeg, opNot, opLen, opConcat, opEq, opEqK, opNEK, opLT, opLTK, opGTK, opLE, opLEK, opGEK, opJumpCompareK, opJump, opJumpFalse, opForPrep, opForLoop, opForLoopV, opClosure, opCloseUpvalues:
+		case opCall, opTailCall:
 			if ins.c() == 255 {
 				ok = false
 			}
@@ -261,9 +270,12 @@ func markFastPrototypes(p *Prototype) bool {
 	return ok
 }
 func newCompiler(parent *compiler, source string, parameters []string, vararg bool) *compiler {
-	c := &compiler{parent: parent, proto: &Prototype{Source: source, Parameters: uint8(len(parameters)), Vararg: vararg}}
+	c := &compiler{parent: parent, proto: &Prototype{Source: source, Parameters: uint8(len(parameters)), Vararg: vararg}, captured: make(map[int]bool)}
 	for _, name := range parameters {
 		c.addLocal(name)
+	}
+	if vararg {
+		c.addLocal("arg")
 	}
 	return c
 }
@@ -271,6 +283,11 @@ func (c *compiler) emit(i Instruction, line int) int {
 	pc := len(c.proto.Code)
 	c.proto.Code = append(c.proto.Code, i)
 	c.proto.Lines = append(c.proto.Lines, line)
+	live := c.free
+	if live > math.MaxUint8 {
+		live = math.MaxUint8
+	}
+	c.proto.LiveRegisters = append(c.proto.LiveRegisters, uint8(live))
 	return pc
 }
 func (c *compiler) patch(pc, target int) {
@@ -306,7 +323,12 @@ func (c *compiler) constant(v Value) int {
 func (c *compiler) loadConstant(target int, v Value, line int) error {
 	i := c.constant(v)
 	if i > math.MaxUint16 {
-		return c.error(line, "too many constants")
+		pc := c.emit(abc(opLoadKX, uint8(target), 0, 0), line)
+		if c.proto.ExtraConstants == nil {
+			c.proto.ExtraConstants = make(map[int]int)
+		}
+		c.proto.ExtraConstants[pc] = i
+		return nil
 	}
 	c.emit(abx(opLoadK, uint8(target), uint16(i)), line)
 	return nil
@@ -316,16 +338,47 @@ func (c *compiler) error(line int, format string, args ...any) error {
 }
 func (c *compiler) addLocal(name string) int {
 	r := c.alloc()
-	c.locals = append(c.locals, localBinding{name, r, c.depth})
+	if c.proto.RegisterNames == nil {
+		c.proto.RegisterNames = make(map[int]string)
+	}
+	c.proto.RegisterNames[r] = name
+	c.locals = append(c.locals, localBinding{name: name, register: r, depth: c.depth, startPC: len(c.proto.Code)})
 	return r
 }
 func (c *compiler) beginScope() { c.depth++ }
 func (c *compiler) endScope() {
+	closeFrom := -1
+	for i := len(c.locals) - 1; i >= 0 && c.locals[i].depth == c.depth; i-- {
+		if c.captured[c.locals[i].register] {
+			closeFrom = c.locals[i].register
+		}
+	}
+	if closeFrom >= 0 {
+		c.emit(abc(opCloseUpvalues, uint8(closeFrom), 0, 0), 0)
+	}
 	for len(c.locals) > 0 && c.locals[len(c.locals)-1].depth == c.depth {
-		c.free = c.locals[len(c.locals)-1].register
+		local := c.locals[len(c.locals)-1]
+		c.proto.LocalVariables = append(c.proto.LocalVariables, LocalVariableInfo{Name: local.name, Register: local.register, StartPC: local.startPC, EndPC: len(c.proto.Code)})
+		c.free = local.register
 		c.locals = c.locals[:len(c.locals)-1]
 	}
 	c.depth--
+}
+func (c *compiler) finalizeLocals() {
+	for _, local := range c.locals {
+		c.proto.LocalVariables = append(c.proto.LocalVariables, LocalVariableInfo{Name: local.name, Register: local.register, StartPC: local.startPC, EndPC: len(c.proto.Code)})
+	}
+}
+func (c *compiler) closeCapturedFrom(register int, line int) {
+	closeFrom := -1
+	for captured := range c.captured {
+		if captured >= register && (closeFrom < 0 || captured < closeFrom) {
+			closeFrom = captured
+		}
+	}
+	if closeFrom >= 0 {
+		c.emit(abc(opCloseUpvalues, uint8(closeFrom), 0, 0), line)
+	}
 }
 func (c *compiler) resolve(name string) resolvedVariable {
 	for i := len(c.locals) - 1; i >= 0; i-- {
@@ -343,6 +396,7 @@ func (c *compiler) resolve(name string) resolvedVariable {
 			}
 			if parent.class == localVariable {
 				c.parent.proto.Captured = true
+				c.parent.captured[parent.index] = true
 			}
 			c.proto.Upvalues = append(c.proto.Upvalues, UpvalueDescriptor{uint8(parent.index), parent.class == localVariable})
 			c.upvalueNames = append(c.upvalueNames, name)
@@ -407,7 +461,12 @@ func (c *compiler) compileStatement(stmt statement) error {
 				return c.compileTailReturn(n.line, n.values[:len(n.values)-1], func() (int, error) { return c.compileCall(call, 255) })
 			}
 			if _, ok := last.(*varargExpression); ok {
-				return c.compileTailReturn(n.line, n.values[:len(n.values)-1], func() (int, error) { r := c.alloc(); c.emit(abc(opVararg, uint8(r), 255, 0), n.line); return r, nil })
+				return c.compileTailReturn(n.line, n.values[:len(n.values)-1], func() (int, error) {
+					c.proto.UsesDots = true
+					r := c.alloc()
+					c.emit(abc(opVararg, uint8(r), 255, 0), n.line)
+					return r, nil
+				})
 			}
 		}
 		values, err := c.compileValueList(n.values, len(n.values))
@@ -432,8 +491,9 @@ func (c *compiler) compileStatement(stmt statement) error {
 		if len(c.loops) == 0 {
 			return c.error(n.line, "break outside loop")
 		}
-		pc := c.emit(abx(opJump, 0, 0), n.line)
 		i := len(c.loops) - 1
+		c.closeCapturedFrom(c.loops[i].closeFrom, n.line)
+		pc := c.emit(abx(opJump, 0, 0), n.line)
 		c.loops[i].breaks = append(c.loops[i].breaks, pc)
 		return nil
 	case *doStatement:
@@ -472,8 +532,8 @@ func (c *compiler) prepareTarget(e expression) (assignmentTarget, error) {
 		v := c.resolve(n.name)
 		return assignmentTarget{variable: &v}, nil
 	case *indexExpression:
-		t, err := c.compileExpression(n.table)
-		if err != nil {
+		t := c.alloc()
+		if err := c.compileTo(n.table, t); err != nil {
 			return assignmentTarget{}, err
 		}
 		if literal, ok := n.key.(*literalExpression); ok {
@@ -485,7 +545,8 @@ func (c *compiler) prepareTarget(e expression) (assignmentTarget, error) {
 				return assignmentTarget{table: t, constantKey: index, hasConstantKey: true, hasFieldKey: literal.value.kind == StringKind}, nil
 			}
 		}
-		k, err := c.compileExpression(n.key)
+		k := c.alloc()
+		err := c.compileTo(n.key, k)
 		return assignmentTarget{table: t, key: k}, err
 	default:
 		return assignmentTarget{}, c.error(e.lineNumber(), "invalid assignment target")
@@ -519,6 +580,11 @@ func (c *compiler) compileAssignment(n *assignStatement) error {
 	values, err := c.compileValueList(n.values, len(targets))
 	if err != nil {
 		return err
+	}
+	valueBase := c.allocN(len(values))
+	for i, value := range values {
+		c.emit(abc(opMove, uint8(valueBase+i), uint8(value), 0), n.line)
+		values[i] = valueBase + i
 	}
 	for i, t := range targets {
 		if t.variable != nil {
@@ -622,7 +688,16 @@ func literalArrayIndex(literal *literalExpression) (uint8, bool) {
 func (c *compiler) globalInstruction(op opcode, register int, name string, line int) error {
 	i := c.constant(String(name))
 	if i > math.MaxUint16 {
-		return c.error(line, "too many constants")
+		extended := opGetGlobalX
+		if op == opSetGlobal {
+			extended = opSetGlobalX
+		}
+		pc := c.emit(abc(extended, uint8(register), 0, 0), line)
+		if c.proto.ExtraConstants == nil {
+			c.proto.ExtraConstants = make(map[int]int)
+		}
+		c.proto.ExtraConstants[pc] = i
+		return nil
 	}
 	c.emit(abx(op, uint8(register), uint16(i)), line)
 	return nil
@@ -668,6 +743,7 @@ func (c *compiler) compileValueList(values []expression, want int) ([]int, error
 			break
 		}
 		if _, ok := e.(*varargExpression); ok && i == len(values)-1 && remaining > 1 {
+			c.proto.UsesDots = true
 			base := c.allocN(remaining)
 			c.emit(abc(opVararg, uint8(base), uint8(remaining), 0), e.lineNumber())
 			for j := 0; j < remaining; j++ {
@@ -715,6 +791,8 @@ func (c *compiler) compileTo(e expression, target int) error {
 		return nil
 	case *nameExpression:
 		return c.loadVariable(c.resolve(n.name), target, n.line)
+	case *parenthesizedExpression:
+		return c.compileTo(n.value, target)
 	case *unaryExpression:
 		v, err := c.compileExpression(n.value)
 		if err != nil {
@@ -767,7 +845,27 @@ func (c *compiler) compileTo(e expression, target int) error {
 			hashHint = math.MaxUint8
 		}
 		c.emit(abc(opNewTable, uint8(target), uint8(arrayHint), uint8(hashHint)), n.line)
-		for _, f := range n.fields {
+		for fieldIndex, f := range n.fields {
+			fieldMark := c.free
+			if f.list && fieldIndex == len(n.fields)-1 {
+				start := int(f.key.(*literalExpression).value.Number())
+				switch value := f.value.(type) {
+				case *callExpression:
+					if _, err := c.compileCall(value, 255); err != nil {
+						return err
+					}
+					c.emit(abx(opSetListMulti, uint8(target), uint16(start)), n.line)
+					c.free = fieldMark
+					continue
+				case *varargExpression:
+					c.proto.UsesDots = true
+					r := c.alloc()
+					c.emit(abc(opVararg, uint8(r), 255, 0), value.line)
+					c.emit(abx(opSetListMulti, uint8(target), uint16(start)), n.line)
+					c.free = fieldMark
+					continue
+				}
+			}
 			if literal, ok := f.key.(*literalExpression); ok {
 				if index, ok := literalArrayIndex(literal); ok {
 					v, err := c.compileExpression(f.value)
@@ -775,6 +873,7 @@ func (c *compiler) compileTo(e expression, target int) error {
 						return err
 					}
 					c.emit(abc(opSetArrayI, uint8(target), index, uint8(v)), n.line)
+					c.free = fieldMark
 					continue
 				}
 				index := c.constant(literal.value)
@@ -788,6 +887,7 @@ func (c *compiler) compileTo(e expression, target int) error {
 						op = opSetFieldK
 					}
 					c.emit(abc(op, uint8(target), uint8(index), uint8(v)), n.line)
+					c.free = fieldMark
 					continue
 				}
 			}
@@ -800,6 +900,7 @@ func (c *compiler) compileTo(e expression, target int) error {
 				return err
 			}
 			c.emit(abc(opSetTable, uint8(target), uint8(k), uint8(v)), n.line)
+			c.free = fieldMark
 		}
 		return nil
 	case *functionExpression:
@@ -810,10 +911,15 @@ func (c *compiler) compileTo(e expression, target int) error {
 		if len(child.proto.Code) == 0 || child.proto.Code[len(child.proto.Code)-1].op() != opReturn {
 			child.emit(abc(opReturn, 0, 0, 0), n.line)
 		}
+		child.finalizeLocals()
 		if child.max > 255 {
 			return c.error(n.line, "function needs more than 255 registers")
 		}
 		child.proto.MaxRegisters = uint8(child.max)
+		child.proto.DefinedLine = n.line
+		child.proto.LastDefinedLine = n.lastLine
+		child.proto.EndLine = n.lastLine
+		child.proto.UpvalueNames = append([]string(nil), child.upvalueNames...)
 		index := len(c.proto.Children)
 		c.proto.Children = append(c.proto.Children, child.proto)
 		c.emit(abx(opClosure, uint8(target), uint16(index)), n.line)
@@ -825,6 +931,7 @@ func (c *compiler) compileTo(e expression, target int) error {
 		}
 		return err
 	case *varargExpression:
+		c.proto.UsesDots = true
 		c.emit(abc(opVararg, uint8(target), 1, 0), n.line)
 		return nil
 	default:
@@ -911,15 +1018,37 @@ func (c *compiler) compileCall(n *callExpression, want int) (int, error) {
 		extra = 0
 	}
 	base := c.allocN(count + extra)
-	if err := c.compileTo(n.function, base); err != nil {
-		return 0, err
-	}
 	nargs := 0
 	if n.receiver != nil {
 		if err := c.compileTo(n.receiver, base+1); err != nil {
 			return 0, err
 		}
+		method := n.function.(*indexExpression)
+		if literal, ok := method.key.(*literalExpression); ok {
+			constant := c.constant(literal.value)
+			if constant <= math.MaxUint8 {
+				op := opGetTableK
+				if literal.value.kind == StringKind {
+					op = opGetFieldK
+				}
+				c.emit(abc(op, uint8(base), uint8(base+1), uint8(constant)), n.line)
+			} else {
+				key := c.alloc()
+				if err := c.loadConstant(key, literal.value, n.line); err != nil {
+					return 0, err
+				}
+				c.emit(abc(opGetTable, uint8(base), uint8(base+1), uint8(key)), n.line)
+			}
+		} else {
+			key, err := c.compileExpression(method.key)
+			if err != nil {
+				return 0, err
+			}
+			c.emit(abc(opGetTable, uint8(base), uint8(base+1), uint8(key)), n.line)
+		}
 		nargs++
+	} else if err := c.compileTo(n.function, base); err != nil {
+		return 0, err
 	}
 	for _, arg := range args {
 		if err := c.compileTo(arg, base+1+nargs); err != nil {
@@ -934,6 +1063,7 @@ func (c *compiler) compileCall(n *callExpression, want int) (int, error) {
 				return 0, err
 			}
 		case *varargExpression:
+			c.proto.UsesDots = true
 			r := c.alloc()
 			c.emit(abc(opVararg, uint8(r), 255, 0), value.line)
 		}
@@ -949,6 +1079,12 @@ func (c *compiler) compileTailReturn(line int, prefix []expression, tail func() 
 		base, err := tail()
 		if err != nil {
 			return err
+		}
+		last := len(c.proto.Code) - 1
+		if last >= 0 && c.proto.Code[last].op() == opCall {
+			call := c.proto.Code[last]
+			c.proto.Code[last] = abc(opTailCall, uint8(call.a()), uint8(call.b()), 0)
+			return nil
 		}
 		c.emit(abc(opReturn, uint8(base), 255, 0), line)
 		return nil
@@ -970,11 +1106,13 @@ func (c *compiler) compileTailReturn(line int, prefix []expression, tail func() 
 }
 func (c *compiler) compileWhile(n *whileStatement) error {
 	start := len(c.proto.Code)
+	conditionMark := c.free
 	exit, err := c.compileConditionJumpFalse(n.condition, n.line)
 	if err != nil {
 		return err
 	}
-	c.loops = append(c.loops, loopContext{})
+	c.free = conditionMark
+	c.loops = append(c.loops, loopContext{closeFrom: c.free})
 	c.beginScope()
 	err = c.compileBlock(n.body)
 	c.endScope()
@@ -989,7 +1127,7 @@ func (c *compiler) compileWhile(n *whileStatement) error {
 }
 func (c *compiler) compileRepeat(n *repeatStatement) error {
 	start := len(c.proto.Code)
-	c.loops = append(c.loops, loopContext{})
+	c.loops = append(c.loops, loopContext{closeFrom: c.free})
 	c.beginScope()
 	if err := c.compileBlock(n.body); err != nil {
 		return err
@@ -1001,11 +1139,12 @@ func (c *compiler) compileRepeat(n *repeatStatement) error {
 		c.finishLoop(end)
 		return nil
 	}
-	exit, err := c.compileConditionJumpFalse(n.condition, n.line)
-	c.endScope()
+	condition, err := c.compileExpression(n.condition)
 	if err != nil {
 		return err
 	}
+	c.endScope()
+	exit := c.emit(abx(opJumpFalse, uint8(condition), 0), n.line)
 	c.patch(exit, start)
 	end := len(c.proto.Code)
 	c.finishLoop(end)
@@ -1084,10 +1223,11 @@ func (c *compiler) compileNumericFor(n *numericForStatement) error {
 	loopVar := c.addLocal(n.name)
 	prep := c.emit(abx(opForPrep, uint8(base), 0), n.line)
 	bodyStart := len(c.proto.Code)
-	c.loops = append(c.loops, loopContext{})
+	c.loops = append(c.loops, loopContext{closeFrom: loopVar})
 	if err = c.compileBlock(n.body); err != nil {
 		return err
 	}
+	c.closeCapturedFrom(loopVar, n.line)
 	loopPC := c.emit(abc(opForLoopV, uint8(base), uint8(loopVar), 0), n.line)
 	loopOffset := c.emit(abx(opJump, 0, 0), n.line)
 	c.patch(loopOffset, bodyStart)
@@ -1114,10 +1254,11 @@ func (c *compiler) compileGenericFor(n *genericForStatement) error {
 	start := len(c.proto.Code)
 	c.emit(abc(opTForCall, uint8(base), uint8(len(vars)), 0), n.line)
 	exit := c.emit(abx(opJumpFalse, uint8(vars[0]), 0), n.line)
-	c.loops = append(c.loops, loopContext{})
+	c.loops = append(c.loops, loopContext{closeFrom: vars[0]})
 	if err = c.compileBlock(n.body); err != nil {
 		return err
 	}
+	c.closeCapturedFrom(vars[0], n.line)
 	c.emit(abx(opJump, 0, uint16(int16(start-(len(c.proto.Code)+1)))), n.line)
 	end := len(c.proto.Code)
 	c.patch(exit, end)

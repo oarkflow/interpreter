@@ -3,9 +3,17 @@ package lua
 import (
 	"fmt"
 	"math"
+	"strings"
 )
 
 func (s *State) Load(source, name string) (Value, error) {
+	if stored := s.dumped[source]; stored != nil && stored.Proto != nil {
+		fn := &Function{Proto: stored.Proto, Env: s.globals, Up: make([]*cell, len(stored.Proto.Upvalues))}
+		for i := range fn.Up {
+			fn.Up[i] = &cell{value: Nil}
+		}
+		return FunctionValue(fn), nil
+	}
 	proto, err := Compile(source, name)
 	if err != nil {
 		return Nil, err
@@ -285,19 +293,36 @@ func (s *State) callLua(fn *Function, args []Value) (callResult, error) {
 	if len(args) > int(p.Parameters) {
 		varargs = args[p.Parameters:]
 	}
-	f := frame{fn: fn, regs: regs, varargs: varargs}
+	if p.Vararg && !p.UsesDots {
+		compat := s.newTable(len(varargs), 1)
+		for i, value := range varargs {
+			_ = compat.Set(Number(float64(i+1)), value)
+		}
+		compat.SetString("n", Number(float64(len(varargs))))
+		regs[int(p.Parameters)].value = TableValue(compat)
+	}
+	f := frame{fn: fn, regs: regs, varargs: varargs, open: make(map[int]*openUpvalue)}
 	s.frames = append(s.frames, f)
-	defer func() { s.frames = s.frames[:len(s.frames)-1] }()
+	defer func() {
+		s.closeFrameUpvalues(&f, 0)
+		s.frames = s.frames[:len(s.frames)-1]
+	}()
 	for f.pc < len(p.Code) {
 		pc := f.pc
 		ins := p.Code[pc]
 		f.pc++
+		s.frames[len(s.frames)-1].pc = f.pc
+		if err := s.instructionHook(&f, p, pc); err != nil {
+			return callResult{}, s.vmWrap(p, pc, err)
+		}
 		a, b, c := ins.a(), ins.b(), ins.c()
 		switch ins.op() {
 		case opMove:
 			regs[a].value = regs[b].value
 		case opLoadK:
 			regs[a].value = p.Constants[ins.bx()]
+		case opLoadKX:
+			regs[a].value = p.Constants[p.ExtraConstants[pc]]
 		case opLoadNil:
 			regs[a].value = Nil
 		case opLoadBool:
@@ -311,13 +336,37 @@ func (s *State) callLua(fn *Function, args []Value) (callResult, error) {
 			if env == nil {
 				env = s.globals
 			}
-			regs[a].value = env.GetString(p.Constants[ins.bx()].StringValue())
+			value, err := s.index(TableValue(env), p.Constants[ins.bx()], 0)
+			if err != nil {
+				return callResult{}, s.vmWrap(p, pc, err)
+			}
+			regs[a].value = value
+		case opGetGlobalX:
+			env := fn.Env
+			if env == nil {
+				env = s.globals
+			}
+			value, err := s.index(TableValue(env), p.Constants[p.ExtraConstants[pc]], 0)
+			if err != nil {
+				return callResult{}, s.vmWrap(p, pc, err)
+			}
+			regs[a].value = value
 		case opSetGlobal:
 			env := fn.Env
 			if env == nil {
 				env = s.globals
 			}
-			env.SetString(p.Constants[ins.bx()].StringValue(), regs[a].value)
+			if err := s.assignIndex(TableValue(env), p.Constants[ins.bx()], regs[a].value, 0); err != nil {
+				return callResult{}, s.vmWrap(p, pc, err)
+			}
+		case opSetGlobalX:
+			env := fn.Env
+			if env == nil {
+				env = s.globals
+			}
+			if err := s.assignIndex(TableValue(env), p.Constants[p.ExtraConstants[pc]], regs[a].value, 0); err != nil {
+				return callResult{}, s.vmWrap(p, pc, err)
+			}
 		case opGetTable:
 			t := regs[b].value
 			key := regs[c].value
@@ -465,6 +514,16 @@ func (s *State) callLua(fn *Function, args []Value) (callResult, error) {
 			}
 		case opNewTable:
 			regs[a].value = TableValue(s.newTable(b, c))
+		case opSetListMulti:
+			table := regs[a].value
+			if table.kind != TableKind {
+				return callResult{}, s.vmError(p, pc, "attempt to index a %s value", table.TypeName())
+			}
+			for i := 0; i < f.multi.count; i++ {
+				if err := table.Table().Set(Number(float64(ins.bx()+i)), f.multi.at(i)); err != nil {
+					return callResult{}, s.vmWrap(p, pc, err)
+				}
+			}
 		case opAdd, opSub, opMul, opDiv, opMod, opPow:
 			left, right := regs[b].value, regs[c].value
 			x, y := left.Number(), right.Number()
@@ -542,6 +601,12 @@ func (s *State) callLua(fn *Function, args []Value) (callResult, error) {
 		case opNeg:
 			x, ok := toNumber(regs[b].value)
 			if !ok {
+				if value, found, err := s.unaryMetamethod(regs[b].value, "__unm"); err != nil {
+					return callResult{}, s.vmWrap(p, pc, err)
+				} else if found {
+					regs[a].value = value
+					continue
+				}
 				return callResult{}, s.vmError(p, pc, "attempt to perform arithmetic on a %s value", regs[b].value.TypeName())
 			}
 			regs[a].value = Number(-x)
@@ -578,11 +643,12 @@ func (s *State) callLua(fn *Function, args []Value) (callResult, error) {
 				continue
 			}
 			regs[a].value = String(x + y)
+			s.maybeCollectWeakTables()
 		case opEq:
 			left, right := regs[b].value, regs[c].value
 			if equal(left, right) {
 				regs[a].value = True
-			} else if value, ok, err := s.binaryMetamethod(left, right, "__eq"); err != nil {
+			} else if value, ok, err := s.equalityMetamethod(left, right); err != nil {
 				return callResult{}, err
 			} else if ok {
 				regs[a].value = Bool(value.Truthy())
@@ -593,7 +659,7 @@ func (s *State) callLua(fn *Function, args []Value) (callResult, error) {
 			left, right := regs[b].value, p.Constants[c]
 			if equal(left, right) {
 				regs[a].value = True
-			} else if value, ok, err := s.binaryMetamethod(left, right, "__eq"); err != nil {
+			} else if value, ok, err := s.equalityMetamethod(left, right); err != nil {
 				return callResult{}, err
 			} else if ok {
 				regs[a].value = Bool(value.Truthy())
@@ -604,7 +670,7 @@ func (s *State) callLua(fn *Function, args []Value) (callResult, error) {
 			left, right := regs[b].value, p.Constants[c]
 			if equal(left, right) {
 				regs[a].value = False
-			} else if value, ok, err := s.binaryMetamethod(left, right, "__eq"); err != nil {
+			} else if value, ok, err := s.equalityMetamethod(left, right); err != nil {
 				return callResult{}, err
 			} else if ok {
 				regs[a].value = Bool(!value.Truthy())
@@ -631,7 +697,11 @@ func (s *State) callLua(fn *Function, args []Value) (callResult, error) {
 				if ins.op() == opLE {
 					name = "__le"
 				}
-				value, ok, err := s.binaryMetamethod(x, y, name)
+				value, ok, err := s.comparisonMetamethod(x, y, name)
+				if ins.op() == opLE && !ok && err == nil {
+					value, ok, err = s.comparisonMetamethod(y, x, "__lt")
+					value = Bool(!value.Truthy())
+				}
 				if err != nil {
 					return callResult{}, err
 				}
@@ -676,7 +746,11 @@ func (s *State) callLua(fn *Function, args []Value) (callResult, error) {
 					name = "__le"
 					left, right = y, x
 				}
-				value, ok, err := s.binaryMetamethod(left, right, name)
+				value, ok, err := s.comparisonMetamethod(left, right, name)
+				if (ins.op() == opLEK || ins.op() == opGEK) && !ok && err == nil {
+					value, ok, err = s.comparisonMetamethod(right, left, "__lt")
+					value = Bool(!value.Truthy())
+				}
 				if err != nil {
 					return callResult{}, err
 				}
@@ -735,7 +809,7 @@ func (s *State) callLua(fn *Function, args []Value) (callResult, error) {
 				}
 				if (mode == compareEQ || mode == compareNE) && equal(left, right) {
 					condition = mode == compareEQ
-				} else if value, ok, err := s.binaryMetamethod(x, y, name); err != nil {
+				} else if value, ok, err := s.relationalMetamethod(x, y, name); err != nil {
 					return callResult{}, err
 				} else if ok {
 					condition = value.Truthy()
@@ -796,7 +870,7 @@ func (s *State) callLua(fn *Function, args []Value) (callResult, error) {
 			s.scratchArgs[0], s.scratchArgs[1] = regs[a+1].value, regs[a+2].value
 			results, err := s.dispatch(callee.Function(), s.scratchArgs[:2])
 			if err != nil {
-				return callResult{}, err
+				return callResult{}, s.vmWrap(p, pc, err)
 			}
 			for i := 0; i < b; i++ {
 				if i < results.count {
@@ -823,12 +897,20 @@ func (s *State) callLua(fn *Function, args []Value) (callResult, error) {
 			closure := &Function{Proto: child, Env: fn.Env, Up: make([]*cell, len(child.Upvalues))}
 			for i, up := range child.Upvalues {
 				if up.Local {
-					closure.Up[i] = &regs[up.Index]
+					opened := f.open[int(up.Index)]
+					if opened == nil {
+						opened = &openUpvalue{cell: &regs[up.Index]}
+						f.open[int(up.Index)] = opened
+					}
+					closure.Up[i] = opened.cell
+					opened.refs = append(opened.refs, upvalueReference{fn: closure, index: i})
 				} else {
 					closure.Up[i] = fn.Up[up.Index]
 				}
 			}
 			regs[a].value = FunctionValue(closure)
+		case opCloseUpvalues:
+			s.closeFrameUpvalues(&f, a)
 		case opCall:
 			callee := regs[a].value
 			if c >= 1 && c != 255 && b >= 2 && callee.kind == FunctionKind && callee.Function().NativeNumber2 != nil && regs[a+1].value.kind == NumberKind && regs[a+2].value.kind == NumberKind {
@@ -866,7 +948,7 @@ func (s *State) callLua(fn *Function, args []Value) (callResult, error) {
 			}
 			s.argTop = argBase
 			if err != nil {
-				return callResult{}, err
+				return callResult{}, s.vmWrap(p, pc, err)
 			}
 			if c == 255 {
 				f.multi = results
@@ -879,6 +961,17 @@ func (s *State) callLua(fn *Function, args []Value) (callResult, error) {
 					regs[a+i].value = Nil
 				}
 			}
+		case opTailCall:
+			callee := regs[a].value
+			argv := make([]Value, b)
+			for i := range argv {
+				argv[i] = regs[a+1+i].value
+			}
+			result, err := s.callValue(callee, argv)
+			if err != nil {
+				return callResult{}, s.vmWrap(p, pc, err)
+			}
+			return result, nil
 		case opCallTail:
 			callee := regs[a].value
 			argv := make([]Value, b+f.multi.count)
@@ -904,6 +997,9 @@ func (s *State) callLua(fn *Function, args []Value) (callResult, error) {
 				}
 			}
 		case opReturn:
+			if err := s.lineHook(&f, p.EndLine); err != nil {
+				return callResult{}, err
+			}
 			if b == 255 {
 				return f.multi, nil
 			}
@@ -946,6 +1042,9 @@ func (s *State) vmError(p *Prototype, pc int, format string, args ...any) error 
 	return &Error{Source: p.Source, Line: line, Msg: fmt.Sprintf(format, args...)}
 }
 func (s *State) vmWrap(p *Prototype, pc int, err error) error {
+	if _, ok := err.(*luaValueError); ok {
+		return err
+	}
 	if _, ok := err.(*Error); ok {
 		return s.vmError(p, pc, "%s", err)
 	}
@@ -973,9 +1072,21 @@ func badStringType(a, b Value) string {
 	return b.TypeName()
 }
 
-func metaField(v Value, name string) Value {
-	if v.kind == TableKind && v.Table().meta != nil {
-		return v.Table().meta.GetString(name)
+func (s *State) metatable(v Value) *Table {
+	if v.kind == TableKind {
+		return v.Table().meta
+	}
+	if v.kind == UserdataKind && v.ptr != nil {
+		return (*userdataBox)(v.ptr).meta
+	}
+	if int(v.kind) < len(s.typeMetatables) {
+		return s.typeMetatables[v.kind]
+	}
+	return nil
+}
+func (s *State) metaField(v Value, name string) Value {
+	if meta := s.metatable(v); meta != nil {
+		return meta.GetString(name)
 	}
 	return Nil
 }
@@ -983,7 +1094,7 @@ func (s *State) callValue(callee Value, args []Value) (callResult, error) {
 	if callee.kind == FunctionKind {
 		return s.dispatch(callee.Function(), args)
 	}
-	method := metaField(callee, "__call")
+	method := s.metaField(callee, "__call")
 	if method.kind == FunctionKind {
 		withSelf := make([]Value, len(args)+1)
 		withSelf[0] = callee
@@ -1000,7 +1111,7 @@ func (s *State) index(target, key Value, depth int) (Value, error) {
 		if value := target.Table().Get(key); value.kind != NilKind {
 			return value, nil
 		}
-		handler := metaField(target, "__index")
+		handler := s.metaField(target, "__index")
 		if handler.kind == NilKind {
 			return Nil, nil
 		}
@@ -1016,9 +1127,39 @@ func (s *State) index(target, key Value, depth int) (Value, error) {
 		}
 		return s.index(handler, key, depth+1)
 	}
+	if target.kind != UserdataKind {
+		if handler := s.metaField(target, "__index"); handler.kind == FunctionKind {
+			result, err := s.dispatch(handler.Function(), []Value{target, key})
+			if err != nil {
+				return Nil, err
+			}
+			if result.count > 0 {
+				return result.at(0), nil
+			}
+			return Nil, nil
+		} else if handler.kind != NilKind {
+			return s.index(handler, key, depth+1)
+		}
+	}
 	if target.kind == StringKind && key.kind == StringKind {
 		if library := s.globals.GetString("string"); library.kind == TableKind {
 			return library.Table().GetString(key.StringValue()), nil
+		}
+	}
+	if target.kind == UserdataKind {
+		handler := s.metaField(target, "__index")
+		if handler.kind == FunctionKind {
+			result, err := s.dispatch(handler.Function(), []Value{target, key})
+			if err != nil {
+				return Nil, err
+			}
+			if result.count > 0 {
+				return result.at(0), nil
+			}
+			return Nil, nil
+		}
+		if handler.kind != NilKind {
+			return s.index(handler, key, depth+1)
 		}
 	}
 	return Nil, runtimeError("attempt to index a %s value", target.TypeName())
@@ -1028,13 +1169,21 @@ func (s *State) assignIndex(target, key, value Value, depth int) error {
 		return runtimeError("loop in settable")
 	}
 	if target.kind != TableKind {
+		handler := s.metaField(target, "__newindex")
+		if handler.kind == FunctionKind {
+			_, err := s.dispatch(handler.Function(), []Value{target, key, value})
+			return err
+		}
+		if handler.kind != NilKind {
+			return s.assignIndex(handler, key, value, depth+1)
+		}
 		return runtimeError("attempt to index a %s value", target.TypeName())
 	}
 	table := target.Table()
 	if table.Get(key).kind != NilKind {
 		return table.Set(key, value)
 	}
-	handler := metaField(target, "__newindex")
+	handler := s.metaField(target, "__newindex")
 	if handler.kind == NilKind {
 		return table.Set(key, value)
 	}
@@ -1097,9 +1246,9 @@ func (s *State) addTableValue(accumulator *Value, target, key Value) error {
 }
 
 func (s *State) binaryMetamethod(a, b Value, name string) (Value, bool, error) {
-	method := metaField(a, name)
+	method := s.metaField(a, name)
 	if method.kind == NilKind {
-		method = metaField(b, name)
+		method = s.metaField(b, name)
 	}
 	if method.kind != FunctionKind {
 		return Nil, false, nil
@@ -1113,8 +1262,110 @@ func (s *State) binaryMetamethod(a, b Value, name string) (Value, bool, error) {
 	}
 	return r.at(0), true, nil
 }
+func (s *State) equalityMetamethod(a, b Value) (Value, bool, error) {
+	left := s.metaField(a, "__eq")
+	right := s.metaField(b, "__eq")
+	if left.kind != FunctionKind || right.kind != FunctionKind || left.Function() != right.Function() {
+		return Nil, false, nil
+	}
+	result, err := s.dispatch(left.Function(), []Value{a, b})
+	if err != nil {
+		return Nil, true, err
+	}
+	if result.count == 0 {
+		return Nil, true, nil
+	}
+	return result.at(0), true, nil
+}
+func (s *State) comparisonMetamethod(a, b Value, name string) (Value, bool, error) {
+	if a.kind != b.kind {
+		return s.binaryMetamethod(a, b, name)
+	}
+	left := s.metaField(a, name)
+	right := s.metaField(b, name)
+	if left.kind != FunctionKind || right.kind != FunctionKind || left.Function() != right.Function() {
+		return Nil, false, nil
+	}
+	result, err := s.dispatch(left.Function(), []Value{a, b})
+	if err != nil {
+		return Nil, true, err
+	}
+	if result.count == 0 {
+		return Nil, true, nil
+	}
+	return result.at(0), true, nil
+}
+func (s *State) relationalMetamethod(a, b Value, name string) (Value, bool, error) {
+	if name == "__eq" {
+		return s.equalityMetamethod(a, b)
+	}
+	return s.comparisonMetamethod(a, b, name)
+}
+func (s *State) closeFrameUpvalues(frame *frame, from int) {
+	for register, opened := range frame.open {
+		if register < from {
+			continue
+		}
+		closed := &cell{value: opened.cell.value}
+		for _, ref := range opened.refs {
+			ref.fn.Up[ref.index] = closed
+		}
+		delete(frame.open, register)
+	}
+}
+func (s *State) instructionHook(frame *frame, proto *Prototype, pc int) error {
+	if s.hook.kind != FunctionKind || s.hookActive {
+		return nil
+	}
+	line := 0
+	if pc >= 0 && pc < len(proto.Lines) {
+		line = proto.Lines[pc]
+	}
+	if frame.fn == s.hookSkipFunction && line == s.hookSkipLine {
+		frame.lastHookLine = line
+		s.hookSkipFunction = nil
+		return nil
+	}
+	event := ""
+	lineEvent := insProducesLineEvent(proto.Code[pc].op())
+	if lineEvent && strings.ContainsRune(s.hookMask, 'l') && line > 0 && line != frame.lastHookLine {
+		event = "line"
+		frame.lastHookLine = line
+	} else if s.hookCount > 0 {
+		s.hookCounter++
+		if s.hookCounter >= s.hookCount {
+			s.hookCounter = 0
+			event = "count"
+		}
+	}
+	if event == "" {
+		return nil
+	}
+	s.hookActive = true
+	_, err := s.callValue(s.hook, []Value{String(event), Number(float64(line))})
+	s.hookActive = false
+	return err
+}
+func insProducesLineEvent(op opcode) bool {
+	switch op {
+	case opJump, opJumpFalse, opJumpCompareK, opForPrep, opForLoop, opForLoopV:
+		return false
+	default:
+		return true
+	}
+}
+func (s *State) lineHook(frame *frame, line int) error {
+	if s.hook.kind != FunctionKind || s.hookActive || !strings.ContainsRune(s.hookMask, 'l') || line <= 0 || line == frame.lastHookLine {
+		return nil
+	}
+	frame.lastHookLine = line
+	s.hookActive = true
+	_, err := s.callValue(s.hook, []Value{String("line"), Number(float64(line))})
+	s.hookActive = false
+	return err
+}
 func (s *State) unaryMetamethod(v Value, name string) (Value, bool, error) {
-	method := metaField(v, name)
+	method := s.metaField(v, name)
 	if method.kind != FunctionKind {
 		return Nil, false, nil
 	}

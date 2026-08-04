@@ -8,6 +8,17 @@ type Error struct {
 	Msg    string
 }
 
+type luaValueError struct{ value Value }
+
+func (e *luaValueError) Error() string { return e.value.Repr() }
+
+func errorValue(err error) Value {
+	if valueErr, ok := err.(*luaValueError); ok {
+		return valueErr.value
+	}
+	return String(err.Error())
+}
+
 func (e *Error) Error() string {
 	if e.Source == "" {
 		return e.Msg

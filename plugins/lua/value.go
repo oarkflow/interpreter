@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math"
 	"strconv"
+	"strings"
 	"unsafe"
 )
 
@@ -51,10 +52,18 @@ func FunctionValue(v *Function) Value {
 }
 func ThreadValue(v *Thread) Value { return Value{kind: ThreadKind, ptr: unsafe.Pointer(v)} }
 func Userdata(v any) Value {
-	return Value{kind: UserdataKind, ptr: unsafe.Pointer(&userdataBox{value: v})}
+	return UserdataWithMetatable(v, nil)
 }
 
-type userdataBox struct{ value any }
+func UserdataWithMetatable(v any, meta *Table) Value {
+	return Value{kind: UserdataKind, ptr: unsafe.Pointer(&userdataBox{value: v, meta: meta})}
+}
+
+type userdataBox struct {
+	value          any
+	meta           *Table
+	markGeneration uint64
+}
 
 func (v Value) Kind() Kind      { return v.kind }
 func (v Value) Bool() bool      { return v.bits != 0 }
@@ -79,6 +88,12 @@ func (v Value) Thread() *Thread {
 		return nil
 	}
 	return (*Thread)(v.ptr)
+}
+func (v Value) UserdataValue() any {
+	if v.kind != UserdataKind || v.ptr == nil {
+		return nil
+	}
+	return (*userdataBox)(v.ptr).value
 }
 func (v Value) Interface() any {
 	switch v.kind {
@@ -139,7 +154,7 @@ func (v Value) Repr() string {
 		}
 		return "false"
 	case NumberKind:
-		return strconv.FormatFloat(v.Number(), 'g', -1, 64)
+		return strconv.FormatFloat(v.Number(), 'g', 14, 64)
 	case StringKind:
 		return v.StringValue()
 	case TableKind:
@@ -178,7 +193,11 @@ func toNumber(v Value) (float64, bool) {
 		return v.Number(), true
 	}
 	if v.kind == StringKind {
-		n, err := strconv.ParseFloat(v.StringValue(), 64)
+		text := strings.TrimSpace(v.StringValue())
+		if text == "" {
+			return 0, false
+		}
+		n, err := strconv.ParseFloat(text, 64)
 		return n, err == nil
 	}
 	return 0, false

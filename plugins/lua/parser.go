@@ -23,6 +23,10 @@ func parse(source, name string) (*block, error) {
 	if p.err != nil {
 		return nil, p.err
 	}
+	if p.current.kind != tEOF {
+		p.fail(p.current, "unexpected token %q", p.current.lit)
+		return nil, p.err
+	}
 	return body, nil
 }
 
@@ -64,9 +68,6 @@ func (p *parser) fail(t token, format string, args ...any) {
 func (p *parser) parseBlock(ends ...tokenKind) *block {
 	result := &block{}
 	for p.err == nil && !containsToken(ends, p.current.kind) {
-		if p.accept(tSemi) {
-			continue
-		}
 		stmt := p.parseStatement()
 		if stmt != nil {
 			result.statements = append(result.statements, stmt)
@@ -291,6 +292,9 @@ func (p *parser) parseUnary() expression {
 	if p.current.kind == tNot || p.current.kind == tMinus || p.current.kind == tHash {
 		op := p.current
 		p.advance()
+		if p.err != nil {
+			return &literalExpression{line: op.line, value: Nil}
+		}
 		return &unaryExpression{line: op.line, operator: op.kind, value: p.parseExpression(7)}
 	}
 	return p.parsePrimary()
@@ -337,9 +341,10 @@ func (p *parser) parsePrefixExpression() expression {
 		p.advance()
 		result = &nameExpression{line: t.line, name: t.lit}
 	} else {
-		p.expect(tLParen, "(")
-		result = p.parseExpression(0)
+		open := p.expect(tLParen, "(")
+		value := p.parseExpression(0)
 		p.expect(tRParen, ")")
+		result = &parenthesizedExpression{line: open.line, value: value}
 	}
 	for p.err == nil {
 		switch p.current.kind {
@@ -361,7 +366,9 @@ func (p *parser) parsePrefixExpression() expression {
 			fn := &indexExpression{line: line, table: receiver, key: &literalExpression{line: name.line, value: String(name.lit)}}
 			result = &callExpression{line: line, function: fn, receiver: receiver, args: p.parseArguments()}
 		case tLParen, tLBrace, tString:
-			result = &callExpression{line: p.current.line, function: result, args: p.parseArguments()}
+			line := p.current.line
+			args := p.parseArguments()
+			result = &callExpression{line: line, function: result, args: args}
 		default:
 			return result
 		}
@@ -404,7 +411,7 @@ func (p *parser) parseFunctionBody(line int) *functionExpression {
 		p.expect(tRParen, ")")
 	}
 	fn.body = p.parseBlock(tEnd)
-	p.expect(tEnd, "end")
+	fn.lastLine = p.expect(tEnd, "end").line
 	return fn
 }
 

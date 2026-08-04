@@ -35,3 +35,9 @@ func TestParserMethodsAndTableFields(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestParserReportsLexerErrorAfterUnaryWithoutRecursing(t *testing.T) {
+	if _, err := parse(`return -@`, "bad.lua"); err == nil {
+		t.Fatal("expected syntax error")
+	}
+}
