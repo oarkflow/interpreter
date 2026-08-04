@@ -401,6 +401,13 @@ func (s *State) callLua(fn *Function, args []Value) (callResult, error) {
 				return callResult{}, s.vmWrap(p, pc, err)
 			}
 		case opAddTable:
+			accumulator, target, key := regs[a].value, regs[b].value, regs[c].value
+			if accumulator.kind == NumberKind && target.kind == TableKind && target.Table().meta == nil && key.kind == NumberKind {
+				if value, ok := target.Table().getDenseNumber(key.Number()); ok && value.kind == NumberKind {
+					regs[a].value = Number(accumulator.Number() + value.Number())
+					continue
+				}
+			}
 			if err := s.addTableValue(&regs[a].value, regs[b].value, regs[c].value); err != nil {
 				return callResult{}, s.vmWrap(p, pc, err)
 			}
@@ -1088,6 +1095,7 @@ func (s *State) addTableValue(accumulator *Value, target, key Value) error {
 	*accumulator = result
 	return nil
 }
+
 func (s *State) binaryMetamethod(a, b Value, name string) (Value, bool, error) {
 	method := metaField(a, name)
 	if method.kind == NilKind {
