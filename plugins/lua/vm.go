@@ -997,8 +997,10 @@ func (s *State) callLua(fn *Function, args []Value) (callResult, error) {
 				}
 			}
 		case opReturn:
-			if err := s.lineHook(&f, p.EndLine); err != nil {
-				return callResult{}, err
+			if p.Lines[pc] == 0 {
+				if err := s.lineHook(&f, p.EndLine); err != nil {
+					return callResult{}, err
+				}
 			}
 			if b == 255 {
 				return f.multi, nil

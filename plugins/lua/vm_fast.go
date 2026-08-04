@@ -687,8 +687,10 @@ func (s *State) callLuaFast(root *Function, args []Value) (callResult, error) {
 			}
 			s.applyFastResults(&s.frames[len(s.frames)-1], returnBase, returnWant, results)
 		case opReturn:
-			if err := s.lineHook(f, p.EndLine); err != nil {
-				return callResult{}, err
+			if p.Lines[pc] == 0 {
+				if err := s.lineHook(f, p.EndLine); err != nil {
+					return callResult{}, err
+				}
 			}
 			result := callResult{count: b}
 			for i := 0; i < b; i++ {
