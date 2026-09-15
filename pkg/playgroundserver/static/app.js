@@ -15,7 +15,7 @@ const outputEl = document.getElementById('output');
 const errorEl = document.getElementById('error');
 const diagnosticsEl = document.getElementById('diagnostics');
 const artifactsEl = document.getElementById('artifacts');
-const previewEl = document.getElementById('preview');
+let previewEl = document.getElementById('preview');
 const durationEl = document.getElementById('duration');
 const resultTypeEl = document.getElementById('resultType');
 const outputLinesEl = document.getElementById('outputLines');
@@ -230,6 +230,32 @@ function setTab(tab) {
   }
 }
 
+// setPreviewHTML replaces the preview iframe with a freshly created one
+// carrying the given srcdoc (pass '' to clear it). Chromium has a real
+// rendering bug where reusing the same persistent <iframe> and just
+// reassigning .srcdoc can silently fail to paint the new content the
+// first time the panel becomes visible on a fresh page load (before the
+// user has ever switched to the Preview tab) - the content does load into
+// the iframe's document, it just never gets painted, and neither waiting
+// a frame nor forcing a synchronous reflow before assigning srcdoc fixes
+// it. Only a genuine hide/show cycle (e.g. switching tabs away and back)
+// or a brand new <iframe> element reliably renders it - confirmed against
+// a real Chrome build. Creating a fresh element every time sidesteps the
+// bug entirely and matches how the Artifacts panel's own <img> tags
+// (freshly created each run) never exhibit it.
+function setPreviewHTML(html) {
+  const fresh = document.createElement('iframe');
+  fresh.id = previewEl.id;
+  fresh.className = previewEl.className;
+  fresh.dataset.panel = previewEl.dataset.panel;
+  fresh.setAttribute('sandbox', previewEl.getAttribute('sandbox') || 'allow-scripts');
+  fresh.srcdoc = html;
+  previewEl.replaceWith(fresh);
+  const idx = panels.indexOf(previewEl);
+  if (idx !== -1) panels[idx] = fresh;
+  previewEl = fresh;
+}
+
 // --- Persistence ---
 
 function persistCode() {
@@ -365,7 +391,7 @@ function applyResponse(payload) {
   durationEl.textContent = payload.duration_ms != null ? `${payload.duration_ms} ms` : '-';
   resultTypeEl.textContent = payload.result_type || '-';
   updateOutputLines();
-  previewEl.srcdoc = '';
+  setPreviewHTML('');
   const artifactPreview = renderArtifacts(payload.artifacts);
 
   // Detect HTML in result or output and render in preview iframe
@@ -376,9 +402,9 @@ function applyResponse(payload) {
     setStatus('error', kind === 'parser' ? 'Parser Error' : 'Runtime Error');
     setTab('error');
   } else if (htmlContent) {
-    previewEl.srcdoc = htmlContent;
     setStatus('success', 'Success');
     setTab('preview');
+    setPreviewHTML(htmlContent);
   } else if (Array.isArray(payload.artifacts) && payload.artifacts.length) {
     setStatus('success', 'Success');
     setTab('artifacts');
@@ -478,7 +504,7 @@ function clearPanels() {
   errorEl.textContent = '';
   diagnosticsEl.textContent = '';
   if (artifactsEl) artifactsEl.innerHTML = '';
-  previewEl.srcdoc = '';
+  setPreviewHTML('');
   durationEl.textContent = '-';
   resultTypeEl.textContent = '-';
   updateOutputLines();
