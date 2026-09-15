@@ -1,0 +1,124 @@
+// Conformance corpus: match expressions covering common pattern kinds.
+
+test "literal and wildcard patterns" {
+    let r1 = match (42) {
+        case 1 => "one"
+        case 42 => "forty-two"
+        case 100 => "hundred"
+    };
+    assert_eq(r1, "forty-two", "literal pattern matches exact value");
+
+    let r2 = match (999) {
+        case 1 => "one"
+        case _ => "other"
+    };
+    assert_eq(r2, "other", "wildcard pattern catches unmatched value");
+}
+
+test "variable binding pattern" {
+    let r3 = match (42) {
+        case n => "got " + n
+    };
+    assert_eq(r3, "got 42", "bare identifier pattern binds the matched value");
+}
+
+test "type patterns" {
+    let describe = function(val) {
+        return match (val) {
+            case n: integer => "integer: " + n
+            case s: string  => "string: " + s
+            case b: boolean => "boolean: " + b
+            case a: array   => "array of length " + len(a)
+            case _          => "unknown"
+        };
+    };
+    assert_eq(describe(42), "integer: 42", "integer type pattern");
+    assert_eq(describe("hi"), "string: hi", "string type pattern");
+    assert_eq(describe(true), "boolean: true", "boolean type pattern");
+    assert_eq(describe([1, 2, 3]), "array of length 3", "array type pattern");
+}
+
+test "array destructuring patterns" {
+    let r4 = match ([1, 2, 3]) {
+        case [a, b, c] => a + b + c
+    };
+    assert_eq(r4, 6, "fixed-length array destructure sums elements");
+
+    let r5 = match ([10, 20, 30, 40, 50]) {
+        case [head, ...tail] => "head=" + head + " tail_len=" + len(tail)
+    };
+    assert_eq(r5, "head=10 tail_len=4", "rest pattern captures remaining elements");
+}
+
+test "object destructuring patterns" {
+    let personMatch = {"name": "Alice", "age": 30, "city": "NYC"};
+    let r6 = match (personMatch) {
+        case {name, age} => name + " is " + age
+    };
+    assert_eq(r6, "Alice is 30", "object shorthand destructure");
+
+    let r7 = match (personMatch) {
+        case {name: n, age: a} => n + " age " + a
+    };
+    assert_eq(r7, "Alice age 30", "object rename destructure");
+}
+
+test "guard clauses" {
+    let classify = function(n) {
+        return match (n) {
+            case x if x > 0 => "positive"
+            case x if x < 0 => "negative"
+            case _ => "zero"
+        };
+    };
+    assert_eq(classify(5), "positive", "guard selects positive branch");
+    assert_eq(classify(-3), "negative", "guard selects negative branch");
+    assert_eq(classify(0), "zero", "falls through to wildcard");
+}
+
+test "or patterns and range patterns" {
+    let r8 = match (2) {
+        case 1 | 2 | 3 => "small"
+        case 4 | 5 | 6 => "medium"
+        case _ => "large"
+    };
+    assert_eq(r8, "small", "or pattern matches any alternative");
+
+    let grade = function(score) {
+        return match (score) {
+            case 90..100 => "A"
+            case 80..89  => "B"
+            case 70..79  => "C"
+            case _       => "F"
+        };
+    };
+    assert_eq(grade(95), "A", "range pattern upper band");
+    assert_eq(grade(42), "F", "range pattern falls to wildcard");
+}
+
+test "comparison patterns" {
+    let r9 = match (15) {
+        case > 100 => "huge"
+        case > 10  => "big"
+        case > 0   => "small"
+        case _     => "non-positive"
+    };
+    assert_eq(r9, "big", "first matching comparison pattern wins");
+}
+
+test "nested pattern destructuring" {
+    let nestedData = {"users": [{"name": "Bob"}, {"name": "Eve"}]};
+    let r13 = match (nestedData) {
+        case {users: [first, ...rest]} => first.name
+    };
+    assert_eq(r13, "Bob", "nested object/array pattern reaches inner field");
+}
+
+test "match used as a statement" {
+    let sink = "";
+    match (42) {
+        case x if x > 0 => sink = "positive:" + x
+        case _ => sink = "non-positive"
+    }
+    assert_eq(sink, "positive:42", "match statement executes matching branch's side effect");
+}

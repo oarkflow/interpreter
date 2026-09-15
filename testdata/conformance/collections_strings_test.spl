@@ -1,0 +1,79 @@
+// Conformance corpus: arrays, hashes, strings, and destructuring.
+
+test "array literal and index assignment" {
+    let arr = [10, 20, 30];
+    arr[0] = 100;
+    arr[2] = arr[2] + 70;
+    assert_eq(arr[0], 100, "index assignment updates element");
+    assert_eq(arr[2], 100, "arithmetic on indexed element");
+}
+
+test "array extended methods" {
+    let data = [3, 1, 4, 1, 5, 9, 2, 6];
+    assert_eq(data.length, 8, "length property");
+    assert_true(data.includes(4), "includes finds present value");
+    assert_eq(data.indexOf(5), 4, "indexOf locates element");
+    assert_eq([1, [2, 3], [4, [5, 6]]].flat()[3], 4, "flat flattens nested arrays");
+    assert_eq(["SPL", "is", "fun"].join(" "), "SPL is fun", "join concatenates with separator");
+}
+
+test "hash literal, dot access, and methods" {
+    let user = {"name": "SPL", "role": "demo", "meta": {"version": 1}};
+    assert_eq(user.name, "SPL", "dot access reads hash field");
+    assert_eq(len(keys(user)), 3, "keys() returns all hash keys");
+    assert_true(has_key(user, "name"), "has_key detects present key");
+    assert_eq(get(user, "missing", "fallback"), "fallback", "get falls back for missing key");
+
+    let merged = merge(user, {"role": "engineer"});
+    assert_eq(merged.role, "engineer", "merge overrides existing key");
+}
+
+test "object spread and hash methods" {
+    let base_obj = {"x": 1, "y": 2};
+    let extended = {...base_obj, "z": 3, "x": 10};
+    assert_eq(extended.x, 10, "later key wins after spread");
+    assert_eq(extended.z, 3, "new key added after spread");
+    assert_eq(extended.length, 3, "hash length property");
+}
+
+test "string helpers" {
+    let raw = "  hello,World  ";
+    let clean = trim(raw).replace(",", " ").title();
+    assert_eq(clean, "Hello World", "trim + replace + title chain");
+    assert_true(starts_with("sk_abc123", "sk_"), "starts_with detects prefix");
+    assert_eq("42".padStart(5, "0"), "00042", "padStart pads with character");
+    assert_eq("hi".padEnd(5, "."), "hi...", "padEnd pads with character");
+}
+
+test "json roundtrip" {
+    let payload = {"name": "spl", "ok": true, "count": 3};
+    let jsonText = json_encode(payload);
+    let decoded = json_decode(jsonText);
+    assert_eq(decoded.name, "spl", "json_decode(json_encode(x)).name preserved");
+    assert_eq(decoded.count, 3, "json_decode(json_encode(x)).count preserved");
+}
+
+test "destructuring assignment" {
+    let {name: dName, role: dRole} = {"name": "SPL", "role": "demo", "extra": "ignored"};
+    assert_eq(dName, "SPL", "object destructure renamed binding");
+    assert_eq(dRole, "demo", "object destructure second binding");
+
+    let {host: dHost, port: dPort = 8080} = {"host": "localhost"};
+    assert_eq(dHost, "localhost", "object destructure present field");
+    assert_eq(dPort, 8080, "object destructure default for missing field");
+
+    let [dFirst, dSecond, dThird] = [10, 20, 30];
+    assert_eq(dFirst + dSecond + dThird, 60, "array destructure binds positionally");
+
+    let [dHead, ...dTail] = [1, 2, 3, 4, 5];
+    assert_eq(dHead, 1, "array destructure head");
+    assert_eq(len(dTail), 4, "array destructure rest length");
+}
+
+test "range expressions" {
+    let intRange = 1..5;
+    assert_eq(len(intRange), 5, "ascending integer range length");
+    assert_eq(intRange[0], 1, "ascending range starts at lower bound");
+    let descRange = 5..1;
+    assert_eq(descRange[0], 5, "descending range starts at upper bound");
+}

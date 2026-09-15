@@ -58,6 +58,64 @@ classify_script() {
     examples/all_in_one.spl)
       echo success
       ;;
+    # Small example web app: main.spl starts a real HTTP server and blocks
+    # forever (server.listen never returns), so it can only be sanity-checked
+    # for syntax/static validity, not executed to completion.
+    examples/app/main.spl)
+      echo manual
+      ;;
+    # Library modules for the example app (controllers/models/middleware/
+    # routes/config/support) - not standalone entrypoints, so they are only
+    # checked for syntax/static validity, never executed directly.
+    examples/app/app/config/app.spl | \
+    examples/app/app/controllers/activity_controller.spl | \
+    examples/app/app/controllers/api_todo_controller.spl | \
+    examples/app/app/controllers/home_controller.spl | \
+    examples/app/app/controllers/todo_controller.spl | \
+    examples/app/app/middleware/auth.spl | \
+    examples/app/app/middleware/logger.spl | \
+    examples/app/app/models/todo.spl | \
+    examples/app/app/routes/api.spl | \
+    examples/app/app/routes/web.spl | \
+    examples/app/app/support/events.spl | \
+    examples/app/app/support/http.spl | \
+    examples/app/app/support/types.spl)
+      echo manual
+      ;;
+    # Writes files under a demo directory whose path assumptions only work
+    # when run with a cwd this harness does not use (repo root vs.
+    # examples/), and later calls pdf.stamp_image()/pdf.images_to_pdf() with
+    # a path that assumes the opposite cwd - it cannot complete under either
+    # convention, so it's check-only.
+    examples/pdf_all_in_one.spl)
+      echo manual
+      ;;
+    # rules.publish() from a file writes "rules_demo_policy.bcl" resolved
+    # against the process cwd, but the plugin's sandbox root is the script's
+    # own directory (examples/); when invoked the way this harness (and the
+    # script's own header comment) does - `interpreter examples/rules_all_in_one.spl`
+    # from the repo root - the write path falls outside that sandbox root and
+    # the script errors out, so it's check-only.
+    examples/rules_all_in_one.spl)
+      echo manual
+      ;;
+    # secretr and tcpguard builtins are linked into the plain cmd/interpreter
+    # build (via plugins blank-import) and these scripts run to completion
+    # and exit 0 on their own - including tcpguard's self-test, which starts
+    # a real HTTP server but shuts it down and returns before exiting.
+    examples/secretr_all_in_one.spl | examples/tcpguard_all_in_one.spl)
+      echo success
+      ;;
+    # Conformance fixtures: self-contained `test {}` blocks that run to
+    # completion and exit 0 via the plain interpreter binary.
+    testdata/conformance/arithmetic_control_flow_test.spl | \
+    testdata/conformance/classes_oop_test.spl | \
+    testdata/conformance/collections_strings_test.spl | \
+    testdata/conformance/error_handling_test.spl | \
+    testdata/conformance/functions_closures_test.spl | \
+    testdata/conformance/pattern_matching_test.spl)
+      echo success
+      ;;
     *)
       echo unclassified
       ;;

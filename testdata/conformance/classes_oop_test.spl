@@ -1,0 +1,84 @@
+// Conformance corpus: classes, inheritance, interfaces, and ADTs.
+
+test "basic class with init and method" {
+    class User {
+        init(name) {
+            this.name = name;
+        }
+        greet() {
+            return "Hello " + this.name;
+        }
+    }
+    let u = User("SPL");
+    assert_eq(u.greet(), "Hello SPL", "instance method reads instance field");
+}
+
+test "abstract classes and inheritance" {
+    abstract class Shape {
+        abstract area();
+        describe() { return "area=" + this.area(); }
+    }
+    class Circle extends Shape {
+        init(radius) { this.radius = radius; }
+        area() { return 3.14159 * this.radius * this.radius; }
+    }
+    let described = Circle(2).describe();
+    assert_true(starts_with(described, "area="), "inherited method calls overridden abstract method");
+}
+
+test "interfaces and multi-level inheritance with super" {
+    interface Greetable {
+        greet();
+    }
+    class Person implements Greetable {
+        init(name) { this.name = name; }
+        greet() { return "Hi, " + this.name; }
+    }
+    class Employee extends Person implements Greetable {
+        init(name, role) {
+            super(name);
+            this.role = role;
+        }
+    }
+    let employee = Employee("Sam", "Engineer");
+    assert_eq(employee.greet(), "Hi, Sam", "inherited greet uses super-set field");
+    assert_eq(employee.role, "Engineer", "subclass-specific field set in its own init");
+}
+
+test "private fields and compound assignment" {
+    class BankAccount {
+        private balance = 0;
+        init(initial) { this.balance = initial; }
+        deposit(amount) {
+            this.balance += amount;
+            return this.balance;
+        }
+    }
+    let account = BankAccount(100);
+    assert_eq(account.deposit(50), 150, "compound += updates private field");
+}
+
+test "static members" {
+    class InstanceCounter {
+        static total = 0;
+        init() { InstanceCounter.total += 1; }
+        static getTotal() { return InstanceCounter.total; }
+    }
+    InstanceCounter();
+    InstanceCounter();
+    assert_eq(InstanceCounter.getTotal(), 2, "static field shared across instances");
+}
+
+test "algebraic data types via type declarations" {
+    type Result = Ok(value) | Err(error);
+    let good = Ok(42);
+    let bad = Err("failure");
+    let unwrap = function(r) {
+        return match (r) {
+            case Ok(v) => v
+            case Err(e) => e
+        };
+    };
+    assert_eq(unwrap(good), 42, "Ok variant unwraps to its value");
+    assert_eq(unwrap(bad), "failure", "Err variant unwraps to its error");
+}

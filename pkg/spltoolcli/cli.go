@@ -1055,8 +1055,26 @@ func runConformance(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 	targets := fs.Args()
+	usedDefault := false
 	if len(targets) == 0 {
 		targets = []string{"testdata/conformance"}
+		usedDefault = true
+	}
+	if usedDefault {
+		if info, err := os.Stat(targets[0]); err != nil || !info.IsDir() {
+			fmt.Fprintf(stderr, ""+
+				"conformance corpus not found: %q does not exist or is not a directory.\n\n"+
+				"spltool conformance runs the canonical language-compatibility corpus and\n"+
+				"expects *_test.spl files (or a tests/ directory) containing `test \"name\" { ... }`\n"+
+				"blocks with std/test assertions (assert_eq, assert_true, assert_throws, ...).\n\n"+
+				"To fix this:\n"+
+				"  - populate %s with conformance test files (see docs/README.md's\n"+
+				"    \"Conformance\" section and docs/features/41-spltool-cli-lsp-and-vscode-extension.md\n"+
+				"    for the expected format), or\n"+
+				"  - pass an explicit corpus directory: spltool conformance <dir>\n",
+				targets[0], targets[0])
+			return 1
+		}
 	}
 	runArgs := []string{"--profile", *profile}
 	if *jsonOut {

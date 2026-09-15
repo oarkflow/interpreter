@@ -1,0 +1,97 @@
+// Conformance corpus: functions, closures, recursion, and higher-order use.
+
+test "closures capture enclosing scope" {
+    let makeAdder = function(x) {
+        return function(y) { return x + y; };
+    };
+    let add10 = makeAdder(10);
+    assert_eq(add10(5), 15, "closure adds captured x to argument");
+    assert_eq(makeAdder(1)(1), 2, "independent closures do not share state");
+}
+
+test "recursion" {
+    let fib = function(n) {
+        if (n <= 1) { return n; }
+        return fib(n - 1) + fib(n - 2);
+    };
+    assert_eq(fib(10), 55, "recursive fibonacci");
+
+    let factorial = function(n) {
+        if (n <= 1) { return 1; }
+        return n * factorial(n - 1);
+    };
+    assert_eq(factorial(6), 720, "recursive factorial");
+}
+
+test "tail-recursive style accumulator functions" {
+    let factorialTail = function(n, acc) {
+        if (n <= 1) { return acc; }
+        return factorialTail(n - 1, n * acc);
+    };
+    let factorialTCO = function(n) { return factorialTail(n, 1); };
+    assert_eq(factorialTCO(10), 3628800, "accumulator-style factorial");
+
+    let fibTail = function(n, a, b) {
+        if (n == 0) { return a; }
+        return fibTail(n - 1, b, a + b);
+    };
+    let fibTCO = function(n) { return fibTail(n, 0, 1); };
+    assert_eq(fibTCO(20), 6765, "accumulator-style fibonacci");
+}
+
+test "default parameters" {
+    let greet = function(name, greeting = "Hello", punct = "!") {
+        return greeting + ", " + name + punct;
+    };
+    assert_eq(greet("World"), "Hello, World!", "all defaults used");
+    assert_eq(greet("World", "Hi"), "Hi, World!", "one default overridden");
+    assert_eq(greet("World", "Hey", "."), "Hey, World.", "no defaults used");
+}
+
+test "rest parameters and spread" {
+    let sumAll = function(...nums) {
+        let total = 0;
+        for (n in nums) { total = total + n; }
+        return total;
+    };
+    assert_eq(sumAll(1, 2, 3, 4, 5), 15, "rest params collect all arguments");
+
+    let first3 = [1, 2, 3];
+    let expanded = [0, ...first3, 4, 5];
+    assert_eq(len(expanded), 6, "spread expands array into literal");
+    assert_eq(expanded[1], 1, "spread preserves element order");
+}
+
+test "arrow functions" {
+    let double = (x) => x * 2;
+    assert_eq(double(5), 10, "single-expression arrow");
+    let add = (a, b) => a + b;
+    assert_eq(add(3, 4), 7, "multi-arg arrow");
+    let square = x => x * x;
+    assert_eq(square(9), 81, "single-param arrow without parens");
+    let blockArrow = (x) => { let r = x * 10; return r + 1; };
+    assert_eq(blockArrow(3), 31, "block-bodied arrow");
+}
+
+test "higher-order array methods" {
+    let nums = [1, 2, 3, 4, 5, 6];
+    let doubled = nums.map(function(x) { return x * 2; });
+    assert_eq(doubled[0], 2, "map doubles first element");
+    assert_eq(len(doubled), 6, "map preserves length");
+
+    let evens = nums.filter(function(x) { return x % 2 == 0; });
+    assert_eq(len(evens), 3, "filter keeps only even numbers");
+
+    let total = nums.reduce(function(acc, x) { return acc + x; }, 0);
+    assert_eq(total, 21, "reduce sums all elements");
+
+    assert_true(nums.every(function(x) { return x > 0; }), "every element positive");
+    assert_true(nums.some(function(x) { return x > 5; }), "some element greater than 5");
+}
+
+test "named function declarations" {
+    function greetPerson(name) {
+        return "Hello, " + name + "!";
+    }
+    assert_eq(greetPerson("World"), "Hello, World!", "named function declaration callable");
+}

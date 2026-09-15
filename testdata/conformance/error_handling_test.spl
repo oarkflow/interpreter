@@ -1,0 +1,70 @@
+// Conformance corpus: try/catch/throw, finally, and structured errors.
+
+test "basic try/catch catches a thrown value" {
+    let caught = try {
+        throw "manual error";
+    } catch (e) {
+        "expected caught: " + e;
+    };
+    assert_eq(caught, "expected caught: manual error", "catch receives thrown value");
+}
+
+test "try without a throw returns the try block value" {
+    let result = try {
+        1 + 41;
+    } catch (e) {
+        "should not run";
+    };
+    assert_eq(result, 42, "no throw means try value is returned");
+}
+
+test "finally always runs" {
+    let finallyRan = false;
+    let result = try {
+        42;
+    } catch (e) {
+        "caught";
+    } finally {
+        finallyRan = true;
+    };
+    assert_eq(result, 42, "try value returned when no exception");
+    assert_true(finallyRan, "finally executes on the success path");
+
+    let finallyRan2 = false;
+    let caught = try {
+        throw "oops";
+    } catch (e) {
+        "caught: " + e;
+    } finally {
+        finallyRan2 = true;
+    };
+    assert_eq(caught, "caught: oops", "catch value returned on failure path");
+    assert_true(finallyRan2, "finally executes on the failure path");
+}
+
+test "assert_throws detects thrown errors" {
+    assert_throws(function() { throw "boom"; }, "assert_throws passes when body throws");
+}
+
+test "structured Error objects carry message and metadata" {
+    let errCaught = try {
+        throw Error("Bad payload", {"code": "E_PAYLOAD"});
+    } catch (e: Error) {
+        "message=" + e.message + " code=" + e.code;
+    };
+    assert_eq(errCaught, "message=Bad payload code=E_PAYLOAD", "typed catch exposes structured error fields");
+}
+
+test "nested try/catch propagates only the inner failure" {
+    let outerCaught = try {
+        let innerResult = try {
+            throw "inner failure";
+        } catch (e) {
+            "inner handled: " + e;
+        };
+        innerResult + " -> outer continues";
+    } catch (e) {
+        "outer should not trigger";
+    };
+    assert_eq(outerCaught, "inner handled: inner failure -> outer continues", "inner catch absorbs the throw");
+}

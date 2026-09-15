@@ -1,0 +1,125 @@
+// Conformance corpus: arithmetic, operators, and control flow.
+//
+// Discovered by `spltool test` / `spltool conformance` via the `*_test.spl`
+// naming convention (see docs/README.md "Conformance" section and
+// docs/features/41-spltool-cli-lsp-and-vscode-extension.md).
+
+test "basic arithmetic" {
+    assert_eq(2 + 2, 4, "addition");
+    assert_eq(10 - 3, 7, "subtraction");
+    assert_eq(6 * 7, 42, "multiplication");
+    assert_eq(20 / 4, 5, "division");
+    assert_eq(7 % 3, 1, "modulo");
+    assert_eq(2 ** 10, 1024, "exponentiation");
+}
+
+test "operator precedence" {
+    assert_eq(2 + 3 * 4, 14, "multiplication before addition");
+    assert_eq((2 + 3) * 4, 20, "parentheses override precedence");
+    assert_eq(10 - 2 - 3, 5, "left-associative subtraction");
+}
+
+test "comparison and logical operators" {
+    assert_true(1 < 2, "less than");
+    assert_true(2 <= 2, "less than or equal");
+    assert_true(3 > 2, "greater than");
+    assert_true(3 >= 3, "greater than or equal");
+    assert_true(1 == 1, "equality");
+    assert_true(1 != 2, "inequality");
+    assert_true(true && true, "logical and");
+    assert_true(false || true, "logical or");
+    assert_true(!false, "logical not");
+}
+
+test "bitwise operators" {
+    assert_eq(0xFF & 0x0F, 15, "bitwise and");
+    assert_eq(0xF0 | 0x0F, 255, "bitwise or");
+    assert_eq(5 ^ 3, 6, "bitwise xor");
+    assert_eq(1 << 8, 256, "left shift");
+    assert_eq(256 >> 4, 16, "right shift");
+}
+
+test "ternary and null coalescing" {
+    let logged_in = true;
+    assert_eq(logged_in ? "yes" : "no", "yes", "ternary true branch");
+    assert_eq(false ? "yes" : "no", "no", "ternary false branch");
+    assert_eq(null ?? "fallback", "fallback", "null coalescing on null");
+    assert_eq("value" ?? "fallback", "value", "null coalescing on non-null");
+}
+
+test "if/else control flow" {
+    let classify = function(n) {
+        if (n > 0) {
+            return "positive";
+        } else {
+            if (n < 0) {
+                return "negative";
+            } else {
+                return "zero";
+            }
+        }
+    };
+    assert_eq(classify(5), "positive", "if branch");
+    assert_eq(classify(-5), "negative", "else if branch");
+    assert_eq(classify(0), "zero", "else branch");
+}
+
+test "while and do-while loops" {
+    let counter = 0;
+    while (counter < 5) {
+        counter = counter + 1;
+    }
+    assert_eq(counter, 5, "while loop counts to 5");
+
+    let countdown = 3;
+    let steps = 0;
+    do {
+        countdown = countdown - 1;
+        steps = steps + 1;
+    } while (countdown > 0);
+    assert_eq(steps, 3, "do-while executes at least once and loops");
+}
+
+test "for loop with break and continue" {
+    let sum = 0;
+    for (let i = 0; i < 10; i = i + 1) {
+        if (i % 2 == 0) { continue; }
+        sum = sum + i;
+        if (sum > 20) { break; }
+    }
+    assert_eq(sum, 25, "for loop with continue/break skips evens and stops early");
+}
+
+test "for-in loops over arrays hashes and strings" {
+    let colors = ["red", "green", "blue"];
+    let joined = "";
+    for (c in colors) { joined = joined + c + ","; }
+    assert_eq(joined, "red,green,blue,", "for-in over array");
+
+    let total = 0;
+    let config = {"a": 1, "b": 2, "c": 3};
+    for (k, v in config) { total = total + v; }
+    assert_eq(total, 6, "for-in over hash values");
+
+    let charCount = 0;
+    for (ch in "SPL") { charCount = charCount + 1; }
+    assert_eq(charCount, 3, "for-in over string characters");
+}
+
+test "switch statement" {
+    let describe = function(lang) {
+        switch (lang) {
+            case "go":
+                return "Go lang";
+            case "spl":
+                return "SPL lang";
+            case "js", "ts":
+                return "JavaScript family";
+            default:
+                return "unknown lang";
+        }
+    };
+    assert_eq(describe("spl"), "SPL lang", "matches single case");
+    assert_eq(describe("ts"), "JavaScript family", "matches multi-value case");
+    assert_eq(describe("rust"), "unknown lang", "falls through to default");
+}
