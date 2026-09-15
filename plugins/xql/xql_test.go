@@ -53,6 +53,7 @@ http
 }
 
 func TestTaggedXQLBlockSupportsDirectHTTPCall(t *testing.T) {
+	t.Setenv("XQL_TRANSPORT_ALLOWED_HOSTS", "127.0.0.1")
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			t.Fatalf("expected GET request, got %s", r.Method)
