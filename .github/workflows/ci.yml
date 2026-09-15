@@ -1,0 +1,159 @@
+name: CI
+
+# Triggers: standard push/PR gate against main. Add more branches later if
+# long-lived release branches appear.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# Cancel superseded runs on the same ref to save CI minutes.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # This repo is a multi-module tree (see GO_MODULE_DIRS in the root
+  # Makefile). Keep this list in sync with the Makefile's GO_MODULE_DIRS -
+  # it is duplicated here because GitHub Actions cannot easily source a
+  # Makefile variable into a workflow-level env block.
+  GO_MODULE_DIRS: ". plugins cmd/interpreter cmd/spltool-full examples/app benchmarks/exprcompare"
+
+jobs:
+  # ---------------------------------------------------------------------
+  # Primary matrix: vet + test (race where practical) across the three
+  # major OSes GitHub Actions supports.
+  # ---------------------------------------------------------------------
+  test:
+    name: test (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          # Reads the `go` directive from the root go.mod so the toolchain
+          # tracks whatever version this repo is pinned to, without us
+          # hardcoding (and forgetting to bump) a version number here.
+          go-version-file: go.mod
+
+      # --- Linux / macOS: these runner images ship GNU Make and a C
+      # toolchain (gcc/clang) out of the box, and the repo's Makefile
+      # already encodes the per-module vet/test loop (GO_MODULE_DIRS), so
+      # we reuse it directly instead of duplicating the module list here.
+      - name: make vet-all (Linux/macOS)
+        if: runner.os != 'Windows'
+        run: make vet-all
+
+      - name: make test-race (Linux/macOS)
+        if: runner.os != 'Windows'
+        run: make test-race
+
+      # --- Windows: intentionally NOT using `make` here. GitHub's
+      # windows-latest image does not consistently provide a POSIX `sh`
+      # capable of driving this repo's Makefile (SHELL := /bin/sh, plus
+      # `cd module && ...` subshell idioms) the way the Linux/macOS images
+      # do, and relying on choco/msys make being present and on PATH is an
+      # assumption we're not confident enough in to gate CI on - so rather
+      # than guess, we invoke `go vet`/`go test` per module directly using
+      # the bash shell that `actions/checkout` + the hosted runner already
+      # provide (via Git for Windows), mirroring GO_MODULE_DIRS above.
+      #
+      # `-race` is intentionally omitted on Windows: Go's race detector
+      # needs cgo enabled with a working C compiler, and windows-latest
+      # does not reliably have a preconfigured mingw/gcc toolchain wired
+      # into `go env CC`. Race coverage is still obtained from the
+      # Linux/macOS legs of this matrix.
+      - name: go vet + go test per module (Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          set +e
+          failed=""
+          for module in $GO_MODULE_DIRS; do
+            echo "::group::vet+test $module"
+            (cd "$module" && go vet ./...) || failed="$failed $module(vet)"
+            (cd "$module" && go test ./...) || failed="$failed $module(test)"
+            echo "::endgroup::"
+          done
+          if [ -n "$failed" ]; then
+            echo "FAILED:$failed"
+            exit 1
+          fi
+
+  # ---------------------------------------------------------------------
+  # Linux-only: exercises the bubblewrap (bwrap) OS-isolation path.
+  # untrusted.go shells out to `bwrap` for --require-os-isolation, and the
+  # only test that pokes at that path directly is
+  # TestUntrustedWorkerCommandRequiresOSIsolationFailClosedWhenUnavailable
+  # in untrusted_internal_test.go (root module, package interpreter).
+  #
+  # That file is opted out of a plain `go test ./...` via the repo-private
+  # `bwrap_manual` build tag, so it must be enabled explicitly with
+  # `-tags=bwrap_manual`. Deliberately NOT `-tags=ignore`: the Go standard
+  # library ships several of its own code-generation source files under
+  # `//go:build ignore` (e.g. math/rand/gen_cooked.go), and passing
+  # `-tags=ignore` unlocks those too, which breaks the build with
+  # "found packages X and main in <dir>" conflicts - confirmed locally
+  # against the toolchain pinned by go.mod. bwrap itself is Linux-only (it
+  # wraps unshare/mount-namespace syscalls), which is why this is its own
+  # Linux-only job rather than folded into the OS matrix above.
+  # ---------------------------------------------------------------------
+  sandbox-bwrap:
+    name: sandbox (bubblewrap, ubuntu-latest)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Install bubblewrap
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bubblewrap
+          bwrap --version
+
+      - name: Root module tests with bwrap fail-closed/isolation coverage
+        run: go test -tags=bwrap_manual -v .
+
+      - name: Full vet + test suite across modules (bwrap present)
+        run: make vet-all && make test-all
+
+  # ---------------------------------------------------------------------
+  # Vulnerability scanning via govulncheck, per Go module.
+  #
+  # NOTE (initial rollout choice): this job is intentionally
+  # continue-on-error / best-effort for now. govulncheck can flag
+  # transitive-dependency advisories that aren't reachable from this
+  # repo's actual call graph, and we haven't yet triaged/baselined the
+  # current findings across all six modules. Treat this as an informative
+  # report in PR checks rather than a merge gate until that triage is
+  # done; a follow-up should tighten this to a hard failure (drop
+  # continue-on-error) once the modules are clean or false positives are
+  # documented/suppressed.
+  # ---------------------------------------------------------------------
+  govulncheck:
+    name: govulncheck (${{ matrix.module }})
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      matrix:
+        module: [., plugins, cmd/interpreter, cmd/spltool-full, examples/app, benchmarks/exprcompare]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: govulncheck
+        working-directory: ${{ matrix.module }}
+        run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
