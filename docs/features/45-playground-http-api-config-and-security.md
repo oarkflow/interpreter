@@ -117,7 +117,7 @@ reachable outside a trusted local network.
 
 | Var | Default | Purpose |
 |---|---|---|
-| `PLAYGROUND_ADDR` | `:8080` | listen address |
+| `PLAYGROUND_ADDR` | `127.0.0.1:8080` | listen address; binding non-loopback requires auth secret + secure cookies (see below) |
 | `PLAYGROUND_AUTH_SECRET` (`PLAYGROUND_API_KEY` fallback) | unset (auth disabled) | shared login secret |
 | `PLAYGROUND_EXECUTION_PROFILE` | `untrusted` | `trusted` or `untrusted` |
 | `PLAYGROUND_MAX_BODY_BYTES` | `1048576` | max request body |
@@ -129,9 +129,26 @@ reachable outside a trusted local network.
 | `PLAYGROUND_EVAL_MAX_DEPTH` / `_MAX_STEPS` / `_MAX_HEAP_MB` / `_TIMEOUT_MS` | `200`/`2000000`/`256`/`8000` | per-script eval limits |
 | `PLAYGROUND_RENDER_ALLOW_URLS` / `_ALLOW_URL_HOSTS` / `_MODE` / `_MAX_BYTES` | `false`/`""`/`auto`/`1048576` | artifact render controls |
 | `PLAYGROUND_INTERPRETER_BIN` / `_REPO_ROOT` / `_WORKSPACE_ROOT` | unset/unset/`./workspace` | Projects (IDE) mode config |
+| `PLAYGROUND_DEV_MODE` | `false` | opt out of the non-loopback-bind production-safety guard below; local dev/CI only |
 
 CLI flags (`--render-allow-urls`, `--render-url-hosts`, `--render-mode`,
 `--render-max-bytes`, `--profile`) override env vars for local runs.
+
+## Production-safety guard on the bind address
+
+`loadConfig` refuses to start when `PLAYGROUND_ADDR` resolves to a
+non-loopback address (anything other than `127.0.0.0/8`, `::1`, or
+`localhost` — an empty host like `:8080` binds all interfaces and counts as
+non-loopback) unless either:
+
+- `PLAYGROUND_AUTH_SECRET`/`PLAYGROUND_API_KEY` is set AND
+  `PLAYGROUND_COOKIE_SECURE=true` (intended for a real deployment behind
+  TLS), or
+- `PLAYGROUND_DEV_MODE=true` is set to explicitly acknowledge the reduced
+  security (local development, CI, and tests only).
+
+The default `PLAYGROUND_ADDR` (`127.0.0.1:8080`) is loopback, so this guard
+does not affect the default `--playground` invocation.
 
 ## Execution security profile
 

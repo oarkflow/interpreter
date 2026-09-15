@@ -73,7 +73,7 @@ func isLoopbackAddr(addr string) bool {
 
 func loadConfig() (Config, error) {
 	cfg := Config{
-		Addr:                envString("PLAYGROUND_ADDR", ":8080"),
+		Addr:                envString("PLAYGROUND_ADDR", "127.0.0.1:8080"),
 		AuthSecret:          envString("PLAYGROUND_AUTH_SECRET", envString("PLAYGROUND_API_KEY", "")),
 		ExecutionProfile:    envString("PLAYGROUND_EXECUTION_PROFILE", "untrusted"),
 		ReadTimeout:         envDurationMS("PLAYGROUND_READ_TIMEOUT_MS", 15000),

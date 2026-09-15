@@ -679,7 +679,9 @@ Embedding callers can set the same object/import limits with
 `cmd/playground` now requires an explicit auth secret and supports server hardening env vars:
 
 - `PLAYGROUND_AUTH_SECRET` (required; `PLAYGROUND_API_KEY` is accepted as a compatibility fallback)
-- `PLAYGROUND_ADDR` (default `:8080`)
+- `PLAYGROUND_ADDR` (default `127.0.0.1:8080`; binding to a non-loopback
+  address requires `PLAYGROUND_AUTH_SECRET` + `PLAYGROUND_COOKIE_SECURE=true`,
+  or an explicit `PLAYGROUND_DEV_MODE=true` opt-out)
 - `PLAYGROUND_MAX_BODY_BYTES` (default `1048576`)
 - `PLAYGROUND_RATE_LIMIT` (default `60`)
 - `PLAYGROUND_RATE_WINDOW_MS` (default `60000`)

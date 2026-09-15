@@ -2483,8 +2483,9 @@ for any deployment reachable outside a trusted local network.
 
 | Var | Default | Purpose |
 |---|---|---|
-| `PLAYGROUND_ADDR` | `:8080` | listen address |
+| `PLAYGROUND_ADDR` | `127.0.0.1:8080` | listen address; binding non-loopback requires an auth secret + secure cookies, or `PLAYGROUND_DEV_MODE=true` |
 | `PLAYGROUND_AUTH_SECRET` | unset (auth disabled) | shared login secret |
+| `PLAYGROUND_DEV_MODE` | `false` | opt out of the non-loopback-bind safety guard; local dev/CI only |
 | `PLAYGROUND_EXECUTION_PROFILE` | `untrusted` | `trusted` or `untrusted` |
 | `PLAYGROUND_MAX_BODY_BYTES` | `1048576` | max request body |
 | `PLAYGROUND_RATE_LIMIT` / `_RATE_WINDOW_MS` | `60` / `60000` | rate limiting |

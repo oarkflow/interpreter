@@ -20,10 +20,9 @@ import (
 func TestLoadConfigWithoutSecret(t *testing.T) {
 	t.Setenv("PLAYGROUND_AUTH_SECRET", "")
 	t.Setenv("PLAYGROUND_API_KEY", "")
-	// The default PLAYGROUND_ADDR (":8080") binds all interfaces, which the
-	// production-safety guard treats as non-loopback; opt into dev mode so
-	// this test continues to exercise "no secret configured" in isolation.
-	t.Setenv("PLAYGROUND_DEV_MODE", "true")
+	// The default PLAYGROUND_ADDR ("127.0.0.1:8080") is loopback, so the
+	// production-safety guard doesn't require a secret here; this test
+	// exercises "no secret configured" in isolation without needing dev mode.
 	cfg, err := loadConfig()
 	if err != nil {
 		t.Fatalf("expected config to load without auth secret, got error: %v", err)
@@ -37,7 +36,6 @@ func TestLoadConfigWithoutSecret(t *testing.T) {
 }
 
 func TestApplyCLIFlagsForRenderURLSettings(t *testing.T) {
-	t.Setenv("PLAYGROUND_DEV_MODE", "true")
 	cfg, err := loadConfig()
 	if err != nil {
 		t.Fatalf("loadConfig: %v", err)
