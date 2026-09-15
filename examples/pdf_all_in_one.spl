@@ -60,6 +60,26 @@ pdf.from_markdown(
 print sprintf("report.pdf pages=%d", pdf.info(markdownReport).pages);
 
 // -----------------------------------------------------------------------------
+// 2b) Converting to Word (.docx)
+// -----------------------------------------------------------------------------
+print "--- 2b) pdf_to_docx / pdf_markdown_to_docx ---";
+
+// PDF -> DOCX goes through the same Markdown extraction pdf_to_markdown
+// uses, so fidelity is bounded by what that extraction preserves.
+let reportDocx = outDir + "/report.docx";
+pdf.to_docx(markdownReport, reportDocx, {"title": "Weekly Report", "author": "SPL"});
+print sprintf("report.docx created: %t", file_exists(reportDocx));
+
+// Markdown -> DOCX directly, mirroring pdf_from_markdown's Markdown -> PDF.
+let notesDocx = outDir + "/notes.docx";
+pdf.markdown_to_docx(
+    "# Notes\n\n- Shipped the DOCX exporter\n- Kept the same options convention",
+    notesDocx,
+    {"title": "Notes"}
+);
+print sprintf("notes.docx created: %t", file_exists(notesDocx));
+
+// -----------------------------------------------------------------------------
 // 3) Page-level operations: merge, split, delete, reorder, rotate
 // -----------------------------------------------------------------------------
 print "--- 3) pdf_merge / pdf_split / pdf_delete_pages / pdf_reorder / pdf_rotate ---";

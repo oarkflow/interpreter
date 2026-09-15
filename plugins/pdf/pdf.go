@@ -9,6 +9,7 @@ package pdf
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"math"
 	"os"
 	"path/filepath"
@@ -17,6 +18,7 @@ import (
 	pdflib "github.com/oarkflow/pdf"
 	"github.com/oarkflow/pdf/converter"
 	"github.com/oarkflow/pdf/core"
+	pdfmd "github.com/oarkflow/pdf/md"
 
 	builtinspkg "github.com/oarkflow/interpreter/pkg/builtins"
 	"github.com/oarkflow/interpreter/pkg/eval"
@@ -43,6 +45,8 @@ func init() {
 		"pdf_to_text":          {Fn: fnToText},
 		"pdf_to_html":          {Fn: fnToHTML},
 		"pdf_to_markdown":      {Fn: fnToMarkdown},
+		"pdf_to_docx":          {Fn: fnToDocx},
+		"pdf_markdown_to_docx": {Fn: fnMarkdownToDocx},
 		"pdf_to_json":          {Fn: fnToJSON},
 		"pdf_search":           {Fn: fnSearch},
 		"pdf_extract_images":   {Fn: fnExtractImages},
@@ -850,6 +854,102 @@ func fnFromMarkdown(args ...object.Object) object.Object {
 		TOC:      hashBool(opts, "toc", false),
 	}
 	return okOrError(pdflib.FromMarkdown(markdown, safeOut, mOpts))
+}
+
+// docxOptionsFromHash builds a github.com/oarkflow/pdf/md.Options for DOCX
+// export from the same opts-hash keys used by fnFromMarkdown, so callers
+// don't need to learn a second convention for Markdown-derived output.
+func docxOptionsFromHash(opts map[string]object.Object) pdfmd.Options {
+	return pdfmd.Options{
+		Title:  hashString(opts, "title", ""),
+		Author: hashString(opts, "author", ""),
+		TOC:    hashBool(opts, "toc", false),
+	}
+}
+
+func markdownToDocxBytes(markdownContent string, opts map[string]object.Object) ([]byte, error) {
+	if strings.TrimSpace(markdownContent) == "" {
+		return nil, fmt.Errorf("markdown content is empty")
+	}
+	return pdfmd.Convert([]byte(markdownContent), pdfmd.DOCX, docxOptionsFromHash(opts))
+}
+
+// fnToDocx converts a PDF to a Microsoft Word (.docx) file. There is no DOCX
+// writer in the underlying PDF layout engine, so this goes through the same
+// Markdown extraction pdf_to_markdown uses and then hands that Markdown to
+// github.com/oarkflow/pdf/md's DOCX exporter — the same building block
+// pdf_from_markdown already uses to reach PDF. Layout fidelity is therefore
+// bounded by what the Markdown extraction preserves (headings, paragraphs,
+// lists, emphasis, links, tables); it is not a visual/layout-accurate
+// PDF-to-Word conversion.
+func fnToDocx(args ...object.Object) object.Object {
+	if len(args) < 2 || len(args) > 3 {
+		return object.NewError("pdf_to_docx: wrong number of arguments. got=%d, want=2 or 3 (input, output, [opts])", len(args))
+	}
+	path, errObj := argString(args, 0, "path")
+	if errObj != nil {
+		return errObj
+	}
+	out, errObj := argString(args, 1, "outputPath")
+	if errObj != nil {
+		return errObj
+	}
+	safeIn, errObj := checkRead(path)
+	if errObj != nil {
+		return errObj
+	}
+	safeOut, errObj := checkWrite(out)
+	if errObj != nil {
+		return errObj
+	}
+	opts := optHash(args, 2)
+	markdownContent, err := pdflib.ToMarkdown(safeIn, converter.ConvertOptions{Password: hashString(opts, "password", "")})
+	if err != nil {
+		return object.NewError("pdf_to_docx: %v", err)
+	}
+	docxBytes, err := markdownToDocxBytes(markdownContent, opts)
+	if err != nil {
+		return object.NewError("pdf_to_docx: %v", err)
+	}
+	if err := core.WriteAtomic(safeOut, 0o644, func(w io.Writer) error {
+		_, err := w.Write(docxBytes)
+		return err
+	}); err != nil {
+		return object.NewError("pdf_to_docx: %v", err)
+	}
+	return object.TRUE
+}
+
+// fnMarkdownToDocx converts arbitrary Markdown content directly to a .docx
+// file, mirroring pdf_from_markdown's Markdown-to-PDF conversion.
+func fnMarkdownToDocx(args ...object.Object) object.Object {
+	if len(args) < 2 || len(args) > 3 {
+		return object.NewError("pdf_markdown_to_docx: wrong number of arguments. got=%d, want=2 or 3 (markdown, output, [opts])", len(args))
+	}
+	markdownContent, errObj := argString(args, 0, "markdown")
+	if errObj != nil {
+		return errObj
+	}
+	out, errObj := argString(args, 1, "outputPath")
+	if errObj != nil {
+		return errObj
+	}
+	safeOut, errObj := checkWrite(out)
+	if errObj != nil {
+		return errObj
+	}
+	opts := optHash(args, 2)
+	docxBytes, err := markdownToDocxBytes(markdownContent, opts)
+	if err != nil {
+		return object.NewError("pdf_markdown_to_docx: %v", err)
+	}
+	if err := core.WriteAtomic(safeOut, 0o644, func(w io.Writer) error {
+		_, err := w.Write(docxBytes)
+		return err
+	}); err != nil {
+		return object.NewError("pdf_markdown_to_docx: %v", err)
+	}
+	return object.TRUE
 }
 
 func fnFromURL(args ...object.Object) object.Object {

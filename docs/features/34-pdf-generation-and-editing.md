@@ -42,6 +42,20 @@ pdf_from_url("https://example.com", "from_url.pdf"); // requires network capabil
 pdf_images_to_pdf("album.pdf", ["a.png", "b.png"][, {"size":"a4","image_fit":"contain"}]);
 ```
 
+## Converting to Word (.docx)
+
+```spl
+// PDF -> DOCX: extracts the PDF via the same Markdown pipeline used by
+// pdf_to_markdown, then hands that Markdown to the DOCX exporter. Fidelity
+// is bounded by what the Markdown extraction preserves (headings,
+// paragraphs, lists, emphasis, links, tables) — it is not a
+// visual/layout-accurate PDF-to-Word conversion.
+pdf_to_docx("report.pdf", "report.docx"[, {"title": "Report", "author": "SPL", "toc": false}]);
+
+// Markdown -> DOCX directly, mirroring pdf_from_markdown's Markdown -> PDF.
+pdf_markdown_to_docx("# Title\n\nHello **world**", "notes.docx", {"title": "Notes"});
+```
+
 ## Page operations
 
 ```spl

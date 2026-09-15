@@ -235,6 +235,7 @@ func init() {
 		"pdf_info", "pdf_validate", "pdf_merge", "pdf_split", "pdf_delete_pages", "pdf_reorder", "pdf_rotate",
 		"pdf_compress", "pdf_decrypt", "pdf_protect", "pdf_watermark", "pdf_add_page_numbers", "pdf_set_metadata",
 		"pdf_stamp_image", "pdf_from_html", "pdf_from_markdown", "pdf_from_url", "pdf_to_html", "pdf_to_markdown",
+		"pdf_to_docx", "pdf_markdown_to_docx",
 		"pdf_to_json", "pdf_to_text", "pdf_search", "pdf_extract_images", "pdf_images_to_pdf", "pdf_list_form_fields",
 		"pdf_fill_form", "pdf_quick",
 	)

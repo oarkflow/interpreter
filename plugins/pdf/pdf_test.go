@@ -167,6 +167,54 @@ func TestPDFProtectAndDecryptDefaultAlgorithm(t *testing.T) {
 	}
 }
 
+func TestPDFToDocx(t *testing.T) {
+	dir := chdirTemp(t)
+	src := filepath.Join(dir, "source.pdf")
+	out := filepath.Join(dir, "converted.docx")
+
+	requireOK(t, fnQuick(str("Hello from the PDF to DOCX test"), str(src)))
+
+	requireOK(t, fnToDocx(str(src), str(out)))
+	data, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatalf("expected pdf_to_docx to create a file: %v", err)
+	}
+	if len(data) < 4 || string(data[:2]) != "PK" {
+		t.Fatalf("expected a valid DOCX (zip) file, got %d bytes starting %q", len(data), data[:min(4, len(data))])
+	}
+}
+
+func TestPDFMarkdownToDocx(t *testing.T) {
+	dir := chdirTemp(t)
+	out := filepath.Join(dir, "notes.docx")
+
+	requireOK(t, fnMarkdownToDocx(str("# Title\n\nSome **bold** text."), str(out), &object.Hash{Pairs: map[object.HashKey]object.HashPair{
+		(&object.String{Value: "title"}).HashKey(): {
+			Key:   &object.String{Value: "title"},
+			Value: &object.String{Value: "Notes"},
+		},
+	}}))
+	data, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatalf("expected pdf_markdown_to_docx to create a file: %v", err)
+	}
+	if len(data) < 4 || string(data[:2]) != "PK" {
+		t.Fatalf("expected a valid DOCX (zip) file, got %d bytes starting %q", len(data), data[:min(4, len(data))])
+	}
+}
+
+func TestPDFToDocxArgumentValidationErrors(t *testing.T) {
+	if _, ok := fnToDocx(str("only-one-arg.pdf")).(*object.Error); !ok {
+		t.Fatalf("expected pdf_to_docx with only one argument to return an error")
+	}
+	if _, ok := fnMarkdownToDocx(str("only-one-arg")).(*object.Error); !ok {
+		t.Fatalf("expected pdf_markdown_to_docx with only one argument to return an error")
+	}
+	if _, ok := fnMarkdownToDocx(str(""), str("out.docx")).(*object.Error); !ok {
+		t.Fatalf("expected pdf_markdown_to_docx with empty markdown to return an error")
+	}
+}
+
 func TestPDFArgumentValidationErrors(t *testing.T) {
 	if _, ok := fnInfo().(*object.Error); !ok {
 		t.Fatalf("expected pdf_info with no arguments to return an error")
