@@ -252,8 +252,11 @@ func init() {
 				return object.NewError("stream() takes 1 argument, got %d", len(args))
 			}
 			arg := unwrapOwned(args[0])
-			if arr, ok := arg.(*object.Array); ok {
-				return &object.Stream{Elements: append([]object.Object(nil), arr.Elements...)}
+			switch v := arg.(type) {
+			case *object.Array:
+				return &object.Stream{Elements: append([]object.Object(nil), v.Elements...)}
+			case *object.GeneratorValue:
+				return &object.Stream{Elements: append([]object.Object(nil), v.Elements...)}
 			}
 			return object.NewError("stream() expects an array argument")
 		}},

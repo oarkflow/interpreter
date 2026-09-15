@@ -45,6 +45,54 @@ test "interfaces and multi-level inheritance with super" {
     assert_eq(employee.role, "Engineer", "subclass-specific field set in its own init");
 }
 
+test "super.method() calls a specifically named parent method" {
+    class Animal {
+        init(name) { this.name = name; }
+        describe() { return "I am " + this.name; }
+    }
+    class Dog extends Animal {
+        init(name) { super(name); }
+        speak() {
+            // super.describe() calls a DIFFERENTLY-named parent method -
+            // distinct from bare super(...), which calls the parent's
+            // same-named method (or init, in a constructor).
+            return super.describe() + " and I bark";
+        }
+    }
+    let d = Dog("Rex");
+    assert_eq(d.speak(), "I am Rex and I bark", "super.method() dispatches to a specific parent method");
+}
+
+test "super.method() resolves through a non-overriding middle class" {
+    class Base {
+        greet() { return "hi from Base"; }
+    }
+    class Mid extends Base {
+        // Mid intentionally does not override greet().
+    }
+    class Leaf extends Mid {
+        greet() { return super.greet() + " via Leaf"; }
+    }
+    assert_eq(Leaf().greet(), "hi from Base via Leaf", "super.method() walks up past a class with no override");
+}
+
+test "bare super() chains correctly when a subclass has no constructor of its own" {
+    class A {
+        init(name) { this.name = name; }
+    }
+    class B extends A {
+        speak() { return "B: " + this.name; }
+    }
+    class C extends B {
+        speak() { return "C: " + super(); }
+    }
+    // C has no init of its own, so its constructor is inherited from A;
+    // C's speak() calls bare super(), which must reach B's speak (the
+    // same-named method one level up from C), not recurse into A's init.
+    let c = C("Buddy");
+    assert_eq(c.speak(), "C: B: Buddy", "bare super() reaches the correct same-named parent method");
+}
+
 test "private fields and compound assignment" {
     class BankAccount {
         private balance = 0;

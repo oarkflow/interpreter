@@ -713,6 +713,50 @@ func applyInstanceFieldDefaults(instance *object.ClassInstance, cls *object.Clas
 	return nil
 }
 
+// callBoundSuperMethod binds method (owned by owner) to instance and calls
+// it. If owner has its own parent, the bound call environment gets its own
+// "super" (via makeSuperBinding), so a chain of super.method()/super(...)
+// calls three or more classes deep keeps working, not just one level.
+func callBoundSuperMethod(method *object.Function, owner *object.ClassObject, instance *object.ClassInstance, callerEnv *object.Environment, args []object.Object) object.Object {
+	bound := &object.Function{
+		Name:       method.Name,
+		Parameters: method.Parameters,
+		ParamTypes: method.ParamTypes,
+		Defaults:   method.Defaults,
+		ReturnType: method.ReturnType,
+		HasRest:    method.HasRest,
+		Env:        object.NewEnclosedEnvironment(callerEnv),
+		Body:       method.Body,
+	}
+	bound.Env.Set("this", instance)
+	bound.Env.Set("__class__", &object.String{Value: owner.Name})
+	if owner.Parent != nil {
+		bound.Env.Set("super", makeSuperBinding(owner.Parent, instance, method.Name))
+	}
+	return ApplyFunction(bound, args, callerEnv, nil)
+}
+
+// makeSuperBinding builds the value exposed as `super` inside a method or
+// constructor body defined on a class whose parent is parentClass: bare
+// `super(...)` calls parentClass's sameName method (or "init", for a
+// constructor context) bound to instance; `super.other(...)` dot-dispatches
+// to any named method on parentClass (see evalDotExpression's SuperBinding
+// case). A bare `super(...)` call when parentClass has no sameName method
+// returns NULL, matching a method with an empty/no-op override.
+func makeSuperBinding(parentClass *object.ClassObject, instance *object.ClassInstance, sameName string) *object.SuperBinding {
+	return &object.SuperBinding{
+		ParentClass: parentClass,
+		Instance:    instance,
+		Call: func(callerEnv *object.Environment, args ...object.Object) object.Object {
+			method, owner, ok := parentClass.GetMethodOwner(sameName)
+			if !ok {
+				return object.NULL
+			}
+			return callBoundSuperMethod(method, owner, instance, callerEnv, args)
+		},
+	}
+}
+
 func evalClassCall(classObj *object.ClassObject, args []object.Object, callerEnv *object.Environment) object.Object {
 	if classObj.IsAbstract {
 		return object.NewError("cannot instantiate abstract class %s", classObj.Name)
@@ -736,26 +780,15 @@ func evalClassCall(classObj *object.ClassObject, args []object.Object, callerEnv
 		}
 		bound.Env.Set("this", instance)
 		bound.Env.Set("__class__", &object.String{Value: owner.Name})
-		if classObj.Parent != nil {
-			parentClass := classObj.Parent
-			bound.Env.Set("super", &object.Builtin{Env: bound.Env, FnWithEnv: func(superEnv *object.Environment, superArgs ...object.Object) object.Object {
-				if superCtor, superOwner, ok := parentClass.GetMethodOwner("init"); ok {
-					superBound := &object.Function{
-						Name:       superCtor.Name,
-						Parameters: superCtor.Parameters,
-						ParamTypes: superCtor.ParamTypes,
-						Defaults:   superCtor.Defaults,
-						ReturnType: superCtor.ReturnType,
-						HasRest:    superCtor.HasRest,
-						Env:        object.NewEnclosedEnvironment(superEnv),
-						Body:       superCtor.Body,
-					}
-					superBound.Env.Set("this", instance)
-					superBound.Env.Set("__class__", &object.String{Value: superOwner.Name})
-					return ApplyFunction(superBound, superArgs, superEnv, nil)
-				}
-				return object.NULL
-			}})
+		// super must be bound relative to owner (the class that actually
+		// defines this init), not classObj (the class being instantiated) -
+		// they differ whenever classObj inherits its constructor from an
+		// ancestor instead of defining its own, and using classObj.Parent
+		// here would point super at the wrong class (or, if owner is more
+		// than one level below classObj, back at owner's own init, causing
+		// infinite recursion the moment super(...) is called).
+		if owner.Parent != nil {
+			bound.Env.Set("super", makeSuperBinding(owner.Parent, instance, "init"))
 		}
 		result := ApplyFunction(bound, args, callerEnv, nil)
 		if object.IsError(result) {
@@ -781,23 +814,7 @@ func evalClassCall(classObj *object.ClassObject, args []object.Object, callerEnv
 			methodEnv.Set("this", instance)
 			methodEnv.Set("__class__", &object.String{Value: definingClass.Name})
 			if classObj.Parent != nil {
-				if superMethod, superOwner, ok := classObj.Parent.GetMethodOwner(n); ok {
-					methodEnv.Set("super", &object.Builtin{Env: methodEnv, FnWithEnv: func(superEnv *object.Environment, superArgs ...object.Object) object.Object {
-						superBound := &object.Function{
-							Name:       superMethod.Name,
-							Parameters: superMethod.Parameters,
-							ParamTypes: superMethod.ParamTypes,
-							Defaults:   superMethod.Defaults,
-							ReturnType: superMethod.ReturnType,
-							HasRest:    superMethod.HasRest,
-							Env:        object.NewEnclosedEnvironment(superEnv),
-							Body:       superMethod.Body,
-						}
-						superBound.Env.Set("this", instance)
-						superBound.Env.Set("__class__", &object.String{Value: superOwner.Name})
-						return ApplyFunction(superBound, superArgs, superEnv, nil)
-					}})
-				}
+				methodEnv.Set("super", makeSuperBinding(classObj.Parent, instance, n))
 			}
 			boundFn := &object.Function{
 				Name:       fc.Name,
@@ -836,23 +853,7 @@ func evalClassCall(classObj *object.ClassObject, args []object.Object, callerEnv
 				methodEnv.Set("this", instance)
 				methodEnv.Set("__class__", &object.String{Value: parentClass.Name})
 				if parentClass.Parent != nil {
-					if superMethod, superOwner, ok := parentClass.Parent.GetMethodOwner(n); ok {
-						methodEnv.Set("super", &object.Builtin{Env: methodEnv, FnWithEnv: func(superEnv *object.Environment, superArgs ...object.Object) object.Object {
-							superBound := &object.Function{
-								Name:       superMethod.Name,
-								Parameters: superMethod.Parameters,
-								ParamTypes: superMethod.ParamTypes,
-								Defaults:   superMethod.Defaults,
-								ReturnType: superMethod.ReturnType,
-								HasRest:    superMethod.HasRest,
-								Env:        object.NewEnclosedEnvironment(superEnv),
-								Body:       superMethod.Body,
-							}
-							superBound.Env.Set("this", instance)
-							superBound.Env.Set("__class__", &object.String{Value: superOwner.Name})
-							return ApplyFunction(superBound, superArgs, superEnv, nil)
-						}})
-					}
+					methodEnv.Set("super", makeSuperBinding(parentClass.Parent, instance, n))
 				}
 				boundFn := &object.Function{
 					Name:       fc.Name,

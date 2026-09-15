@@ -31,6 +31,26 @@ func evalDotExpression(left object.Object, name string, env *object.Environment)
 	if imm, ok := left.(*object.ImmutableValue); ok {
 		left = imm.Inner
 	}
+
+	// 0. super.method(...) - dispatch to a specifically named method on the
+	// parent class (distinct from bare super(...), which calls the parent's
+	// same-named method or, in a constructor, its init - see
+	// object.SuperBinding and evalClassCall's callBoundSuperMethod).
+	if sb, ok := left.(*object.SuperBinding); ok {
+		method, owner, ok := sb.ParentClass.GetMethodOwner(name)
+		if !ok {
+			return object.NewError("no method '%s' found on parent class %s", name, sb.ParentClass.Name)
+		}
+		instance := sb.Instance
+		// Env must be the calling method's own environment (the same one
+		// `super` was resolved from) - ApplyFunction's *object.Builtin case
+		// invokes FnWithEnv with this Env, not the eventual call site's env,
+		// so leaving it unset would call callBoundSuperMethod with a nil
+		// callerEnv and panic inside NewEnclosedEnvironment.
+		return &object.Builtin{Env: env, FnWithEnv: func(callEnv *object.Environment, callArgs ...object.Object) object.Object {
+			return callBoundSuperMethod(method, owner, instance, callEnv, callArgs)
+		}}
+	}
 	if gen, ok := left.(*object.GeneratorValue); ok {
 		left = &object.Array{Elements: gen.Elements}
 	}

@@ -159,6 +159,7 @@ const (
 	RULES_SERVICE_OBJ   ObjectType = 111
 	TCPGUARD_BUNDLE_OBJ ObjectType = 112
 	TCPGUARD_GUARD_OBJ  ObjectType = 113
+	SUPER_BINDING_OBJ   ObjectType = 114
 )
 
 func (ot ObjectType) String() string {
@@ -245,6 +246,8 @@ func (ot ObjectType) String() string {
 		return "TCPGUARD_BUNDLE"
 	case TCPGUARD_GUARD_OBJ:
 		return "TCPGUARD_GUARD"
+	case SUPER_BINDING_OBJ:
+		return "SUPER_BINDING"
 	default:
 		return "UNKNOWN"
 	}
@@ -746,6 +749,29 @@ func (ci *ClassInstance) Get(name string) (Object, bool) {
 
 func (ci *ClassInstance) Set(name string, val Object) {
 	ci.Fields[name] = val
+}
+
+// SuperBinding is the value bound to the `super` identifier inside a class
+// constructor or method body. It supports both call forms the language
+// documents (docs/features/09-classes-and-interfaces.md): a bare
+// `super(...)` call, which invokes the parent class's same-named method (or
+// `init`, for a constructor) via Call, and a dot-dispatched `super.name(...)`
+// call, which invokes any named method on ParentClass — see
+// pkg/eval.evalDotExpression's SuperBinding case and pkg/eval.ApplyFunction's
+// SuperBinding case for how each form is evaluated.
+type SuperBinding struct {
+	ParentClass *ClassObject
+	Instance    *ClassInstance
+	// Call implements the bare `super(...)` form.
+	Call func(callerEnv *Environment, args ...Object) Object
+}
+
+func (s *SuperBinding) Type() ObjectType { return SUPER_BINDING_OBJ }
+func (s *SuperBinding) Inspect() string {
+	if s.ParentClass == nil {
+		return "<super>"
+	}
+	return "<super: " + s.ParentClass.Name + ">"
 }
 
 // ---------------------------------------------------------------------------

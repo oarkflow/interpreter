@@ -38,6 +38,12 @@ func ApplyFunction(fn object.Object, args []object.Object, callerEnv *object.Env
 	switch fn := fn.(type) {
 	case *object.ClassObject:
 		return evalClassCall(fn, args, callerEnv)
+	case *object.SuperBinding:
+		// Bare `super(...)`: calls the parent's same-named method, or its
+		// init in a constructor context - see object.SuperBinding and
+		// pkg/eval.makeSuperBinding. `super.name(...)` instead goes through
+		// evalDotExpression's SuperBinding case, never through here.
+		return fn.Call(callerEnv, args...)
 	case *object.Function:
 		extendedEnv := extendFunctionEnv(fn, args, callerEnv, call)
 		if errObj := validateBoundFunctionTypes(fn, extendedEnv); errObj != nil {
@@ -129,6 +135,8 @@ func validateFunctionCall(fn object.Object, argc int) object.Object {
 		}
 		return nil
 	case *object.Builtin:
+		return nil
+	case *object.SuperBinding:
 		return nil
 	default:
 		return object.NewError("not a function: %s", fn.Type())

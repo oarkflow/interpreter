@@ -95,3 +95,14 @@ test "named function declarations" {
     }
     assert_eq(greetPerson("World"), "Hello, World!", "named function declaration callable");
 }
+
+test "generator values support len, indexing, and stream()" {
+    let g = generator(function() {
+        return [1, 2, 3, 4, 5];
+    });
+    assert_eq(typeof(g), "ARRAY", "generator value reports as array");
+    assert_eq(len(g), 5, "len() accepts a generator value");
+    assert_eq(g[0], 1, "indexing a generator value reads its elements");
+    let s = stream(g);
+    assert_eq(stream_reduce(s, function(acc, x) { return acc + x; }, 0), 15, "stream() accepts a generator value");
+}

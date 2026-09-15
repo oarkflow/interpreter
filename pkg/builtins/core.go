@@ -721,6 +721,8 @@ func init() {
 					return &object.Integer{Value: int64(len(arg.Value))}
 				case *object.Array:
 					return &object.Integer{Value: int64(len(arg.Elements))}
+				case *object.GeneratorValue:
+					return &object.Integer{Value: int64(len(arg.Elements))}
 				case *object.Hash:
 					return &object.Integer{Value: int64(len(arg.Pairs))}
 				default:
