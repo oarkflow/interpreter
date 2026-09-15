@@ -15,6 +15,7 @@ import (
 	"github.com/oarkflow/interpreter/pkg/lexer"
 	"github.com/oarkflow/interpreter/pkg/parser"
 	"github.com/oarkflow/interpreter/pkg/pkgmgr"
+	"github.com/oarkflow/interpreter/pkg/security"
 	"github.com/oarkflow/interpreter/pkg/token"
 
 	// Keep editor tooling aligned with the first-party runtime packages shipped
@@ -336,6 +337,15 @@ type staticChecker struct {
 	variableTypes  map[string]string
 	macroDefs      map[string]*ast.MacroDefinition
 	macroParams    map[string]struct{}
+
+	// The fields below are optional hooks consumed by the capability/effects
+	// analysis (see effects.go). They are nil (no-op) when StaticDiagnostics
+	// is used for ordinary linting, so existing behavior is unchanged.
+	moduleAliases      map[string]string // import alias -> import path (only for string-literal import paths)
+	importPositions    []sourcePosition  // "import" keyword token positions, in source order
+	importCursor       int
+	onCallForEffects   func(builtinName string, line, col int)
+	onImportForEffects func(line, col int, dynamic bool)
 }
 
 func (c *staticChecker) seedGlobals() {
@@ -685,6 +695,32 @@ func (c *staticChecker) walkExpression(expr ast.Expression) {
 				c.warn("deprecated", id.Name, line, col, fmt.Sprintf("deprecated builtin %q", id.Name), msg)
 			}
 		}
+		if c.onCallForEffects != nil {
+			// CallExpression.Line/Column come from the parser's curToken at
+			// the call's opening paren, but several single-character token
+			// types (LPAREN among them) don't carry position info in this
+			// lexer - so fall back to the callee identifier's own token
+			// position (always tracked) when the call's own position is
+			// unset.
+			line, col := e.Line, e.Column
+			switch fn := e.Function.(type) {
+			case *ast.Identifier:
+				if line == 0 && col == 0 {
+					line, col = c.nextNamePosition(fn.Name)
+				}
+				c.onCallForEffects(fn.Name, line, col)
+			case *ast.DotExpression:
+				if left, ok := fn.Left.(*ast.Identifier); ok && fn.Right != nil {
+					if modulePath, ok := c.moduleAliases[left.Name]; ok {
+						resolved := security.ResolveModuleBuiltinName(modulePath, fn.Right.Name)
+						if line == 0 && col == 0 {
+							line, col = c.nextNamePosition(fn.Right.Name)
+						}
+						c.onCallForEffects(resolved, line, col)
+					}
+				}
+			}
+		}
 		c.walkExpression(e.Function)
 		for _, arg := range e.Arguments {
 			c.walkExpression(arg)
@@ -882,7 +918,28 @@ func collectConstructorPatterns(p ast.Pattern, seen map[string]struct{}) {
 	}
 }
 
+// nextImportPosition consumes the next "import" keyword token position in
+// source order, for attributing a line/col to an *ast.ImportStatement (which
+// itself carries no position information).
+func (c *staticChecker) nextImportPosition() (int, int) {
+	if c.importCursor >= len(c.importPositions) {
+		return 0, 0
+	}
+	pos := c.importPositions[c.importCursor]
+	c.importCursor++
+	return pos.line, pos.column
+}
+
 func (c *staticChecker) checkImport(s *ast.ImportStatement) {
+	line, col := c.nextImportPosition()
+	if c.onImportForEffects != nil {
+		_, literal := s.Path.(*ast.StringLiteral)
+		if !literal {
+			c.onImportForEffects(line, col, true)
+		} else {
+			c.onImportForEffects(line, col, false)
+		}
+	}
 	declareNamedImports := func() {
 		if len(s.Specifiers) > 0 {
 			for _, spec := range s.Specifiers {
@@ -909,6 +966,9 @@ func (c *staticChecker) checkImport(s *ast.ImportStatement) {
 		}
 		declareNamedImports()
 		return
+	}
+	if s.Alias != nil && c.moduleAliases != nil {
+		c.moduleAliases[s.Alias.Name] = sl.Value
 	}
 	if strings.Contains(sl.Value, "://") {
 		if s.Alias != nil {

@@ -718,6 +718,7 @@ func runCheck(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("check", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	jsonOut := fs.Bool("json", false, "emit machine-readable JSON")
+	effectsOut := fs.Bool("effects", false, "run the static capability/effects analysis instead of lint diagnostics: report which security capabilities (network, filesystem read/write, exec, db, secrets, scheduler/async/server/watch, process-exit) the script's builtin calls might exercise, plus any dynamic (non-literal-path) imports - all without running it")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
@@ -725,6 +726,10 @@ func runCheck(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	targets := fs.Args()
 	if len(targets) == 0 {
 		targets = []string{"-"}
+	}
+
+	if *effectsOut {
+		return runCheckEffects(targets, stdin, stdout, stderr, *jsonOut)
 	}
 
 	reports, code := processTargets(targets, stdin, false, false)
@@ -741,6 +746,69 @@ func runCheck(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	for _, rep := range reports {
 		for _, d := range rep.Diagnostics {
 			fmt.Fprintln(stderr, formatDiagnostic(d))
+		}
+	}
+	return code
+}
+
+// runCheckEffects implements `spltool check --effects <file...>`: the
+// static capability/effects analysis (see pkg/tooling/effects.go). Kept
+// separate from the ordinary lint-diagnostics path in runCheck above so the
+// two report shapes (Report vs EffectsReport) don't have to be reconciled
+// into one JSON shape.
+func runCheckEffects(targets []string, stdin io.Reader, stdout, stderr io.Writer, jsonOut bool) int {
+	reports := make([]EffectsReport, 0, len(targets))
+	code := 0
+	for _, target := range targets {
+		path, src, err := readTarget(target, stdin)
+		if err != nil {
+			fmt.Fprintf(stderr, "check --effects error: %v\n", err)
+			code = 1
+			continue
+		}
+		rep := AnalyzeEffects(path, src)
+		if !rep.OK {
+			code = 1
+		}
+		reports = append(reports, rep)
+	}
+
+	if jsonOut {
+		enc := json.NewEncoder(stdout)
+		enc.SetIndent("", "  ")
+		if err := enc.Encode(reports); err != nil {
+			fmt.Fprintf(stderr, "failed to encode JSON: %v\n", err)
+			return 1
+		}
+		return code
+	}
+
+	for i, rep := range reports {
+		if i > 0 {
+			fmt.Fprintln(stdout)
+		}
+		if rep.Path != "" {
+			fmt.Fprintf(stdout, "%s\n", rep.Path)
+		}
+		if !rep.OK {
+			for _, d := range rep.Diagnostics {
+				fmt.Fprintln(stderr, formatDiagnostic(d))
+			}
+			continue
+		}
+		if len(rep.Capabilities) == 0 {
+			fmt.Fprintln(stdout, "  (no capability-requiring builtins or dynamic imports detected)")
+			continue
+		}
+		for _, finding := range rep.Capabilities {
+			fmt.Fprintf(stdout, "  %s:\n", finding.Capability)
+			for _, u := range finding.Usages {
+				if u.Line > 0 {
+					fmt.Fprintf(stdout, "    - %s (line %d, col %d)\n", u.Builtin, u.Line, u.Column)
+				} else {
+					fmt.Fprintf(stdout, "    - %s\n", u.Builtin)
+				}
+			}
 		}
 	}
 	return code
@@ -1200,6 +1268,7 @@ func formatDiagnostic(d Diagnostic) string {
 func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "Usage: spltool <fmt|check|files|archive|image|secrets|media|office|symbols|complete|hover|docs|test|session|conformance|config|mod|lsp> [flags] [files...]")
 	fmt.Fprintln(w, "Use '-' to read from stdin.")
+	fmt.Fprintln(w, "  check --effects <file...>   static capability/effects report (network, filesystem, exec, db, ...); add --json for machine-readable output")
 }
 
 func printOperations(stdout, stderr io.Writer, ops []tools.Operation, jsonOut bool) int {

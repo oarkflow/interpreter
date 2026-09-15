@@ -23,6 +23,9 @@ type IndexedDocument = tooling.IndexedDocument
 type WorkspaceIndex = tooling.WorkspaceIndex
 type EvaluationOptions = tooling.EvaluationOptions
 type EvaluationResult = tooling.EvaluationResult
+type EffectsReport = tooling.EffectsReport
+type EffectFinding = tooling.EffectFinding
+type EffectUsage = tooling.EffectUsage
 
 const (
 	SeverityError   = tooling.SeverityError
@@ -51,7 +54,10 @@ var (
 	HoverMarkdown            = tooling.HoverMarkdown
 	ModuleDirForPath         = tooling.ModuleDirForPath
 	EvaluateSPL              = tooling.EvaluateSPL
+	AnalyzeEffects           = tooling.AnalyzeEffects
 )
+
+const DynamicImportCapability = tooling.DynamicImportCapability
 
 func init() {
 	tooling.ExecuteSPLFn = func(path, src string, opts tooling.EvaluationOptions, output io.Writer) (string, error) {
