@@ -96,6 +96,27 @@ pdf.from_docx(notesDocx, fromDocx, {"title": "Notes (from DOCX)"});
 print sprintf("notes_from_docx.pdf pages=%d", pdf.info(fromDocx).pages);
 
 // -----------------------------------------------------------------------------
+// 2d) Converting between Word (.docx) and HTML
+// -----------------------------------------------------------------------------
+print "--- 2d) pdf_docx_to_html / pdf_html_to_docx ---";
+
+// DOCX -> HTML: same DOCX -> Markdown reconstruction as pdf_docx_to_markdown,
+// then rendered by the HTML exporter as a standalone HTML document.
+let notesHTML = pdf.docx_to_html(notesDocx, {"title": "Notes"});
+print sprintf("notes.docx -> HTML contains <h1>: %t", contains(notesHTML, "<h1"));
+
+// HTML -> DOCX: no HTML-to-Markdown converter exists in this dependency
+// tree, so this chains HTML -> PDF -> Markdown -> DOCX using the same
+// building blocks the other conversions above already use.
+let htmlDocx = outDir + "/from_html.docx";
+pdf.html_to_docx(
+    "<h1>From HTML</h1><p>Converted via the PDF/Markdown bridge.</p><ul><li>one</li><li>two</li></ul>",
+    htmlDocx
+);
+print sprintf("from_html.docx created: %t", file_exists(htmlDocx));
+print pdf.docx_to_text(htmlDocx);
+
+// -----------------------------------------------------------------------------
 // 3) Page-level operations: merge, split, delete, reorder, rotate
 // -----------------------------------------------------------------------------
 print "--- 3) pdf_merge / pdf_split / pdf_delete_pages / pdf_reorder / pdf_rotate ---";

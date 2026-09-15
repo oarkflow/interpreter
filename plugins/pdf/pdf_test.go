@@ -399,6 +399,106 @@ func TestDocxImportArgumentValidationErrors(t *testing.T) {
 	}
 }
 
+func TestDocxToHTML(t *testing.T) {
+	dir := chdirTemp(t)
+	docxPath := filepath.Join(dir, "formatting.docx")
+	syntheticWordDocx(t, docxPath)
+
+	htmlResult := fnDocxToHTML(str(docxPath))
+	requireOK(t, htmlResult)
+	htmlStr, ok := htmlResult.(*object.String)
+	if !ok {
+		t.Fatalf("expected pdf_docx_to_html to return a STRING, got %T", htmlResult)
+	}
+	// github.com/oarkflow/pdf/md's HTML exporter (export.HTML) renders
+	// headings as <h1>..<h6>, and **bold**/*italic* inline emphasis as
+	// <strong>/<em> (see md/internal/export/inline.go's strongRe/emphasisRe
+	// and html.go's writeHTML) - assert on those, not on any specific CSS or
+	// wrapper markup.
+	for _, want := range []string{
+		"<h1", "Formatting Demo", "</h1>",
+		"<strong>bold</strong>",
+		"<em>italic</em>",
+		"<em><strong>both</strong></em>",
+		"<ul", "bulleted via numbering.xml only",
+		"<ol", "numbered via numbering.xml only",
+	} {
+		if !strings.Contains(htmlStr.Value, want) {
+			t.Fatalf("expected converted HTML to contain %q, got:\n%s", want, htmlStr.Value)
+		}
+	}
+}
+
+func TestDocxToHTMLArgumentValidationErrors(t *testing.T) {
+	if _, ok := fnDocxToHTML().(*object.Error); !ok {
+		t.Fatalf("expected pdf_docx_to_html with no arguments to return an error")
+	}
+	if _, ok := fnDocxToHTML(str("a"), str("b"), str("c")).(*object.Error); !ok {
+		t.Fatalf("expected pdf_docx_to_html with too many arguments to return an error")
+	}
+}
+
+func TestHTMLToDocx(t *testing.T) {
+	dir := chdirTemp(t)
+	out := filepath.Join(dir, "converted.docx")
+
+	htmlContent := `<!doctype html><html><head><title>Report</title></head><body>` +
+		`<h1>Quarterly Report</h1>` +
+		`<p>This paragraph should survive the round trip through PDF and back.</p>` +
+		`<ul><li>first bullet</li><li>second bullet</li></ul>` +
+		`</body></html>`
+
+	requireOK(t, fnHTMLToDocx(str(htmlContent), str(out)))
+	data, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatalf("expected pdf_html_to_docx to create a file: %v", err)
+	}
+	if len(data) < 4 || string(data[:2]) != "PK" {
+		t.Fatalf("expected a valid DOCX (zip) file, got %d bytes starting %q", len(data), data[:min(4, len(data))])
+	}
+
+	// No stray intermediate PDF should be left behind in the output
+	// directory.
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("read dir: %v", err)
+	}
+	for _, e := range entries {
+		if strings.HasSuffix(e.Name(), ".pdf") {
+			t.Fatalf("expected no leftover intermediate PDF file, found %s", e.Name())
+		}
+	}
+
+	// This chain is lossy (HTML -> PDF -> Markdown -> DOCX), so only assert
+	// the actual words/headings survive, not exact formatting fidelity -
+	// mirroring how TestPDFFromDocx checks "does the text survive" rather
+	// than a byte-exact comparison.
+	mdResult := fnDocxToMarkdown(str(out))
+	requireOK(t, mdResult)
+	md := mdResult.(*object.String).Value
+	for _, want := range []string{"Quarterly Report", "should survive the round trip", "first bullet", "second bullet"} {
+		if !strings.Contains(md, want) {
+			t.Fatalf("expected round-tripped markdown to contain %q, got:\n%s", want, md)
+		}
+	}
+
+	textResult := fnDocxToText(str(out))
+	requireOK(t, textResult)
+	text := textResult.(*object.String).Value
+	if !strings.Contains(text, "Quarterly Report") || !strings.Contains(text, "should survive the round trip") {
+		t.Fatalf("expected pdf_docx_to_text to preserve the underlying words, got: %s", text)
+	}
+}
+
+func TestHTMLToDocxArgumentValidationErrors(t *testing.T) {
+	if _, ok := fnHTMLToDocx(str("only-one-arg")).(*object.Error); !ok {
+		t.Fatalf("expected pdf_html_to_docx with only one argument to return an error")
+	}
+	if _, ok := fnHTMLToDocx(str(""), str("out.docx")).(*object.Error); !ok {
+		t.Fatalf("expected pdf_html_to_docx with empty html content to return an error")
+	}
+}
+
 func TestDocxToMarkdownRejectsNonDocx(t *testing.T) {
 	dir := chdirTemp(t)
 	notDocx := filepath.Join(dir, "not-a-docx.pdf")

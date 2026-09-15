@@ -50,6 +50,8 @@ func init() {
 		"pdf_from_docx":        {Fn: fnFromDocx},
 		"pdf_docx_to_markdown": {Fn: fnDocxToMarkdown},
 		"pdf_docx_to_text":     {Fn: fnDocxToText},
+		"pdf_docx_to_html":     {Fn: fnDocxToHTML},
+		"pdf_html_to_docx":     {Fn: fnHTMLToDocx},
 		"pdf_to_json":          {Fn: fnToJSON},
 		"pdf_search":           {Fn: fnSearch},
 		"pdf_extract_images":   {Fn: fnExtractImages},
@@ -877,6 +879,15 @@ func markdownToDocxBytes(markdownContent string, opts map[string]object.Object) 
 	return pdfmd.Convert([]byte(markdownContent), pdfmd.DOCX, docxOptionsFromHash(opts))
 }
 
+// markdownToHTMLBytes is markdownToDocxBytes' sibling for HTML export,
+// sharing the same opts-hash convention (see docxOptionsFromHash).
+func markdownToHTMLBytes(markdownContent string, opts map[string]object.Object) ([]byte, error) {
+	if strings.TrimSpace(markdownContent) == "" {
+		return nil, fmt.Errorf("markdown content is empty")
+	}
+	return pdfmd.Convert([]byte(markdownContent), pdfmd.HTML, docxOptionsFromHash(opts))
+}
+
 // fnToDocx converts a PDF to a Microsoft Word (.docx) file. There is no DOCX
 // writer in the underlying PDF layout engine, so this goes through the same
 // Markdown extraction pdf_to_markdown uses and then hands that Markdown to
@@ -1043,6 +1054,100 @@ func fnFromDocx(args ...object.Object) object.Object {
 		TOC:      hashBool(opts, "toc", false),
 	}
 	return okOrError(pdflib.FromMarkdown(markdownContent, safeOut, mOpts))
+}
+
+// fnDocxToHTML converts a .docx file to a standalone HTML document. It
+// reuses the same DOCX -> Markdown reconstruction as pdf_docx_to_markdown
+// (see docx_import.go) and then hands that Markdown to
+// github.com/oarkflow/pdf/md's HTML exporter, the same building block
+// pdf_docx_to_html's inverse (pdf_html_to_docx, below) chains through PDF to
+// reach DOCX.
+func fnDocxToHTML(args ...object.Object) object.Object {
+	if len(args) < 1 || len(args) > 2 {
+		return object.NewError("pdf_docx_to_html: wrong number of arguments. got=%d, want=1 or 2 (input, [opts])", len(args))
+	}
+	path, errObj := argString(args, 0, "path")
+	if errObj != nil {
+		return errObj
+	}
+	safe, errObj := checkRead(path)
+	if errObj != nil {
+		return errObj
+	}
+	doc, err := readDocx(safe)
+	if err != nil {
+		return object.NewError("pdf_docx_to_html: %v", err)
+	}
+	markdownContent := doc.renderMarkdown()
+	opts := optHash(args, 1)
+	htmlBytes, err := markdownToHTMLBytes(markdownContent, opts)
+	if err != nil {
+		return object.NewError("pdf_docx_to_html: %v", err)
+	}
+	return &object.String{Value: string(htmlBytes)}
+}
+
+// fnHTMLToDocx converts HTML content to a Microsoft Word (.docx) file.
+// There is no HTML-to-Markdown converter anywhere in this dependency tree
+// (github.com/oarkflow/pdf's html/ package only renders HTML to PDF, and
+// its md package only reads Markdown), so this chains three already-tested
+// primitives instead: render the HTML to an intermediate PDF via
+// pdflib.FromHTML, extract that PDF back to Markdown via pdflib.ToMarkdown
+// (the same pair pdf_to_docx already uses), and convert that Markdown to
+// DOCX bytes via markdownToDocxBytes. Fidelity is bounded by whatever
+// survives that HTML -> PDF -> Markdown -> DOCX chain: text content,
+// headings, paragraphs, lists, emphasis, and tables come through; precise
+// visual layout does not.
+func fnHTMLToDocx(args ...object.Object) object.Object {
+	if len(args) < 2 || len(args) > 3 {
+		return object.NewError("pdf_html_to_docx: wrong number of arguments. got=%d, want=2 or 3 (html, output, [opts])", len(args))
+	}
+	htmlContent, errObj := argString(args, 0, "html")
+	if errObj != nil {
+		return errObj
+	}
+	out, errObj := argString(args, 1, "outputPath")
+	if errObj != nil {
+		return errObj
+	}
+	safeOut, errObj := checkWrite(out)
+	if errObj != nil {
+		return errObj
+	}
+	if strings.TrimSpace(htmlContent) == "" {
+		return object.NewError("pdf_html_to_docx: html content is empty")
+	}
+	opts := optHash(args, 2)
+
+	// The intermediate PDF is written under the same directory as the final
+	// output path so it stays within whatever sandbox root already permits
+	// that write, and is always cleaned up.
+	tmpFile, err := os.CreateTemp(filepath.Dir(safeOut), ".pdf_html_to_docx-*.pdf")
+	if err != nil {
+		return object.NewError("pdf_html_to_docx: %v", err)
+	}
+	tmpPath := tmpFile.Name()
+	tmpFile.Close()
+	defer os.Remove(tmpPath)
+
+	if err := pdflib.FromHTML(htmlContent, tmpPath); err != nil {
+		return object.NewError("pdf_html_to_docx: %v", err)
+	}
+	markdownContent, err := pdflib.ToMarkdown(tmpPath, converter.ConvertOptions{})
+	if err != nil {
+		return object.NewError("pdf_html_to_docx: %v", err)
+	}
+	docxBytes, err := markdownToDocxBytes(markdownContent, opts)
+	if err != nil {
+		return object.NewError("pdf_html_to_docx: %v", err)
+	}
+	if err := core.WriteAtomic(safeOut, 0o644, func(w io.Writer) error {
+		_, err := w.Write(docxBytes)
+		return err
+	}); err != nil {
+		return object.NewError("pdf_html_to_docx: %v", err)
+	}
+	return object.TRUE
 }
 
 func fnFromURL(args ...object.Object) object.Object {

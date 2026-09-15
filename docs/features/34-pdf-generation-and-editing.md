@@ -77,6 +77,24 @@ print pdf_docx_to_text("report.docx");
 pdf_from_docx("report.docx", "report.pdf"[, {"title": "Report", "theme": "modern"}]);
 ```
 
+## Converting between Word (.docx) and HTML
+
+```spl
+// DOCX -> HTML: reads the DOCX (same reconstruction as pdf_docx_to_markdown
+// above), then hands that Markdown to the HTML exporter for a standalone
+// HTML document (full <html>/<head>/<style> wrapper, headings as
+// <h1>..<h6>, **bold**/*italic* as <strong>/<em>).
+print pdf_docx_to_html("report.docx"[, {"title": "Report"}]);
+
+// HTML -> DOCX: there is no HTML-to-Markdown converter in this dependency
+// tree, so this chains three already-tested primitives instead — render
+// the HTML to an intermediate PDF, extract that PDF back to Markdown, and
+// convert that Markdown to DOCX. Fidelity is bounded by what survives that
+// HTML -> PDF -> Markdown -> DOCX chain (text, headings, paragraphs, lists,
+// emphasis, tables); it is not a pixel-accurate conversion.
+pdf_html_to_docx("<h1>Report</h1><p>Hello <b>world</b>.</p>", "report.docx");
+```
+
 ## Page operations
 
 ```spl
