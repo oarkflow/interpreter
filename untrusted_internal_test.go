@@ -1,4 +1,16 @@
-//go:build ignore
+//go:build bwrap_manual
+
+// This file is deliberately excluded from a plain `go test ./...` via the
+// `bwrap_manual` build tag (it needs a Linux host with/without `bwrap` on
+// PATH to exercise its two branches meaningfully). Run it explicitly with
+// `go test -tags=bwrap_manual`.
+//
+// Do NOT use the conventional `//go:build ignore` tag for this: Go's own
+// standard library ships several code-generation source files under
+// `//go:build ignore` (e.g. math/rand/gen_cooked.go). Passing `-tags=ignore`
+// to unlock a file like this one also unlocks those stdlib generator files
+// for the whole build, which then fails with "found packages X and main in
+// <dir>" package-conflict errors. Use a repo-private tag name instead.
 
 package interpreter
 
