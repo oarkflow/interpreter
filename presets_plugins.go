@@ -174,6 +174,34 @@ var stdModules = struct {
 	prefixes     map[string]string
 }{items: map[string]map[string]Object{}, builtinItems: map[string][]string{}, prefixes: map[string]string{}}
 
+// StdBuiltinModuleInfo describes a std module registered via
+// RegisterStdBuiltinModule / RegisterStdBuiltinModuleWithPrefix: the
+// optional prefix stripped from builtin names to form module members, and
+// the full builtin names backing the module.
+type StdBuiltinModuleInfo struct {
+	Prefix       string
+	BuiltinNames []string
+}
+
+// StdBuiltinModules returns a snapshot of every std module registered via
+// RegisterStdBuiltinModule / RegisterStdBuiltinModuleWithPrefix, keyed by
+// module name (e.g. "pdf", "std/core"). It exists for tooling — such as
+// the generated builtin reference docs (cmd/builtindocs) — that needs to
+// group builtins by their owning std module namespace without reaching
+// into the unexported stdModules registry directly.
+func StdBuiltinModules() map[string]StdBuiltinModuleInfo {
+	stdModules.mu.RLock()
+	defer stdModules.mu.RUnlock()
+	out := make(map[string]StdBuiltinModuleInfo, len(stdModules.builtinItems))
+	for name, names := range stdModules.builtinItems {
+		out[name] = StdBuiltinModuleInfo{
+			Prefix:       stdModules.prefixes[name],
+			BuiltinNames: append([]string(nil), names...),
+		}
+	}
+	return out
+}
+
 func init() {
 	_ = RegisterStdBuiltinModule("std/core", "help", "sprintf", "printf", "interpolate", "len", "type")
 	_ = RegisterStdBuiltinModule("core", "help", "sprintf", "printf", "interpolate", "len", "type")

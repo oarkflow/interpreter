@@ -17,7 +17,9 @@ GO_MODULE_DIRS := . \
 	examples/app \
 	benchmarks/exprcompare
 
-.PHONY: test test-all test-race test-spl-corpus vet-all vulncheck release-check install-extension vscode-extension-install reload-vscode vscode-extension-compile vscode-extension-clean
+BUILTINDOCS_OUT := docs/reference/builtins.md
+
+.PHONY: test test-all test-race test-spl-corpus vet-all vulncheck release-check install-extension vscode-extension-install reload-vscode vscode-extension-compile vscode-extension-clean builtins-doc builtins-doc-check
 
 # These loops intentionally do NOT use `set -e`: every module is attempted
 # even if an earlier one fails, and the failing module list is reported at
@@ -61,6 +63,31 @@ vulncheck:
 # extension - wiring that in (and any packaging/signing steps) is left as
 # a follow-up.
 release-check: vet-all test-all test-spl-corpus vulncheck
+
+# builtins-doc regenerates docs/reference/builtins.md (the SPL builtin
+# function reference) from the actual registered builtin set. The
+# generator lives in the cmd/spltool-full module (not the root module)
+# because it needs the plugins package linked in to see eval.PluginBuiltins
+# fully populated; see cmd/spltool-full/cmd/builtindocs/main.go.
+builtins-doc:
+	@cd cmd/spltool-full && go run ./cmd/builtindocs -out "../../$(BUILTINDOCS_OUT)"
+
+# builtins-doc-check regenerates the reference into a temp file and diffs
+# it against the committed docs/reference/builtins.md, failing (non-zero
+# exit) if they differ. This is not wired into release-check yet - that is
+# a deliberate follow-up decision, not an oversight.
+builtins-doc-check:
+	@tmp=$$(mktemp) && \
+	(cd cmd/spltool-full && go run ./cmd/builtindocs -out "$$tmp") && \
+	if diff -u "$(BUILTINDOCS_OUT)" "$$tmp" > /tmp/builtins-doc-check.diff 2>&1; then \
+		rm -f "$$tmp" /tmp/builtins-doc-check.diff; \
+		echo "builtins-doc-check: OK ($(BUILTINDOCS_OUT) is up to date)"; \
+	else \
+		cat /tmp/builtins-doc-check.diff; \
+		rm -f "$$tmp" /tmp/builtins-doc-check.diff; \
+		echo "builtins-doc-check: FAILED - $(BUILTINDOCS_OUT) is out of date; run 'make builtins-doc'"; \
+		exit 1; \
+	fi
 
 install-extension: vscode-extension-install reload-vscode
 
