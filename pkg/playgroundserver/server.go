@@ -108,6 +108,14 @@ func Run(v Variant) {
 		logger.Error("invalid CLI flags", slog.String("error", err.Error()))
 		os.Exit(2)
 	}
+	if cfg.DevMode && !isLoopbackAddr(cfg.Addr) {
+		logger.Warn("playground server is running with PLAYGROUND_DEV_MODE=true on a non-loopback address; "+
+			"this bypasses the production-safety guard requiring an auth secret and secure cookies - do not use this in production",
+			slog.String("addr", cfg.Addr),
+			slog.Bool("auth_configured", cfg.AuthSecret != ""),
+			slog.Bool("cookie_secure", cfg.CookieSecure),
+		)
+	}
 
 	rl := newRateLimiter(cfg.RateLimit, cfg.RateWindow)
 	loginRl := newRateLimiter(10, 5*time.Minute)

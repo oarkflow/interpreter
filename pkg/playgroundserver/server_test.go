@@ -20,6 +20,10 @@ import (
 func TestLoadConfigWithoutSecret(t *testing.T) {
 	t.Setenv("PLAYGROUND_AUTH_SECRET", "")
 	t.Setenv("PLAYGROUND_API_KEY", "")
+	// The default PLAYGROUND_ADDR (":8080") binds all interfaces, which the
+	// production-safety guard treats as non-loopback; opt into dev mode so
+	// this test continues to exercise "no secret configured" in isolation.
+	t.Setenv("PLAYGROUND_DEV_MODE", "true")
 	cfg, err := loadConfig()
 	if err != nil {
 		t.Fatalf("expected config to load without auth secret, got error: %v", err)
@@ -33,6 +37,7 @@ func TestLoadConfigWithoutSecret(t *testing.T) {
 }
 
 func TestApplyCLIFlagsForRenderURLSettings(t *testing.T) {
+	t.Setenv("PLAYGROUND_DEV_MODE", "true")
 	cfg, err := loadConfig()
 	if err != nil {
 		t.Fatalf("loadConfig: %v", err)
@@ -61,6 +66,63 @@ func TestApplyCLIFlagsForRenderURLSettings(t *testing.T) {
 	}
 	if cfg.ExecutionProfile != "trusted" {
 		t.Fatalf("expected trusted profile, got %q", cfg.ExecutionProfile)
+	}
+}
+
+func TestLoadConfigLoopbackBindWithoutSecretSucceeds(t *testing.T) {
+	t.Setenv("PLAYGROUND_ADDR", "127.0.0.1:8080")
+	t.Setenv("PLAYGROUND_AUTH_SECRET", "")
+	t.Setenv("PLAYGROUND_API_KEY", "")
+	t.Setenv("PLAYGROUND_COOKIE_SECURE", "false")
+	if _, err := loadConfig(); err != nil {
+		t.Fatalf("expected loopback bind with empty secret to succeed (dev default unchanged), got error: %v", err)
+	}
+}
+
+func TestLoadConfigNonLoopbackBindWithoutSecretFails(t *testing.T) {
+	t.Setenv("PLAYGROUND_ADDR", "0.0.0.0:8080")
+	t.Setenv("PLAYGROUND_AUTH_SECRET", "")
+	t.Setenv("PLAYGROUND_API_KEY", "")
+	t.Setenv("PLAYGROUND_COOKIE_SECURE", "false")
+	_, err := loadConfig()
+	if err == nil {
+		t.Fatalf("expected non-loopback bind without auth secret/secure cookies to be refused")
+	}
+	if !strings.Contains(err.Error(), "authentication secret") {
+		t.Fatalf("expected error to explain the missing auth secret, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "secure cookies") {
+		t.Fatalf("expected error to explain the missing secure cookies, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "PLAYGROUND_DEV_MODE") {
+		t.Fatalf("expected error to mention the dev-mode opt-out, got: %v", err)
+	}
+}
+
+func TestLoadConfigNonLoopbackBindWithSecretAndSecureCookiesSucceeds(t *testing.T) {
+	t.Setenv("PLAYGROUND_ADDR", "0.0.0.0:8080")
+	t.Setenv("PLAYGROUND_AUTH_SECRET", "s3cret")
+	t.Setenv("PLAYGROUND_COOKIE_SECURE", "true")
+	if _, err := loadConfig(); err != nil {
+		t.Fatalf("expected non-loopback bind with secret + secure cookies to succeed, got error: %v", err)
+	}
+}
+
+func TestLoadConfigNonLoopbackBindDevModeOptOutBypassesGuard(t *testing.T) {
+	t.Setenv("PLAYGROUND_ADDR", "0.0.0.0:8080")
+	t.Setenv("PLAYGROUND_AUTH_SECRET", "")
+	t.Setenv("PLAYGROUND_API_KEY", "")
+	t.Setenv("PLAYGROUND_COOKIE_SECURE", "false")
+	t.Setenv("PLAYGROUND_DEV_MODE", "true")
+	cfg, err := loadConfig()
+	if err != nil {
+		t.Fatalf("expected PLAYGROUND_DEV_MODE=true to bypass the production-safety guard, got error: %v", err)
+	}
+	if !cfg.DevMode {
+		t.Fatalf("expected cfg.DevMode to be true")
+	}
+	if isLoopbackAddr(cfg.Addr) {
+		t.Fatalf("test setup error: expected a non-loopback address, got %q", cfg.Addr)
 	}
 }
 

@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"strconv"
 	"strings"
@@ -37,6 +38,37 @@ type Config struct {
 	RenderAllowURLHosts []string
 	RenderMode          string
 	RenderMaxBytes      int64
+	// DevMode is an explicit opt-out of the production-safety guard below.
+	// When true, the server is allowed to bind to a non-loopback address
+	// without an authentication secret and/or secure cookies configured -
+	// intended only for local development, CI, and tests. It defaults to
+	// false, so production-style deployments (bound to a non-loopback
+	// address) must either configure auth + secure cookies or explicitly
+	// set PLAYGROUND_DEV_MODE=true to acknowledge the reduced security.
+	DevMode bool
+}
+
+// isLoopbackAddr reports whether addr (an Addr-style "host:port", bare host,
+// or ":port" string as accepted by net/http.Server.Addr) resolves to a
+// loopback-only bind (127.0.0.0/8, ::1, or the literal host "localhost").
+// An empty host (e.g. ":8080") binds all interfaces and is NOT loopback.
+func isLoopbackAddr(addr string) bool {
+	host := addr
+	if h, _, err := net.SplitHostPort(addr); err == nil {
+		host = h
+	}
+	host = strings.TrimSpace(host)
+	host = strings.Trim(host, "[]")
+	if host == "" {
+		return false
+	}
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	if ip := net.ParseIP(host); ip != nil {
+		return ip.IsLoopback()
+	}
+	return false
 }
 
 func loadConfig() (Config, error) {
@@ -63,6 +95,7 @@ func loadConfig() (Config, error) {
 		RenderAllowURLHosts: envCSV("PLAYGROUND_RENDER_ALLOW_URL_HOSTS"),
 		RenderMode:          envString("PLAYGROUND_RENDER_MODE", "auto"),
 		RenderMaxBytes:      envInt64("PLAYGROUND_RENDER_MAX_BYTES", 1<<20),
+		DevMode:             envBool("PLAYGROUND_DEV_MODE", false),
 	}
 
 	if cfg.MaxBodyBytes <= 0 {
@@ -92,11 +125,51 @@ func loadConfig() (Config, error) {
 	if cfg.RenderMaxBytes <= 0 {
 		return Config{}, errors.New("PLAYGROUND_RENDER_MAX_BYTES must be > 0")
 	}
-	// AuthSecret is optional – when unset the playground runs without authentication.
+	// AuthSecret is optional – when unset the playground runs without authentication,
+	// EXCEPT that a non-loopback bind requires it (see the production-safety guard
+	// below) unless DevMode explicitly opts out.
 	if cfg.SessionTTL <= 0 {
 		return Config{}, errors.New("PLAYGROUND_SESSION_TTL_MS must be > 0")
 	}
+	if err := validateProductionBind(cfg); err != nil {
+		return Config{}, err
+	}
 	return cfg, nil
+}
+
+// validateProductionBind is a safe-by-default guard against accidentally
+// exposing the playground server on a non-loopback address without any
+// authentication or transport protection. It only applies when both:
+//   - the configured Addr does not resolve to a loopback-only bind
+//     (127.0.0.0/8, ::1, or "localhost"), and
+//   - DevMode is not explicitly enabled (PLAYGROUND_DEV_MODE=true).
+//
+// When it applies, it requires both an authentication secret and secure
+// cookies to be configured, since a non-loopback bind is reachable by other
+// hosts and must not run wide open.
+func validateProductionBind(cfg Config) error {
+	if cfg.DevMode {
+		return nil
+	}
+	if isLoopbackAddr(cfg.Addr) {
+		return nil
+	}
+	var problems []string
+	if cfg.AuthSecret == "" {
+		problems = append(problems, "no authentication secret is configured (set PLAYGROUND_AUTH_SECRET or PLAYGROUND_API_KEY to a non-empty value)")
+	}
+	if !cfg.CookieSecure {
+		problems = append(problems, "secure cookies are disabled (set PLAYGROUND_COOKIE_SECURE=true; this requires the server to be reached over HTTPS/TLS, e.g. behind a TLS-terminating proxy)")
+	}
+	if len(problems) == 0 {
+		return nil
+	}
+	return fmt.Errorf(
+		"refusing to start: playground server is configured to bind to non-loopback address %q, which is unsafe with the current settings: %s. "+
+			"Fix by addressing the setting(s) above, by binding to a loopback address instead (PLAYGROUND_ADDR=127.0.0.1:8080), "+
+			"or, for local development/CI only, by explicitly opting into the reduced-security mode with PLAYGROUND_DEV_MODE=true",
+		cfg.Addr, strings.Join(problems, "; "),
+	)
 }
 
 func applyCLIFlags(cfg *Config, args []string) error {
