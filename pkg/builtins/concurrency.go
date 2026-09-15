@@ -26,9 +26,15 @@ func init() {
 					callArgs = args[1:]
 				}
 				ch := make(chan object.Object, 1)
+				// The spawned goroutine executes concurrently with the caller,
+				// so it must not share the caller's RuntimeLimits counters
+				// (e.g. Steps) — clone them onto an isolated environment,
+				// mirroring evalSpawnExpression in pkg/eval/eval.go.
+				goEnv := object.NewEnclosedEnvironment(env)
+				goEnv.RuntimeLimits = env.RuntimeLimits.CloneForConcurrentExecution()
 				go func() {
 					if object.ApplyFunctionFn != nil {
-						ch <- object.ApplyFunctionFn(fn, callArgs, env)
+						ch <- object.ApplyFunctionFn(fn, callArgs, goEnv)
 					} else {
 						ch <- object.NULL
 					}
@@ -89,9 +95,11 @@ func init() {
 					AllowedNetworkHosts: hashStringArray(h, "allow_http"),
 					DeniedNetworkHosts:  hashStringArray(h, "deny_http"),
 				}
-				if env != nil {
-					env.SecurityPolicy = policy
-				}
+				// SecurityPolicy is an ordinary field on the shared
+				// Environment, readable from any goroutine closing over the
+				// same env (go/go_async/spawn) — route the write through
+				// the lock-guarded accessor rather than assigning directly.
+				env.SetSecurityPolicy(policy)
 				return object.TRUE
 			},
 		},

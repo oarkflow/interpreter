@@ -15,6 +15,15 @@ import (
 
 type SecurityPolicy = object.SecurityPolicy
 
+// PROCESS-WIDE GLOBAL STATE: policyOverride, like denialHook below, is
+// process-wide, not per-execution. Concurrent in-process evaluations (e.g.
+// multiple Runtimes, or multiple playground requests) serialize on it via
+// `mu` for the duration of WithSecurityPolicyOverride's fn() call - see that
+// function's doc comment for why this is currently correct-but-serializing
+// rather than truly concurrent. See docs/PRODUCTION_CHECKLIST.md for the
+// planned per-execution-context refactor that will replace this with a
+// properly scoped (non-global) mechanism.
+//
 // policyOverride holds the process-wide active policy override. `current` is
 // an atomic pointer so ActiveSecurityPolicy (called repeatedly by every
 // capability check, from within the same goroutine that may be holding `mu`
@@ -84,19 +93,58 @@ func WithSecurityPolicyOverride(policy *SecurityPolicy, fn func() (any, error)) 
 	return fn()
 }
 
-// DenialHook, if set, is invoked whenever a Check*Allowed function (or
-// ExitAllowed/EnvWriteAllowed/EnvReadAllowed) denies an operation. category is
-// one of the Capability* constants (or a more specific string such as "exec",
-// "network", "db", "file_read", "file_write", "import", "native_module",
-// "env_read", "env_write" for checks that layer additional rules on top of a
-// capability check); detail is a short human-readable reason. This is a
-// single process-wide hook (see NewRuntime in runtime.go for the tradeoff
-// this implies when multiple Runtimes exist concurrently).
-var DenialHook func(category, detail string)
+// denialHook backs the process-wide denial-notification hook. It is a bare
+// func value in nature, but func values cannot be swapped atomically on their
+// own, so it is stored behind an atomic.Pointer to make concurrent
+// SetDenialHook/GetDenialHook calls (and the reads performed by every
+// Check*Allowed denial via notifyDenial) race-free. "Last write wins,
+// process-wide" is unchanged: whichever call to SetDenialHook happened most
+// recently determines the hook every goroutine observes afterward.
+//
+// PROCESS-WIDE GLOBAL STATE: concurrent in-process evaluations (e.g. multiple
+// Runtimes, or multiple playground requests) all share this single hook and
+// therefore serialize/collide on it - constructing several Runtimes with
+// distinct denial hooks concurrently means only the most recently constructed
+// one's hook fires for ALL of them. See NewRuntime in runtime.go for the
+// call site that sets this, and docs/PRODUCTION_CHECKLIST.md for the planned
+// per-execution-context refactor that will replace this with a properly
+// scoped (non-global) mechanism.
+var denialHook atomic.Pointer[func(category, detail string)]
+
+// SetDenialHook installs fn as the process-wide denial hook, invoked whenever
+// a Check*Allowed function (or ExitAllowed/EnvWriteAllowed/EnvReadAllowed)
+// denies an operation. category is one of the Capability* constants (or a
+// more specific string such as "exec", "network", "db", "file_read",
+// "file_write", "import", "native_module", "env_read", "env_write" for checks
+// that layer additional rules on top of a capability check); detail is a
+// short human-readable reason.
+//
+// This is a single process-wide hook (see NewRuntime in runtime.go for the
+// tradeoff this implies when multiple Runtimes exist concurrently): the last
+// call to SetDenialHook wins for every goroutine in the process. Passing nil
+// clears the hook. Safe to call concurrently with itself and with
+// GetDenialHook/notifyDenial.
+func SetDenialHook(fn func(category, detail string)) {
+	if fn == nil {
+		denialHook.Store(nil)
+		return
+	}
+	denialHook.Store(&fn)
+}
+
+// GetDenialHook returns the currently installed process-wide denial hook, or
+// nil if none is set. Safe to call concurrently with SetDenialHook.
+func GetDenialHook() func(category, detail string) {
+	p := denialHook.Load()
+	if p == nil {
+		return nil
+	}
+	return *p
+}
 
 func notifyDenial(category, detail string) {
-	if DenialHook != nil {
-		DenialHook(category, detail)
+	if hook := GetDenialHook(); hook != nil {
+		hook(category, detail)
 	}
 }
 

@@ -131,6 +131,15 @@ type SandboxVM struct {
 	config SandboxConfig
 }
 
+// PROCESS-WIDE GLOBAL STATE: sandboxRootOverride is process-wide, not
+// per-execution. Concurrent in-process evaluations (e.g. multiple Runtimes,
+// or multiple playground requests) serialize on it via `mu` for the
+// duration of WithSandboxRootOverride's fn() call - see that function's doc
+// comment for why this is currently correct-but-serializing rather than
+// truly concurrent. See docs/PRODUCTION_CHECKLIST.md for the planned
+// per-execution-context refactor that will replace this with a properly
+// scoped (non-global) mechanism.
+//
 // sandboxRootOverride holds the process-wide active sandbox root override.
 // `current` is an atomic value so ActiveSandboxBaseDir (called repeatedly
 // from within the same goroutine that may be holding `mu` for the duration of

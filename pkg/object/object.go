@@ -1439,7 +1439,7 @@ func NewEnclosedEnvironment(outer *Environment) *Environment {
 		ModuleCache:            outer.ModuleCache,
 		ModuleLoading:          outer.ModuleLoading,
 		RuntimeLimits:          outer.RuntimeLimits,
-		SecurityPolicy:         outer.SecurityPolicy,
+		SecurityPolicy:         outer.GetSecurityPolicy(),
 		Output:                 outer.Output,
 		RenderConfig:           outer.RenderConfig,
 		RenderArtifacts:        outer.RenderArtifacts,
@@ -1488,6 +1488,32 @@ func (e *Environment) RunCleanup() {
 			fn()
 		}(cleanup[i])
 	}
+}
+
+// GetSecurityPolicy returns the environment's current per-execution security
+// policy override. SecurityPolicy is an ordinary struct field shared across
+// goroutines that close over the same Environment (e.g. via go/go_async/spawn
+// builtins), so reads and writes go through this lock-guarded accessor rather
+// than touching the field directly.
+func (e *Environment) GetSecurityPolicy() *SecurityPolicy {
+	if e == nil {
+		return nil
+	}
+	e.Mu.RLock()
+	defer e.Mu.RUnlock()
+	return e.SecurityPolicy
+}
+
+// SetSecurityPolicy sets the environment's per-execution security policy
+// override. See GetSecurityPolicy for why this must not be a bare field
+// write.
+func (e *Environment) SetSecurityPolicy(policy *SecurityPolicy) {
+	if e == nil {
+		return
+	}
+	e.Mu.Lock()
+	defer e.Mu.Unlock()
+	e.SecurityPolicy = policy
 }
 
 func (e *Environment) EnsureOwnerID() string {

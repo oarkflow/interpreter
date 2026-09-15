@@ -115,11 +115,11 @@ func TestExecWithOptionsSecurityDenyExec(t *testing.T) {
 }
 
 func TestRuntimeOnPolicyDeniedHookFires(t *testing.T) {
-	// security.DenialHook is a single process-wide variable (see Feature 2's
-	// documented limitation in runtime.go's NewRuntime). Reset it after this
-	// test so it can't leak into unrelated tests that run later in the same
-	// process.
-	t.Cleanup(func() { security.DenialHook = nil })
+	// security's denial hook is a single process-wide variable (see Feature
+	// 2's documented limitation in runtime.go's NewRuntime). Reset it after
+	// this test so it can't leak into unrelated tests that run later in the
+	// same process.
+	t.Cleanup(func() { security.SetDenialHook(nil) })
 
 	var mu sync.Mutex
 	var categories []string

@@ -1963,7 +1963,7 @@ func evalImportStatement(node *ast.ImportStatement, env *object.Environment) obj
 	if ResolveImportPathFn == nil {
 		return object.NewError("import not supported: no path resolver configured")
 	}
-	if env.SecurityPolicy != nil && env.SecurityPolicy.DenyDynamicImports {
+	if policy := env.GetSecurityPolicy(); policy != nil && policy.DenyDynamicImports {
 		if _, literal := node.Path.(*ast.StringLiteral); !literal {
 			return object.NewError("dynamic imports are denied by policy")
 		}
@@ -2034,7 +2034,7 @@ func evalImportStatement(node *ast.ImportStatement, env *object.Environment) obj
 	moduleEnv.ModuleCache = moduleCache
 	moduleEnv.ModuleLoading = moduleLoading
 	moduleEnv.RuntimeLimits = env.RuntimeLimits
-	moduleEnv.SecurityPolicy = env.SecurityPolicy
+	moduleEnv.SecurityPolicy = env.GetSecurityPolicy()
 	moduleEnv.Output = env.Output
 	moduleEnv.ModuleDir = filepath.Dir(resolvedPath)
 	moduleEnv.SourcePath = resolvedPath

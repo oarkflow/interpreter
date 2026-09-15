@@ -152,7 +152,7 @@ func extendFunctionEnv(fn *object.Function, args []object.Object, callerEnv *obj
 		ModuleCache:            fn.Env.ModuleCache,
 		ModuleLoading:          fn.Env.ModuleLoading,
 		RuntimeLimits:          fn.Env.RuntimeLimits,
-		SecurityPolicy:         fn.Env.SecurityPolicy,
+		SecurityPolicy:         fn.Env.GetSecurityPolicy(),
 		Output:                 fn.Env.Output,
 		RenderConfig:           fn.Env.RenderConfig,
 		RenderArtifacts:        fn.Env.RenderArtifacts,

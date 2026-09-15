@@ -2285,7 +2285,7 @@ func init() {
 		// -----------------------------------------------------------------
 
 		"go_async": {
-			Fn: func(args ...object.Object) object.Object {
+			FnWithEnv: func(env *object.Environment, args ...object.Object) object.Object {
 				if err := security.CheckCapabilityAllowed(security.CapabilityAsync); err != nil {
 					return object.NewError("%s", err)
 				}
@@ -2294,8 +2294,18 @@ func init() {
 				}
 				fn := args[0]
 				fnArgs := args[1:]
+				// The spawned goroutine executes concurrently with the
+				// caller, so it must not share the caller's RuntimeLimits
+				// counters (e.g. Steps) — clone them onto an isolated
+				// environment, mirroring evalSpawnExpression in
+				// pkg/eval/eval.go. Passing callerEnv=nil here previously
+				// made ApplyFunction fall back to fn's declaration-site
+				// RuntimeLimits (the top-level program's counters), racing
+				// with the main goroutine.
+				goEnv := object.NewEnclosedEnvironment(env)
+				goEnv.RuntimeLimits = env.RuntimeLimits.CloneForConcurrentExecution()
 				go func() {
-					eval.ApplyFn(fn, fnArgs, nil, nil)
+					eval.ApplyFn(fn, fnArgs, goEnv, nil)
 				}()
 				return object.NULL
 			},
