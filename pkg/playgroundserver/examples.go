@@ -1138,6 +1138,233 @@ let finalMessage = try {
 
 print finalMessage;
 print "=== Tour Complete ===";`,
+
+		"classes": `// Classes: inheritance, interfaces + super, private fields, and static members.
+
+interface Greetable {
+	greet();
+}
+
+abstract class Shape {
+	abstract area();
+	describe() {
+		return "area=" + this.area();
+	}
+}
+
+class Circle extends Shape implements Greetable {
+	private radius = 0;
+	static count = 0;
+
+	init(radius) {
+		this.radius = radius;
+		Circle.count += 1;
+	}
+	area() {
+		return 3.14159 * this.radius * this.radius;
+	}
+	greet() {
+		return "a circle with area " + this.area();
+	}
+}
+
+class NamedCircle extends Circle {
+	init(radius, name) {
+		super(radius);
+		this.name = name;
+	}
+	greet() {
+		return this.name + " is a circle with area " + this.area();
+	}
+}
+
+let plain = Circle(2);
+let named = NamedCircle(3, "Big One");
+
+print plain.describe();
+print plain.greet();
+print named.describe();
+print named.greet();
+print sprintf("Circle instances created=%d", Circle.count);
+
+// Class instances behave like hashes (their runtime Type() is HASH_OBJ);
+// non-private fields are readable via ordinary dot access.
+print sprintf("named.name=%v", named.name);`,
+
+		"algebraic-types": `// Algebraic data types: "type X = A(..) | B(..)" declarations, constructed
+// with their variant constructors and consumed exhaustively via match.
+
+type Shape = Circle(radius) | Rectangle(width, height) | Point();
+type Result = Ok(value) | Err(error);
+
+let area = function(s) {
+	return match (s) {
+		case Circle(r) => 3.14159 * r * r
+		case Rectangle(w, h) => w * h
+		case Point() => 0
+	};
+};
+
+print area(Circle(2));
+print area(Rectangle(3, 4));
+print area(Point());
+
+// A common pattern: model success/failure as data instead of exceptions.
+let safeDiv = function(a, b) {
+	if (b == 0) {
+		return Err("division by zero");
+	}
+	return Ok(a / b);
+};
+
+let describeResult = function(r) {
+	return match (r) {
+		case Ok(v) => "result: " + v
+		case Err(e) => "error: " + e
+	};
+};
+
+print describeResult(safeDiv(10, 2));
+print describeResult(safeDiv(10, 0));
+
+// match over an ADT requires every variant to be covered (a wildcard also
+// satisfies exhaustiveness); this is checked at match-time.
+let shapes = [Circle(1), Rectangle(2, 5), Point()];
+let areas = shapes.map(area);
+print sprintf("areas=%v", areas);`,
+
+		"async-await": `// async/await sugar, explicit goroutines via go/go_async, and channels.
+
+let asyncDouble = async function(x) { return x * 2; };
+print await asyncDouble(21);
+
+let asyncSquare = async (x) => x * x;
+print await asyncSquare(7);
+
+// await re-throws if the async body threw, so try/catch works as expected.
+let asyncFail = async function() { throw "async boom"; };
+let caught = try {
+	await asyncFail();
+} catch (e) {
+	"caught async: " + e;
+};
+print caught;
+
+// go(fn, ...args) runs fn on a goroutine and returns a Future, coordinating
+// through a channel.
+let ch = channel();
+let producer = go(function() {
+	send(ch, 42);
+	return "sent";
+});
+print recv(ch);
+print await producer;
+
+// go_async fires-and-forgets background work (no Future to await).
+go_async(function() { print "background work ran"; });
+sleep(5);
+
+// await_all waits for every future; await_race resolves with the first.
+let f1 = go(function() { sleep(10); return 1; });
+let f2 = go(function() { sleep(5); return 2; });
+print await_all([f1, f2]);
+
+let raceA = async function() { return "A wins"; };
+let raceB = async function() { return "B wins"; };
+print await_race([raceA(), raceB()]);`,
+
+		"generators": `// generator(fn) wraps an array-producing function for the stream pipeline,
+// and "for await" iterates streams/generators.
+
+let gen = generator(function() { return [1, 2, 3, 4, 5]; });
+print sprintf("generator values=%v", gen);
+print sprintf("generator doubled (array-interop)=%v", gen.map(function(x) { return x * 2; }));
+
+// Streams support map/filter/reduce pipelines over an array source.
+let s = stream([1, 2, 3, 4, 5]);
+let doubled = stream_map(s, function(x) { return x * 2; });
+let evens = stream_filter(doubled, function(x) { return x % 4 == 0; });
+print sprintf("doubled+filtered=%v", stream_to_array(evens));
+
+let total = stream_reduce(stream([1, 2, 3, 4, 5]), function(acc, x) { return acc + x; }, 0);
+print sprintf("stream_reduce total=%d", total);
+
+// "for await" iterates a stream/generator source.
+for await (v in stream([10, 20, 30])) {
+	print sprintf("for-await value=%d", v);
+}`,
+
+		"macros": `// Macros splice their body into the call site at the AST level (with
+// hygienic renaming of internal locals) instead of running as a closure.
+
+macro when(condition, body) {
+	if (condition) { body; }
+}
+
+let macroValue = 10;
+when(macroValue > 5) { print "macro condition matched"; }
+
+macro repeat(n, body) {
+	let i = 0;
+	while (i < n) {
+		body;
+		i += 1;
+	}
+}
+
+repeat(3) { print "macro repeat"; }
+
+// A macro can rebind caller variables directly (lvalue-style parameters),
+// which an ordinary function cannot do since arguments are passed by value.
+macro swap(a, b) {
+	let temp = a;
+	a = b;
+	b = temp;
+}
+
+let macroLeft = "left";
+let macroRight = "right";
+swap(macroLeft, macroRight);
+print [macroLeft, macroRight];
+
+// The macro's internal "temp" binding is hygienic: it never leaks into the
+// caller's scope, even though the macro body was spliced in directly.
+print "swap expansion kept its internal 'temp' local to itself";`,
+
+		"ownership": `// move(...) and immutable(...) are Rust-inspired wrapper types for
+// documenting/enforcing data-flow intent over shared arrays and hashes.
+
+// move(value) marks a value as handed off; reading/printing/iterating still
+// works transparently through the OwnedValue wrapper.
+let ownedData = move([1, 2, 3]);
+print ownedData;
+print sprintf("typeof(ownedData)=%s", typeof(ownedData));
+print sprintf("sum via reduce=%d", ownedData.reduce(function(acc, x) { return acc + x; }, 0));
+
+// A common use: signal that a collection is being handed off to background
+// work via go(...)/channels rather than mutated further by the caller.
+let handoff = go(function() {
+	let data = move([10, 20, 30]);
+	return sum(data);
+});
+print sprintf("background sum=%d", await handoff);
+
+// immutable(value) deep-freezes a hash/array: writes raise a catchable
+// runtime error instead of silently succeeding.
+let config = {"env": "prod", "retries": 3};
+let frozen = immutable(config);
+let writeResult = try {
+	frozen.retries = 5;
+	"unexpected: write succeeded";
+} catch (e) {
+	"blocked write: " + e;
+};
+print writeResult;
+
+// Read the original reference (or a defensive copy) before freezing if you
+// need to read values back later, since reads through the frozen wrapper
+// itself are not the supported path.
+print sprintf("original still readable: env=%s retries=%d", config.env, config.retries);`,
 	}
 }
 

@@ -46,8 +46,9 @@ let serverRenderConfig = { mode: 'auto', max_bytes: 1048576, allow_urls: false, 
 // example key (e.g. PDF/Database/XQL on the lightweight `playground`
 // binary, which doesn't link those builtins) simply don't render.
 const categoryOrder = [
-  'Getting Started', 'Modules & Imports', 'Files & Renaming', 'Archives & Images', 'Media',
-  'Secrets & Crypto', 'System & Network', 'Dates & Time', 'Daily Ops Utilities', 'PDF', 'Database', 'XQL',
+  'Getting Started', 'Language Features', 'Modules & Imports', 'Files & Renaming', 'Archives & Images', 'Media',
+  'Secrets & Crypto', 'Policy & Security', 'System & Network', 'Dates & Time', 'Daily Ops Utilities',
+  'Scripting & Data Formats', 'PDF', 'Database', 'XQL',
   'Artifacts & Data', 'Servers & Runtime', 'Other',
 ];
 
@@ -57,6 +58,9 @@ const exampleCategories = {
   math: 'Getting Started', strings: 'Getting Started', 'collections-advanced': 'Getting Started',
   'type-casting': 'Getting Started', crypto: 'Getting Started', time: 'Getting Started',
   testing: 'Getting Started', 'complete-tour': 'Getting Started',
+  classes: 'Language Features', 'algebraic-types': 'Language Features',
+  'async-await': 'Language Features', generators: 'Language Features',
+  macros: 'Language Features', ownership: 'Language Features',
   modules: 'Modules & Imports', 'std-modules': 'Modules & Imports', 'package-imports': 'Modules & Imports',
   'tools-files': 'Files & Renaming',
   'tools-images': 'Archives & Images', 'image-values': 'Archives & Images',
@@ -64,13 +68,21 @@ const exampleCategories = {
   'tools-secrets': 'Secrets & Crypto',
   securetoken: 'Secrets & Crypto',
   shamir: 'Secrets & Crypto',
+  cryptoextra: 'Secrets & Crypto',
+  secretr: 'Secrets & Crypto',
+  rules: 'Policy & Security',
+  tcpguard: 'Policy & Security',
   'tools-network': 'System & Network',
+  'integrations-http': 'System & Network',
   naturaldate: 'Dates & Time',
   wuid: 'Daily Ops Utilities',
   money: 'Daily Ops Utilities',
   phone: 'Daily Ops Utilities',
+  email: 'Daily Ops Utilities',
   metadata: 'Daily Ops Utilities',
   ip: 'System & Network',
+  lua: 'Scripting & Data Formats',
+  yaml: 'Scripting & Data Formats',
   'pdf-tools': 'PDF',
   'query-builder': 'Database',
   'xql-basics': 'XQL',
@@ -83,7 +95,7 @@ const exampleCategories = {
   'server-sse': 'Servers & Runtime', 'server-route-groups': 'Servers & Runtime',
 };
 
-const defaultOpenCategories = new Set(['Getting Started']);
+const defaultOpenCategories = new Set(['Getting Started', 'Language Features']);
 
 function categoryFor(key) {
   return exampleCategories[key] || 'Other';

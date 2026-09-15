@@ -428,6 +428,19 @@ print xql.list_integrations();`,
 // pdf.images_to_pdf("out/photos.pdf", ["a.jpg", "b.jpg"], {"size": "a4", "image_fit": "contain"});
 // pdf.fill_form("form.pdf", "out/filled.pdf", {"name": "Ada Lovelace"});
 
+// Convert to/from Word (.docx) and HTML (writes - trusted profile only).
+// pdf.to_docx extracts via the same Markdown pipeline as pdf.to_markdown, so
+// fidelity is bounded by what that extraction preserves (headings,
+// paragraphs, lists, emphasis, links, tables) - see docs/features/34.
+// pdf.markdown_to_docx("# Title\n\nHello **world**", "out/notes.docx", {"title": "Notes"});
+// pdf.to_docx("out/report.pdf", "out/report.docx", {"title": "Report", "author": "SPL", "toc": false});
+// print pdf.docx_to_markdown("out/notes.docx");
+// print pdf.docx_to_text("out/notes.docx");
+// print pdf.docx_to_html("out/notes.docx", {"title": "Notes"});
+// pdf.html_to_docx("<h1>Report</h1><p>Hello <b>world</b>.</p>", "out/from_html.docx");
+// pdf.from_docx("out/notes.docx", "out/from_docx.pdf", {"title": "Notes", "theme": "modern"});
+// print pdf.info("out/from_docx.pdf").pages;
+
 print "PDF builtins are documented here for CLI/REPL/cmd/interpreter workflows.";`,
 
 	"rules": `// rules is a BCL-backed policy/decision engine (plugins/rules, wrapping
@@ -465,6 +478,173 @@ print sprintf("verified=true  -> effect=%s allowed=%t", allowed.Report.Decision.
 let [denied, e2] = rules.evaluate(svc, "access-policy", "access", {"request": {"verified": false}});
 if (e2 != null) { throw e2; }
 print sprintf("verified=false -> effect=%s allowed=%t", denied.Report.Decision.Effect, denied.Report.Decision.Allowed);`,
+
+	"cryptoextra": `// cryptoextra adds password hashing and JWT signing on top of the core
+// crypto builtins (plugins/crypto, backed by golang.org/x/crypto/bcrypt and
+// github.com/golang-jwt/jwt/v5) - fully self-contained, no capability grant
+// needed.
+
+import "cryptoextra" as cryptoextra;
+
+// bcrypt_hash/bcrypt_verify/jwt_encode/jwt_decode return a single value
+// (not a [value, err] tuple) - a bad input is a hard error instead.
+let hash = cryptoextra.bcrypt_hash("correct horse battery staple");
+print hash;
+
+print cryptoextra.bcrypt_verify("correct horse battery staple", hash);
+print cryptoextra.bcrypt_verify("wrong password", hash);
+
+// jwt_encode/jwt_decode sign and verify a HASH of claims with an HMAC
+// secret. expires_in sets/overrides the exp claim (seconds from now).
+let token = cryptoextra.jwt_encode({"sub": "user123", "role": "admin"}, "top-secret", {"expires_in": 300});
+print token;
+
+let claims = cryptoextra.jwt_decode(token, "top-secret");
+print claims;
+
+// Wrong secret / tampered signature is a hard error, not silently wrong data:
+// cryptoextra.jwt_decode(token, "wrong-secret") would raise instead of
+// returning claims.`,
+
+	"lua": `// lua embeds a native-Go Lua 5.1 runtime (plugins/lua, no external Lua
+// dependency) - fully self-contained, no capability grant needed.
+
+import "lua" as lua;
+
+print lua.version();
+
+// lua.eval(expr) wraps the source in "return " and evaluates it as a single
+// expression, converting the result back to an SPL value.
+let sum, sumErr = lua.eval("2 + 2 * 10");
+if (sumErr != null) { throw sumErr; }
+print sum;
+
+// lua.run(source[, globals]) runs a full Lua script/block; globals is an
+// optional HASH of SPL values exposed as Lua globals.
+let greeting, runErr = lua.run(<<LUA
+local name = greeting_name
+return "hello, " .. name .. "!"
+LUA
+, {"greeting_name": "SPL"});
+if (runErr != null) { throw runErr; }
+print greeting;
+
+// lua.load(source) compiles a persistent script object so functions defined
+// in it can be called repeatedly via script.call(name, args...).
+let script, loadErr = lua.load(<<LUA
+function fib(n)
+  if n < 2 then return n end
+  return fib(n - 1) + fib(n - 2)
+end
+LUA
+);
+if (loadErr != null) { throw loadErr; }
+
+let fib8, callErr = script.call("fib", 8);
+if (callErr != null) { throw callErr; }
+print fib8;`,
+
+	"yaml": `// yaml.encode/yaml.decode round-trip SPL values through YAML text
+// (plugins/yaml, also importable as "config/yaml", backed by
+// gopkg.in/yaml.v3) - fully self-contained, no capability grant needed.
+
+import "yaml" as yaml;
+
+let config = {
+	"service": {"name": "playground", "port": 8080},
+	"features": ["auth", "logging", "rate-limit"],
+	"debug": false
+};
+
+let encoded = yaml.encode(config, {"indent": 2});
+print encoded;
+
+let decoded = yaml.decode(encoded);
+print sprintf("service=%s port=%d features=%v", decoded.service.name, decoded.service.port, decoded.features);
+
+// A round-trip through YAML text preserves structure and types.
+assert_eq(decoded.service.port, 8080);
+assert_eq(len(decoded.features), 3);`,
+
+	"integrations-http": `// integrations does outbound HTTP, webhooks, FTP/SFTP, and SMTP
+// (plugins/integrations). http_get/http_post/http_request/webhook need the
+// "network" capability, which the full playground grants - see
+// ExtraCapabilities in cmd/interpreter/main.go. httpbin.org is the same
+// stable public test endpoint already used by docs/README.md and
+// examples/all_in_one.spl for outbound HTTP examples.
+
+import "integrations" as integrations;
+
+let res, err = integrations.http_get("https://httpbin.org/get", {"Accept": "application/json"}, 5000);
+if (err != null) { throw err; }
+print sprintf("status=%d ok=%t duration_ms=%d", res.status_code, res.ok, res.duration_ms);
+
+let body = json_decode(res.body);
+print sprintf("echoed url=%s", body.url);
+
+let posted, postErr = integrations.http_post("https://httpbin.org/post", json_encode({"name": "spl", "ok": true}), {"Content-Type": "application/json"}, 5000);
+if (postErr != null) { throw postErr; }
+print sprintf("post status=%d ok=%t", posted.status_code, posted.ok);
+
+// webhook(url, payload[, headers][, timeout_ms]) is a thin convenience
+// wrapper over the same POST machinery, meant for fire-and-forget event
+// delivery.
+let hookRes, hookErr = integrations.webhook("https://httpbin.org/post", json_encode({"event": "playground.run"}));
+if (hookErr != null) { throw hookErr; }
+print sprintf("webhook status=%d ok=%t", hookRes.status_code, hookRes.ok);
+
+// FTP, SFTP, and SMTP need a real external server the playground can't
+// provide, so here's the SPL you'd run against one in the CLI, REPL, or an
+// embedded host:
+let template = "import \"integrations\" as integrations;\n" +
+"let ftpFiles, ferr = integrations.ftp_list({\"host\": \"ftp.example.com\", \"user\": \"anonymous\", \"password\": \"guest\"}, \"/\");\n" +
+"let ok, gerr = integrations.ftp_get({\"host\": \"ftp.example.com\", \"user\": \"anonymous\", \"password\": \"guest\"}, \"/pub/readme.txt\", \"readme.txt\");\n" +
+"let ok2, perr = integrations.ftp_put({\"host\": \"ftp.example.com\", \"user\": \"anonymous\", \"password\": \"guest\"}, \"local.txt\", \"/incoming/local.txt\");\n" +
+"\n" +
+"let sftpFiles, serr = integrations.sftp_list({\"host\": \"sftp.example.com\", \"user\": \"deploy\", \"password\": \"secret\"}, \"/home/deploy\");\n" +
+"let ok3, sgerr = integrations.sftp_get({\"host\": \"sftp.example.com\", \"user\": \"deploy\", \"password\": \"secret\"}, \"/home/deploy/data.csv\", \"data.csv\");\n" +
+"let ok4, sperr = integrations.sftp_put({\"host\": \"sftp.example.com\", \"user\": \"deploy\", \"password\": \"secret\"}, \"data.csv\", \"/home/deploy/data.csv\");\n" +
+"\n" +
+"let sent, merr = integrations.smtp_send({\n" +
+"  \"host\": \"smtp.example.com\", \"port\": 587, \"username\": \"user\", \"password\": \"pass\",\n" +
+"  \"from\": \"noreply@example.com\", \"to\": [\"user@example.com\"],\n" +
+"  \"subject\": \"Hello from SPL\", \"body\": \"Sent via smtp_send()\"\n" +
+"});\n";
+
+print "=== FTP / SFTP / SMTP template (needs a real server) ===";
+print template;`,
+
+	"secretr": `// secretr is a local, encrypted secrets vault (plugins/secretr, backed by
+// github.com/oarkflow/secretr) - secretr_get/set/delete/list/scan work
+// entirely in-process against a file-backed vault under SECRETR_DATA_DIR
+// (defaulting to ./.secretr-data), no external service required.
+//
+// It's still template-only here: every secretr_* builtin requires the
+// "secrets" capability (see pkg/security/effects.go), which the browser
+// playground's untrusted profile does not grant (only filesystem_read,
+// async, scheduler, server, db, network, and policy are allowed - see
+// cmd/interpreter/main.go's ExtraCapabilities and
+// pkg/playgroundserver/security.go). Run this in the CLI, REPL, or an
+// embedded host with the "secrets" capability granted to execute it live.
+
+let template = "import \"secretr\" as secretr;\n" +
+"let ok = secretr.set(\"db/password\", \"hunter2\");\n" +
+"let secret = secretr.get(\"db/password\"); // returns a SECRET, prints as ***\n" +
+"print secret_reveal(secret);\n" +
+"\n" +
+"let names = secretr.list(\"db/\");\n" +
+"print names;\n" +
+"\n" +
+"secretr.delete(\"db/password\");\n" +
+"\n" +
+"// secretr.scan runs the same hardcoded-secret detector used automatically\n" +
+"// by SecurityPolicy.BlockHardcodedSecrets, so you can check arbitrary text\n" +
+"// (e.g. user-submitted config) for secret-shaped strings on demand.\n" +
+"let findings = secretr.scan(\"let key = \\\"AKIAABCDEFGHIJKLMNOP\\\";\");\n" +
+"print findings;\n";
+
+print "=== secretr template (needs the \"secrets\" capability) ===";
+print template;`,
 
 	"tcpguard": `// tcpguard is a runtime HTTP security policy engine (plugins/tcpguard,
 // wrapping github.com/oarkflow/tcpguard) - describe request-level
