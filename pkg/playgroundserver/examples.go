@@ -1176,6 +1176,12 @@ class NamedCircle extends Circle {
 	greet() {
 		return this.name + " is a circle with area " + this.area();
 	}
+	describe() {
+		// super.method() calls a SPECIFICALLY named parent method - distinct
+		// from bare super(...), which calls the parent's same-named method
+		// (or, in a constructor, its init).
+		return this.name + ": " + super.describe();
+	}
 }
 
 let plain = Circle(2);
@@ -1278,15 +1284,17 @@ print await_race([raceA(), raceB()]);`,
 
 let gen = generator(function() { return [1, 2, 3, 4, 5]; });
 print sprintf("generator values=%v", gen);
+print sprintf("generator len=%d first=%v", len(gen), gen[0]);
 print sprintf("generator doubled (array-interop)=%v", gen.map(function(x) { return x * 2; }));
 
-// Streams support map/filter/reduce pipelines over an array source.
-let s = stream([1, 2, 3, 4, 5]);
+// Streams support map/filter/reduce pipelines, and stream() accepts a
+// generator value directly (not just a plain array).
+let s = stream(gen);
 let doubled = stream_map(s, function(x) { return x * 2; });
 let evens = stream_filter(doubled, function(x) { return x % 4 == 0; });
 print sprintf("doubled+filtered=%v", stream_to_array(evens));
 
-let total = stream_reduce(stream([1, 2, 3, 4, 5]), function(acc, x) { return acc + x; }, 0);
+let total = stream_reduce(stream(gen), function(acc, x) { return acc + x; }, 0);
 print sprintf("stream_reduce total=%d", total);
 
 // "for await" iterates a stream/generator source.
