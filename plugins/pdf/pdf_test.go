@@ -1,6 +1,7 @@
 package pdf
 
 import (
+	"archive/zip"
 	"os"
 	"path/filepath"
 	"strings"
@@ -212,6 +213,199 @@ func TestPDFToDocxArgumentValidationErrors(t *testing.T) {
 	}
 	if _, ok := fnMarkdownToDocx(str(""), str("out.docx")).(*object.Error); !ok {
 		t.Fatalf("expected pdf_markdown_to_docx with empty markdown to return an error")
+	}
+}
+
+func TestDocxToMarkdownRoundTrip(t *testing.T) {
+	dir := chdirTemp(t)
+	docxPath := filepath.Join(dir, "roundtrip.docx")
+
+	// Note: github.com/oarkflow/pdf/md's DOCX exporter itself renders
+	// paragraph text as plain text (its plainInline strips **/*/etc. rather
+	// than emitting separate bold/italic <w:r> runs) - so bold/italic can't
+	// round-trip through pdf_markdown_to_docx -> pdf_docx_to_markdown.
+	// TestDocxImportPreservesRunFormatting below feeds the importer a
+	// hand-built DOCX with real formatted runs (as a genuine Word document
+	// would contain) to verify bold/italic detection independently of that
+	// upstream limitation.
+	source := "# Report Title\n\n" +
+		"## Highlights\n\n" +
+		"Some bold and italic text.\n\n" +
+		"- first bullet\n" +
+		"- second bullet\n\n" +
+		"1. step one\n" +
+		"2. step two\n"
+
+	requireOK(t, fnMarkdownToDocx(str(source), str(docxPath), &object.Hash{Pairs: map[object.HashKey]object.HashPair{
+		(&object.String{Value: "title"}).HashKey(): {
+			Key:   &object.String{Value: "title"},
+			Value: &object.String{Value: "Report"},
+		},
+	}}))
+
+	mdResult := fnDocxToMarkdown(str(docxPath))
+	requireOK(t, mdResult)
+	md, ok := mdResult.(*object.String)
+	if !ok {
+		t.Fatalf("expected pdf_docx_to_markdown to return a STRING, got %T", mdResult)
+	}
+	for _, want := range []string{
+		"# Report Title",
+		"## Highlights",
+		"Some bold and italic text.",
+		"- first bullet",
+		"- second bullet",
+		"1. step one",
+		"1. step two", // ordered items are both rendered "1." (renumbered by any real Markdown renderer)
+	} {
+		if !strings.Contains(md.Value, want) {
+			t.Fatalf("expected round-tripped markdown to contain %q, got:\n%s", want, md.Value)
+		}
+	}
+
+	textResult := fnDocxToText(str(docxPath))
+	requireOK(t, textResult)
+	text, ok := textResult.(*object.String)
+	if !ok {
+		t.Fatalf("expected pdf_docx_to_text to return a STRING, got %T", textResult)
+	}
+	if !strings.Contains(text.Value, "Report Title") || !strings.Contains(text.Value, "bold") {
+		t.Fatalf("expected pdf_docx_to_text to preserve the underlying words, got: %s", text.Value)
+	}
+}
+
+// syntheticWordDocx builds a minimal but real DOCX (zip of OOXML parts), the
+// way a document.xml authored by actual Microsoft Word would look, to
+// verify the importer against formatting our own limited exporter never
+// produces: separate bold/italic runs and numPr-only list paragraphs (no
+// distinguishing pStyle) resolved through numbering.xml.
+func syntheticWordDocx(t *testing.T, path string) {
+	t.Helper()
+	const documentXML = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>
+<w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr><w:r><w:t>Formatting Demo</w:t></w:r></w:p>
+<w:p><w:r><w:t xml:space="preserve">Some </w:t></w:r><w:r><w:rPr><w:b/></w:rPr><w:t>bold</w:t></w:r><w:r><w:t xml:space="preserve"> and </w:t></w:r><w:r><w:rPr><w:i/></w:rPr><w:t>italic</w:t></w:r><w:r><w:t xml:space="preserve"> and </w:t></w:r><w:r><w:rPr><w:b/><w:i/></w:rPr><w:t>both</w:t></w:r><w:r><w:t>.</w:t></w:r></w:p>
+<w:p><w:pPr><w:pStyle w:val="ListParagraph"/><w:numPr><w:ilvl w:val="0"/><w:numId w:val="1"/></w:numPr></w:pPr><w:r><w:t>bulleted via numbering.xml only</w:t></w:r></w:p>
+<w:p><w:pPr><w:pStyle w:val="ListParagraph"/><w:numPr><w:ilvl w:val="0"/><w:numId w:val="2"/></w:numPr></w:pPr><w:r><w:t>numbered via numbering.xml only</w:t></w:r></w:p>
+</w:body></w:document>`
+	const numberingXML = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:numbering xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+<w:abstractNum w:abstractNumId="10"><w:lvl w:ilvl="0"><w:numFmt w:val="bullet"/></w:lvl></w:abstractNum>
+<w:abstractNum w:abstractNumId="20"><w:lvl w:ilvl="0"><w:numFmt w:val="decimal"/></w:lvl></w:abstractNum>
+<w:num w:numId="1"><w:abstractNumId w:val="10"/></w:num>
+<w:num w:numId="2"><w:abstractNumId w:val="20"/></w:num>
+</w:numbering>`
+
+	f, err := os.Create(path)
+	if err != nil {
+		t.Fatalf("create synthetic docx: %v", err)
+	}
+	defer f.Close()
+	zw := zip.NewWriter(f)
+	write := func(name, body string) {
+		w, err := zw.Create(name)
+		if err != nil {
+			t.Fatalf("create %s: %v", name, err)
+		}
+		if _, err := w.Write([]byte(body)); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+	}
+	write("word/document.xml", documentXML)
+	write("word/numbering.xml", numberingXML)
+	if err := zw.Close(); err != nil {
+		t.Fatalf("close synthetic docx: %v", err)
+	}
+}
+
+func TestDocxImportPreservesRunFormatting(t *testing.T) {
+	dir := chdirTemp(t)
+	docxPath := filepath.Join(dir, "formatting.docx")
+	syntheticWordDocx(t, docxPath)
+
+	mdResult := fnDocxToMarkdown(str(docxPath))
+	requireOK(t, mdResult)
+	md := mdResult.(*object.String).Value
+
+	for _, want := range []string{
+		"# Formatting Demo",
+		"**bold**",
+		"*italic*",
+		"***both***",
+		"- bulleted via numbering.xml only",
+		"1. numbered via numbering.xml only",
+	} {
+		if !strings.Contains(md, want) {
+			t.Fatalf("expected imported markdown to contain %q, got:\n%s", want, md)
+		}
+	}
+
+	textResult := fnDocxToText(str(docxPath))
+	requireOK(t, textResult)
+	text := textResult.(*object.String).Value
+	if strings.Contains(text, "**") || strings.Contains(text, "*italic*") || strings.Contains(text, "***") {
+		t.Fatalf("expected pdf_docx_to_text to strip markdown emphasis, got: %s", text)
+	}
+	if !strings.Contains(text, "bold") || !strings.Contains(text, "italic") || !strings.Contains(text, "both") {
+		t.Fatalf("expected pdf_docx_to_text to preserve the underlying words, got: %s", text)
+	}
+}
+
+func TestDocxWithTableToMarkdown(t *testing.T) {
+	dir := chdirTemp(t)
+	docxPath := filepath.Join(dir, "table.docx")
+
+	source := "# Data\n\n| Name | Age |\n| --- | --- |\n| Ada | 36 |\n| Grace | 85 |\n"
+	requireOK(t, fnMarkdownToDocx(str(source), str(docxPath)))
+
+	mdResult := fnDocxToMarkdown(str(docxPath))
+	requireOK(t, mdResult)
+	md := mdResult.(*object.String).Value
+	for _, want := range []string{"Name", "Age", "Ada", "36", "Grace", "85", "---"} {
+		if !strings.Contains(md, want) {
+			t.Fatalf("expected round-tripped table markdown to contain %q, got:\n%s", want, md)
+		}
+	}
+}
+
+func TestPDFFromDocx(t *testing.T) {
+	dir := chdirTemp(t)
+	docxPath := filepath.Join(dir, "source.docx")
+	pdfPath := filepath.Join(dir, "converted.pdf")
+
+	requireOK(t, fnMarkdownToDocx(str("# From DOCX\n\nThis paragraph should survive the round trip to PDF."), str(docxPath)))
+	requireOK(t, fnFromDocx(str(docxPath), str(pdfPath)))
+
+	text := fnToText(str(pdfPath))
+	requireOK(t, text)
+	textStr, ok := text.(*object.String)
+	if !ok {
+		t.Fatalf("expected pdf_to_text to return a STRING, got %T", text)
+	}
+	if !strings.Contains(textStr.Value, "From DOCX") || !strings.Contains(textStr.Value, "should survive the round trip") {
+		t.Fatalf("expected the DOCX-derived PDF to contain the original text, got %q", textStr.Value)
+	}
+}
+
+func TestDocxImportArgumentValidationErrors(t *testing.T) {
+	if _, ok := fnDocxToMarkdown().(*object.Error); !ok {
+		t.Fatalf("expected pdf_docx_to_markdown with no arguments to return an error")
+	}
+	if _, ok := fnDocxToText().(*object.Error); !ok {
+		t.Fatalf("expected pdf_docx_to_text with no arguments to return an error")
+	}
+	if _, ok := fnFromDocx(str("only-one-arg.docx")).(*object.Error); !ok {
+		t.Fatalf("expected pdf_from_docx with only one argument to return an error")
+	}
+}
+
+func TestDocxToMarkdownRejectsNonDocx(t *testing.T) {
+	dir := chdirTemp(t)
+	notDocx := filepath.Join(dir, "not-a-docx.pdf")
+	requireOK(t, fnQuick(str("plain pdf, not a docx"), str(notDocx)))
+
+	if _, ok := fnDocxToMarkdown(str(notDocx)).(*object.Error); !ok {
+		t.Fatalf("expected pdf_docx_to_markdown on a non-DOCX file to return an error")
 	}
 }
 

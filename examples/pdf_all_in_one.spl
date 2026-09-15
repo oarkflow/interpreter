@@ -80,6 +80,22 @@ pdf.markdown_to_docx(
 print sprintf("notes.docx created: %t", file_exists(notesDocx));
 
 // -----------------------------------------------------------------------------
+// 2c) Converting from Word (.docx) - the reverse direction
+// -----------------------------------------------------------------------------
+print "--- 2c) pdf_docx_to_markdown / pdf_docx_to_text / pdf_from_docx ---";
+
+// DOCX -> Markdown / plain text: reads word/document.xml directly (no
+// external converter, no DOCX-parsing dependency - see docs/features/34).
+print pdf.docx_to_markdown(notesDocx);
+print pdf.docx_to_text(notesDocx);
+
+// DOCX -> PDF: reconstructs the DOCX as Markdown, then renders that through
+// the same Markdown -> PDF pipeline pdf_from_markdown uses.
+let fromDocx = outDir + "/notes_from_docx.pdf";
+pdf.from_docx(notesDocx, fromDocx, {"title": "Notes (from DOCX)"});
+print sprintf("notes_from_docx.pdf pages=%d", pdf.info(fromDocx).pages);
+
+// -----------------------------------------------------------------------------
 // 3) Page-level operations: merge, split, delete, reorder, rotate
 // -----------------------------------------------------------------------------
 print "--- 3) pdf_merge / pdf_split / pdf_delete_pages / pdf_reorder / pdf_rotate ---";

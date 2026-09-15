@@ -56,6 +56,27 @@ pdf_to_docx("report.pdf", "report.docx"[, {"title": "Report", "author": "SPL", "
 pdf_markdown_to_docx("# Title\n\nHello **world**", "notes.docx", {"title": "Notes"});
 ```
 
+## Converting from Word (.docx)
+
+There is no DOCX-parsing library anywhere in this dependency tree — DOCX is
+just a zip of XML parts, so these read `word/document.xml` (and
+`word/numbering.xml`, to tell bulleted from numbered lists) directly rather
+than shelling out to an external converter. Headings, paragraphs, bold/
+italic/underline runs, bullet/numbered lists, and simple tables are
+reconstructed; floating images, text boxes, headers/footers, and complex
+layouts are not — this is a text/structure-preserving conversion, not a
+visual/layout-accurate one.
+
+```spl
+// DOCX -> Markdown / plain text
+print pdf_docx_to_markdown("report.docx");
+print pdf_docx_to_text("report.docx");
+
+// DOCX -> PDF: reads the DOCX, reconstructs it as Markdown, and renders
+// that through the same Markdown -> PDF pipeline pdf_from_markdown uses.
+pdf_from_docx("report.docx", "report.pdf"[, {"title": "Report", "theme": "modern"}]);
+```
+
 ## Page operations
 
 ```spl

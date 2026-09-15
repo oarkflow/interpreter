@@ -47,6 +47,9 @@ func init() {
 		"pdf_to_markdown":      {Fn: fnToMarkdown},
 		"pdf_to_docx":          {Fn: fnToDocx},
 		"pdf_markdown_to_docx": {Fn: fnMarkdownToDocx},
+		"pdf_from_docx":        {Fn: fnFromDocx},
+		"pdf_docx_to_markdown": {Fn: fnDocxToMarkdown},
+		"pdf_docx_to_text":     {Fn: fnDocxToText},
 		"pdf_to_json":          {Fn: fnToJSON},
 		"pdf_search":           {Fn: fnSearch},
 		"pdf_extract_images":   {Fn: fnExtractImages},
@@ -950,6 +953,96 @@ func fnMarkdownToDocx(args ...object.Object) object.Object {
 		return object.NewError("pdf_markdown_to_docx: %v", err)
 	}
 	return object.TRUE
+}
+
+// fnDocxToMarkdown converts a .docx file to Markdown by reading its
+// word/document.xml part directly (see docx_import.go) — this is the
+// reverse of pdf_markdown_to_docx.
+func fnDocxToMarkdown(args ...object.Object) object.Object {
+	if len(args) != 1 {
+		return object.NewError("pdf_docx_to_markdown: wrong number of arguments. got=%d, want=1 (input)", len(args))
+	}
+	path, errObj := argString(args, 0, "path")
+	if errObj != nil {
+		return errObj
+	}
+	safe, errObj := checkRead(path)
+	if errObj != nil {
+		return errObj
+	}
+	doc, err := readDocx(safe)
+	if err != nil {
+		return object.NewError("pdf_docx_to_markdown: %v", err)
+	}
+	return &object.String{Value: doc.renderMarkdown()}
+}
+
+// fnDocxToText converts a .docx file to plain text.
+func fnDocxToText(args ...object.Object) object.Object {
+	if len(args) != 1 {
+		return object.NewError("pdf_docx_to_text: wrong number of arguments. got=%d, want=1 (input)", len(args))
+	}
+	path, errObj := argString(args, 0, "path")
+	if errObj != nil {
+		return errObj
+	}
+	safe, errObj := checkRead(path)
+	if errObj != nil {
+		return errObj
+	}
+	doc, err := readDocx(safe)
+	if err != nil {
+		return object.NewError("pdf_docx_to_text: %v", err)
+	}
+	return &object.String{Value: doc.renderPlainText()}
+}
+
+// fnFromDocx converts a .docx file to PDF. There is no DOCX layout engine
+// here (Word's page layout, fonts, and precise formatting are not
+// reconstructed) — this reads the document's text content and structure
+// (see docx_import.go), reconstructs it as Markdown, and renders that
+// through the same Markdown -> PDF pipeline pdf_from_markdown uses. Good
+// for round-tripping documents that are themselves mostly text/headings/
+// lists/tables; not a substitute for a real DOCX renderer for
+// pixel-faithful layouts, images, or complex formatting.
+func fnFromDocx(args ...object.Object) object.Object {
+	if len(args) < 2 || len(args) > 3 {
+		return object.NewError("pdf_from_docx: wrong number of arguments. got=%d, want=2 or 3 (input, output, [opts])", len(args))
+	}
+	path, errObj := argString(args, 0, "path")
+	if errObj != nil {
+		return errObj
+	}
+	out, errObj := argString(args, 1, "outputPath")
+	if errObj != nil {
+		return errObj
+	}
+	safeIn, errObj := checkRead(path)
+	if errObj != nil {
+		return errObj
+	}
+	safeOut, errObj := checkWrite(out)
+	if errObj != nil {
+		return errObj
+	}
+	doc, err := readDocx(safeIn)
+	if err != nil {
+		return object.NewError("pdf_from_docx: %v", err)
+	}
+	markdownContent := doc.renderMarkdown()
+	if strings.TrimSpace(markdownContent) == "" {
+		return object.NewError("pdf_from_docx: %s has no extractable text content", path)
+	}
+	opts := optHash(args, 2)
+	mOpts := pdflib.MarkdownOptions{
+		Title:    hashString(opts, "title", ""),
+		Author:   hashString(opts, "author", ""),
+		Theme:    hashString(opts, "theme", "classic"),
+		Margin:   hashFloat(opts, "margin", 54),
+		PageSize: hashString(opts, "page_size", "a4"),
+		TOC:      hashBool(opts, "toc", false),
+	}
+	return okOrError(pdflib.FromMarkdown(markdownContent, safeOut, mOpts))
 }
 
 func fnFromURL(args ...object.Object) object.Object {
