@@ -1,16 +1,18 @@
 // SPL PDF builtins tour (builtins/pdf, wrapping github.com/oarkflow/pdf).
 //
-// Build and run from the repository root:
-//   cd cmd/interpreter-full && go build -o ../../bin/interpreter-full . && cd ../..
-//   ./bin/interpreter-full examples/pdf_all_in_one.spl
+// Build the "full" binary (the one that blank-imports every plugin,
+// including pdf) once, then run this script from inside the examples/
+// directory - its output paths ("pdf_demo/...", "pdf_sample_logo.png") are
+// relative to examples/, not the repo root:
+//   go build -o /tmp/spl-interpreter ./cmd/interpreter
+//   cd examples && /tmp/spl-interpreter pdf_all_in_one.spl
 //
-// PDF builtins are only linked into cmd/interpreter-full (not the
-// lightweight cmd/interpreter) - see builtins/pdf/pdf.go and the root
+// PDF builtins are only linked into cmd/interpreter (the "full" binary),
+// not any lighter-weight build - see plugins/pdf/pdf.go and the root
 // README's "Quick Start" for why heavier optional dependencies stay out of
-// the lightweight binary.
+// the lightweight embeddable module.
 //
-// This script writes real files under examples/pdf_demo/ (relative to the
-// repo root, like examples/all_in_one_demo.tmp above it) and reads them
+// This script writes real files under examples/pdf_demo/ and reads them
 // back so every builtin below is exercised against a real PDF, not a
 // mock. Run it more than once - each step regenerates its own inputs.
 
@@ -164,7 +166,7 @@ pdf.set_metadata(bundle, tagged, {"Title": "SPL PDF Tour", "Author": "SPL", "Sub
 print sprintf("tagged.pdf metadata=%v", pdf.info(tagged).metadata);
 
 let stamped = outDir + "/stamped.pdf";
-pdf.stamp_image(bundle, stamped, "examples/pdf_sample_logo.png", {"x": 36, "y": 36, "width": 24, "height": 24});
+pdf.stamp_image(bundle, stamped, "pdf_sample_logo.png", {"x": 36, "y": 36, "width": 24, "height": 24});
 print sprintf("stamped.pdf pages=%d", pdf.info(stamped).pages);
 
 // -----------------------------------------------------------------------------
@@ -179,6 +181,18 @@ print sprintf("protected.pdf encrypted=%t", pdf.info(protected, "user-pw").encry
 let decrypted = outDir + "/decrypted.pdf";
 pdf.decrypt(protected, decrypted, "user-pw");
 print sprintf("decrypted.pdf encrypted=%t", pdf.info(decrypted).encrypted);
+
+// AES-256 (Standard Security Handler revision 5) - implemented end-to-end
+// in github.com/oarkflow/pdf@v0.0.4; both the owner and user password can
+// open the document, and each is independently verified below.
+let protected256 = outDir + "/protected-aes256.pdf";
+pdf.protect(bundle, protected256, "user-pw-256", "owner-pw-256", "aes-256");
+print sprintf("protected-aes256.pdf encrypted=%t (opened with user password)", pdf.info(protected256, "user-pw-256").encrypted);
+print sprintf("protected-aes256.pdf encrypted=%t (opened with owner password)", pdf.info(protected256, "owner-pw-256").encrypted);
+
+let decrypted256 = outDir + "/decrypted-aes256.pdf";
+pdf.decrypt(protected256, decrypted256, "user-pw-256");
+print sprintf("decrypted-aes256.pdf encrypted=%t", pdf.info(decrypted256).encrypted);
 
 let compressed = outDir + "/compressed.pdf";
 pdf.compress(bundle, compressed);
@@ -206,7 +220,7 @@ print sprintf("extracted %d image(s) from stamped.pdf into %s", len(extracted), 
 print "--- 7) pdf_images_to_pdf ---";
 
 let fromImages = outDir + "/from_images.pdf";
-pdf.images_to_pdf(fromImages, ["examples/pdf_sample_logo.png"], {"size": "a4", "image_fit": "contain"});
+pdf.images_to_pdf(fromImages, ["pdf_sample_logo.png"], {"size": "a4", "image_fit": "contain"});
 print sprintf("from_images.pdf pages=%d", pdf.info(fromImages).pages);
 
 // -----------------------------------------------------------------------------

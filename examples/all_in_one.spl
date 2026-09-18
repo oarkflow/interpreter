@@ -973,6 +973,11 @@ print sprintf("typeof future: %s", typeof futureVal);
 let resolved = await futureVal;
 print sprintf("await result: %d", resolved);
 
+// 44a2) Named async function *statement* — binds its name into scope just
+// like a plain `function name() {}` declaration does.
+async function asyncTriple(x) { return x * 3; }
+print sprintf("named async function: %d", await asyncTriple(7));
+
 // 44b) Async arrow function
 let asyncSquare = async (x) => x * x;
 let sq = await asyncSquare(7);
@@ -996,12 +1001,10 @@ let raceB = async function() { return "B wins"; };
 let winner = await_race([raceA(), raceB()]);
 print sprintf("await_race: %s", winner);
 
-// 44f) go_async — fire-and-forget (runs in background)
-go_async(function() {
-    // This runs concurrently; output may interleave
-    let _ = 1 + 1;
-});
-print "go_async: fired";
+// 44f) go_async — behaves like go(): runs on a new goroutine and returns
+// an awaitable Future for its result.
+let bgSum = go_async(function() { return 40 + 2; });
+print sprintf("go_async result: %d", await bgSum);
 
 // 44g) sleep builtin
 print "sleep: before";
@@ -1122,7 +1125,11 @@ print "trace/metric emitted";
 // 53) Immutable data structures
 // -----------------------------------------------------------------------------
 print "=== Immutable ===";
-let frozen = immutable({"a": 1});
+let frozen = immutable({"a": 1, "nested": {"b": 2}});
+// Reads proxy transparently to the wrapped value, including through
+// nested containers, which also stay individually frozen.
+print sprintf("frozen.a: %d", frozen.a);
+print sprintf("frozen.nested.b: %d", frozen.nested.b);
 let immResult = try {
     frozen.a = 2;
     "unexpected";
@@ -1130,6 +1137,13 @@ let immResult = try {
     e;
 };
 print immResult;
+let nestedImmResult = try {
+    frozen.nested.b = 99;
+    "unexpected";
+} catch (e) {
+    e;
+};
+print nestedImmResult;
 
 // -----------------------------------------------------------------------------
 // 54) CLI args support
@@ -1229,6 +1243,20 @@ class Employee extends Person implements Greetable {
         this.role = role;
     }
 }
+
+// Interfaces also check parameter/return types when both the interface
+// method and the implementing method declare them (untyped implementations
+// of a typed interface method are still accepted - most SPL code has no
+// annotations, and this check must not reject previously-valid classes for
+// omitting them). See examples/interface_type_mismatch_error.spl for what
+// happens when the types actually conflict.
+interface TypedGreeter {
+    greet(name: string): string;
+}
+class English implements TypedGreeter {
+    greet(name: string): string { return "Hello, " + name; }
+}
+print English().greet("world");
 let employee = Employee("Sam", "Engineer");
 print employee.greet();
 print employee.role;

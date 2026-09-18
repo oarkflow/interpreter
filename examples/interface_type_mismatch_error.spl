@@ -1,0 +1,26 @@
+// Interface signature enforcement — the failure path.
+//
+// Run: go run ./cmd/interpreter examples/interface_type_mismatch_error.spl
+//
+// Companion to the "TypedGreeter" example in examples/all_in_one.spl, which
+// shows a *correct* typed implementation. This script shows what happens
+// when an implementing method's declared parameter type conflicts with the
+// interface's: the class declaration itself fails immediately with a clear
+// error, rather than being silently accepted (the pre-fix behavior only
+// checked that a method with the right *name* existed, never its types).
+//
+// This is expected to fail - that's the point of the example. Run it and
+// check the exit code / printed error, don't expect "Tour complete".
+
+interface TypedGreeter {
+    greet(name: string): string;
+}
+
+// greet's parameter is declared `int`, but the interface requires `string`.
+// This class declaration is rejected at evaluation time, before the script
+// can do anything else with it.
+class BadGreeter implements TypedGreeter {
+    greet(name: int): string { return "hi"; }
+}
+
+print "unreachable: the class declaration above should have failed first";
