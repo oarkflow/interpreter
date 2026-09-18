@@ -2,6 +2,33 @@
 
 All notable changes to the SPL VS Code extension are documented here.
 
+## 0.3.0
+
+### Fixed
+
+- **The language server process was never killed on stop/restart/reload**,
+  because the custom stream-based `ServerOptions` only hands the client
+  library a `{reader, writer}` pair, not the underlying `ChildProcess` — the
+  library has nothing to manage lifecycle-wise beyond closing those streams.
+  Each restart (including a plain window reload) could leave a `go run
+  ./cmd/spltool lsp --stdio` process orphaned in the background. The
+  extension now tracks the spawned process itself and explicitly kills it
+  on stop, restart, and deactivate; `client.stop()` failures (e.g.
+  "Stopping server timed out") no longer prevent that cleanup or block a
+  restart.
+
+### Added
+
+- **Inline CodeLens actions on every `.spl` file**, shown above the first
+  line the same way `go.mod` shows "Check for upgrades | Upgrade direct
+  dependencies": `▶ Run`, `Evaluate Selection`, and `Restart Language
+  Server`, wired to the existing `spl.runFile` / `spl.evaluateSelection` /
+  `spl.restartLanguageServer` commands so they're one click away instead of
+  needing the command palette.
+- **`SPL: Clear Output` command.** `Run Current File` and `Evaluate
+  Selection` also now clear the SPL output channel before printing a new
+  result, instead of appending underneath every previous run.
+
 ## 0.2.0
 
 ### Fixed

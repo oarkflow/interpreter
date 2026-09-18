@@ -1,6 +1,6 @@
 import * as path from 'path';
 import * as fs from 'fs';
-import { spawn } from 'child_process';
+import { ChildProcess, spawn } from 'child_process';
 import * as vscode from 'vscode';
 import {
   LanguageClient,
@@ -10,6 +10,7 @@ import {
 } from 'vscode-languageclient/node';
 
 let client: LanguageClient | undefined;
+let serverProcess: ChildProcess | undefined;
 let output: vscode.OutputChannel;
 
 type EvaluationResult = {
@@ -28,6 +29,10 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   context.subscriptions.push(output);
 
   context.subscriptions.push(
+    vscode.languages.registerCodeLensProvider({ language: 'spl' }, new SplRunCodeLensProvider())
+  );
+
+  context.subscriptions.push(
     vscode.commands.registerCommand('spl.runFile', runCurrentFile),
     vscode.commands.registerCommand('spl.evaluateSelection', evaluateSelection),
     vscode.commands.registerCommand('spl.sessionCheckpoint', sessionCheckpoint),
@@ -40,17 +45,53 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     vscode.commands.registerCommand('spl.restartLanguageServer', async () => {
       await restartLanguageServer(context);
     }),
-    vscode.commands.registerCommand('spl.showOutput', () => output.show())
+    vscode.commands.registerCommand('spl.showOutput', () => output.show()),
+    vscode.commands.registerCommand('spl.clearOutput', () => output.clear())
   );
 
   await ensureLanguageServer(context);
 }
 
+class SplRunCodeLensProvider implements vscode.CodeLensProvider {
+  provideCodeLenses(document: vscode.TextDocument): vscode.CodeLens[] {
+    const topOfFile = new vscode.Range(0, 0, 0, 0);
+    return [
+      new vscode.CodeLens(topOfFile, {
+        title: '$(play) Run',
+        command: 'spl.runFile',
+        tooltip: 'Run this SPL file',
+      }),
+      new vscode.CodeLens(topOfFile, {
+        title: 'Evaluate Selection',
+        command: 'spl.evaluateSelection',
+        tooltip: 'Evaluate the current selection (or whole file if none)',
+      }),
+      new vscode.CodeLens(topOfFile, {
+        title: 'Restart Language Server',
+        command: 'spl.restartLanguageServer',
+        tooltip: 'Restart the SPL language server',
+      }),
+    ];
+  }
+}
+
 export async function deactivate(): Promise<void> {
   if (client) {
-    await client.stop();
+    try {
+      await client.stop();
+    } catch {
+      // Fall through to killServerProcess() below regardless of how stop() failed.
+    }
     client = undefined;
   }
+  killServerProcess();
+}
+
+function killServerProcess(): void {
+  if (serverProcess && serverProcess.exitCode === null && !serverProcess.killed) {
+    serverProcess.kill();
+  }
+  serverProcess = undefined;
 }
 
 async function startLanguageServer(context: vscode.ExtensionContext): Promise<void> {
@@ -65,7 +106,14 @@ async function startLanguageServer(context: vscode.ExtensionContext): Promise<vo
       shell: false,
       stdio: 'pipe',
     });
+    serverProcess = child;
     child.stderr.on('data', (chunk: Buffer) => output.append(chunk.toString()));
+    child.on('exit', (code, signal) => {
+      output.appendLine(`SPL language server process exited (code=${code ?? 'null'}, signal=${signal ?? 'null'})`);
+      if (serverProcess === child) {
+        serverProcess = undefined;
+      }
+    });
     return Promise.resolve({ reader: child.stdout, writer: child.stdin } satisfies StreamInfo);
   };
 
@@ -84,9 +132,15 @@ async function startLanguageServer(context: vscode.ExtensionContext): Promise<vo
 
 async function restartLanguageServer(context: vscode.ExtensionContext): Promise<void> {
   if (client) {
-    await client.stop();
+    try {
+      await client.stop();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      output.appendLine(`Failed to stop SPL language server cleanly: ${message}`);
+    }
     client = undefined;
   }
+  killServerProcess();
   await ensureLanguageServer(context);
   if (client) {
     vscode.window.setStatusBarMessage('SPL language server restarted', 2500);
@@ -144,6 +198,7 @@ async function runCurrentFile(): Promise<void> {
     return;
   }
   await editor.document.save();
+  output.clear();
   const result = await requestEvaluation(editor.document.uri, editor.document.getText());
   showEvaluation('Run Current File', result);
 }
@@ -154,6 +209,7 @@ async function evaluateSelection(): Promise<void> {
     return;
   }
   const selectionText = editor.selection.isEmpty ? editor.document.getText() : editor.document.getText(editor.selection);
+  output.clear();
   const result = await requestEvaluation(editor.document.uri, selectionText);
   showEvaluation('Evaluate Selection', result);
 }

@@ -4,8 +4,24 @@
 package builtins
 
 import (
+	"io"
+	"os"
+
 	"github.com/oarkflow/interpreter/pkg/object"
 )
+
+// runtimeOutput returns the writer that print-like builtins must use instead
+// of writing to os.Stdout directly. Hosts that capture output (e.g. the LSP
+// server's spl/evaluate, or any embedder running an untrusted script) set
+// env.Output to redirect writes away from the real process stdout; writing
+// straight to os.Stdout from a builtin bypasses that capture and, for stdio
+// transports like the LSP server, corrupts the protocol stream itself.
+func runtimeOutput(env *object.Environment) io.Writer {
+	if env != nil && env.Output != nil {
+		return env.Output
+	}
+	return os.Stdout
+}
 
 // asString extracts a string value from an object, supporting Secret types.
 func asString(arg object.Object, name string) (string, object.Object) {

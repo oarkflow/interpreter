@@ -755,9 +755,10 @@ func init() {
 			},
 		},
 		"puts": {
-			Fn: func(args ...object.Object) object.Object {
+			FnWithEnv: func(env *object.Environment, args ...object.Object) object.Object {
+				out := runtimeOutput(env)
 				for _, arg := range args {
-					fmt.Println(arg.Inspect())
+					fmt.Fprintln(out, arg.Inspect())
 				}
 				return object.NULL
 			},
@@ -1009,9 +1010,9 @@ func init() {
 			},
 		},
 		"input": {
-			Fn: func(args ...object.Object) object.Object {
+			FnWithEnv: func(env *object.Environment, args ...object.Object) object.Object {
 				if len(args) > 0 {
-					fmt.Print(args[0].Inspect())
+					fmt.Fprint(runtimeOutput(env), args[0].Inspect())
 				}
 				reader := bufio.NewReader(os.Stdin)
 				text, _ := reader.ReadString('\n')
@@ -1884,7 +1885,7 @@ func init() {
 			},
 		},
 		"printf": {
-			Fn: func(args ...object.Object) object.Object {
+			FnWithEnv: func(env *object.Environment, args ...object.Object) object.Object {
 				if len(args) < 1 {
 					return &object.String{Value: fmt.Sprintf("wrong number of arguments. got=%d, want=at least 1", len(args))}
 				}
@@ -1896,7 +1897,7 @@ func init() {
 				if ferr != nil {
 					return ferr
 				}
-				fmt.Print(out)
+				fmt.Fprint(runtimeOutput(env), out)
 				return &object.String{Value: out}
 			},
 		},
@@ -2381,9 +2382,22 @@ func init() {
 // symlinks are resolved on the parent directory instead and rejoined with
 // the final path component.
 func SanitizePathLocal(userPath string) (string, error) {
-	abs, err := filepath.Abs(userPath)
-	if err != nil {
-		return "", err
+	var abs string
+	if filepath.IsAbs(userPath) {
+		abs = userPath
+	} else if base := sandbox.ActiveSandboxBaseDir(); base != "" {
+		// Relative paths resolve against the active sandbox root (the
+		// script's own module directory during a sandboxed evaluation,
+		// e.g. the LSP server's spl/evaluate), not the host process's
+		// global working directory - the process only has one cwd, shared
+		// across every concurrently-evaluated file.
+		abs = filepath.Join(base, userPath)
+	} else {
+		var err error
+		abs, err = filepath.Abs(userPath)
+		if err != nil {
+			return "", err
+		}
 	}
 	// Clean the resolved path to remove any ".." components.
 	abs = filepath.Clean(abs)

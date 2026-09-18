@@ -11,7 +11,7 @@
 *.db-shm
 .spl-ide
 /bin/
-/examples/pdf_demo/
+pdf_demo
 .secretr-data
 /cmd/interpreter/interpreter
 /cmd/spltool-full/spltool-full

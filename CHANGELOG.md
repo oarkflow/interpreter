@@ -20,6 +20,30 @@ not yet publish tagged releases with a formal support matrix (see
 
 ### Fixed
 
+- **`SanitizePathLocal` resolved relative paths (`mkdir("pdf_demo")`,
+  `file_exists(...)`, and anything built on it, e.g. `pkg/builtins`'s and
+  `plugins/pdf`'s file-writing builtins) against the host process's global
+  working directory instead of the active sandbox root
+  (`sandbox.ActiveSandboxBaseDir()`, already set correctly to the script's
+  own module directory by `pkg/session`).** A single OS process has one
+  cwd shared across every concurrently-evaluated file, so any host that
+  evaluates a script from outside that script's own directory — the LSP
+  server chief among them, since it runs from the workspace root — resolved
+  relative paths to the wrong place and then rejected them as outside the
+  sandbox jail. `SanitizePathLocal` now resolves a relative path against
+  the active sandbox root when one is set, falling back to the process cwd
+  only outside a sandboxed evaluation (e.g. plain CLI usage from the
+  script's own directory).
+- **`printf`, `puts`, and `input`'s prompt echo wrote straight to the real
+  process `os.Stdout` instead of the running session's configured output
+  (`env.Output`).** For any host that captures output — most critically the
+  `spltool lsp --stdio` server, whose real stdout *is* the JSON-RPC
+  transport — this corrupted the protocol stream mid-message and manifested
+  as the VS Code extension logging `Header must provide a Content-Length
+  property.` and hanging until the connection was torn down. `print`
+  already respected `env.Output`; these three builtins now do too (via the
+  existing `FnWithEnv` mechanism), falling back to `os.Stdout` only when no
+  session output is configured (e.g. plain CLI usage).
 - **`immutable()` values could panic or return misleading errors on read.**
   Two independent, non-interoperable `ImmutableValue` types existed (one in
   `pkg/object`, an unexported duplicate in `pkg/builtins`); reads through a

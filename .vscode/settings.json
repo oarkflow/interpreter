@@ -1,0 +1,14 @@
+{
+  // Points at the "full" build (every optional plugin builtin linked in,
+  // see cmd/spltool-full) so completion/hover/diagnostics and Run
+  // recognize plugin functions like pdf_quick. Build once with:
+  //   go -C cmd/spltool-full build -o spltool-full .
+  "spl.toolPath": "cmd/spltool-full/spltool-full",
+  "spl.serverMode": "toolPath",
+
+  // This workspace is the interpreter's own repo: the example scripts
+  // under examples/ intentionally exercise async/exec/db/etc. as
+  // demonstrations, so the "untrusted" sandbox default (meant for running
+  // arbitrary third-party scripts) just gets in the way here.
+  "spl.evaluation.profile": "trusted"
+}
