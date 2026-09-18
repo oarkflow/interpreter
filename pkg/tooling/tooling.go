@@ -180,6 +180,46 @@ var knownStdModules = func() map[string]struct{} {
 	return out
 }()
 
+// isKnownStdModule reports whether path names a std/plugin module, checking
+// both the static baseline above and pkg/eval's runtime registry (populated
+// by the root interpreter package's RegisterStdBuiltinModuleWithPrefix for
+// every module - including plugin-only ones like "secretr" or "pdf" that
+// predate/postdate this file's static list). The static map stays as a
+// baseline so pkg/tooling's own tests (which don't import the root package,
+// and so never trigger that registration) still recognize the modules they
+// exercise; the runtime registry is what makes newly-added plugin modules
+// resolve without needing a matching edit here.
+func isKnownStdModule(path string) bool {
+	if _, ok := knownStdModules[path]; ok {
+		return true
+	}
+	if _, ok := eval.StdModules()[path]; ok {
+		return true
+	}
+	return false
+}
+
+// stdModuleExports returns the export names for a std/plugin module path,
+// preferring the static baseline (kept for stable, hand-curated ordering)
+// and falling back to pkg/eval's runtime registry - see isKnownStdModule.
+func stdModuleExports(path string) ([]string, bool) {
+	if names, ok := knownStdModuleExports[path]; ok {
+		return names, true
+	}
+	if info, ok := eval.StdModules()[path]; ok {
+		names := make([]string, len(info.BuiltinNames))
+		for i, full := range info.BuiltinNames {
+			if info.Prefix != "" && strings.HasPrefix(full, info.Prefix) {
+				names[i] = strings.TrimPrefix(full, info.Prefix)
+			} else {
+				names[i] = full
+			}
+		}
+		return names, true
+	}
+	return nil, false
+}
+
 func CheckSource(path, src string) Report {
 	return analyzeSource(path, src, false)
 }
@@ -988,7 +1028,7 @@ func (c *staticChecker) checkImport(s *ast.ImportStatement) {
 	}
 	exports := map[string]Symbol{}
 	if isStd {
-		if stdExports, ok := knownStdModuleExports[sl.Value]; ok {
+		if stdExports, ok := stdModuleExports(sl.Value); ok {
 			for _, name := range stdExports {
 				exports[name] = Symbol{Name: name, Kind: "function"}
 			}
@@ -1032,7 +1072,7 @@ func resolveImportPathForTooling(importPath, sourcePath string) (string, bool, b
 	if importPath == "" {
 		return "", false, false
 	}
-	if _, ok := knownStdModules[importPath]; ok {
+	if isKnownStdModule(importPath) {
 		return "", true, true
 	}
 
@@ -1041,7 +1081,7 @@ func resolveImportPathForTooling(importPath, sourcePath string) (string, bool, b
 		moduleDir = filepath.Dir(sourcePath)
 	}
 	if resolved, matched, err := pkgmgr.ResolveManifestImport(importPath, moduleDir, sourcePath); err == nil && matched {
-		if _, ok := knownStdModules[importPath]; ok {
+		if isKnownStdModule(importPath) {
 			return "", true, true
 		}
 		if pathExists(resolved) {

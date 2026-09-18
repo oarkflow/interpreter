@@ -82,13 +82,21 @@ func RegisterStdBuiltinModuleWithPrefix(name, prefix string, builtinNames ...str
 		return fmt.Errorf("std module name cannot be empty")
 	}
 	stdModules.mu.Lock()
-	defer stdModules.mu.Unlock()
 	stdModules.builtinItems[name] = append([]string(nil), builtinNames...)
 	if prefix != "" {
 		stdModules.prefixes[name] = prefix
 	} else {
 		delete(stdModules.prefixes, name)
 	}
+	stdModules.mu.Unlock()
+	// Mirror into pkg/eval's registry so static-analysis tooling
+	// (pkg/tooling, used by spltool/spltool-full's LSP) can recognize
+	// `import "<name>" ...;` without a hand-maintained, easily-stale
+	// duplicate of this module list - pkg/tooling cannot import this root
+	// package directly (it's imported by pkg/repl, which this package
+	// itself imports, which would be a cycle), so pkg/eval is the shared
+	// lower-level home both sides can reach.
+	eval.RegisterStdModule(name, prefix, builtinNames)
 	return nil
 }
 

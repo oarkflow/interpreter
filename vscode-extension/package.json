@@ -2,7 +2,7 @@
   "name": "spl-vscode",
   "displayName": "SPL Language Support",
   "description": "Syntax highlighting, language server features, and safe manual evaluation for SPL files.",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "publisher": "oarkflow",
   "engines": {
     "vscode": "^1.86.0"

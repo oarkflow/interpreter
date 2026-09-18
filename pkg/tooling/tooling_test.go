@@ -272,6 +272,33 @@ func TestCheckSourceAcceptsBuiltinModuleImports(t *testing.T) {
 	}
 }
 
+// TestCheckSourceRecognizesRuntimeRegisteredPluginModules is a regression
+// test for plugin-namespaced imports (e.g. `import "secretr" as secretr;`)
+// being reported as "import path ... was not found" / "undefined
+// identifier" even though the module is genuinely registered - just not in
+// this package's static knownStdModuleExports baseline, which predates the
+// plugin system and was never updated for modules like secretr/pdf/money/
+// phone/ip/wuid/shamir/naturaldate/rules/tcpguard/server/lua/metadata/
+// securetoken. isKnownStdModule/stdModuleExports also consult
+// eval.StdModules(), the runtime registry the root interpreter package
+// populates for every module (via RegisterStdBuiltinModuleWithPrefix) -
+// this simulates that registration directly, since this package's own
+// tests don't import the root package.
+func TestCheckSourceRecognizesRuntimeRegisteredPluginModules(t *testing.T) {
+	eval.RegisterStdModule("a_plugin_module_not_in_the_static_list", "aplug_", []string{"aplug_get", "aplug_set"})
+
+	src := strings.Join([]string{
+		`import "a_plugin_module_not_in_the_static_list" as aplug;`,
+		`print aplug.get;`,
+	}, "\n")
+	report := CheckSource("sample.spl", src)
+	for _, diag := range report.Diagnostics {
+		if diag.Code == "missing-import" || diag.Code == "undefined" {
+			t.Fatalf("runtime-registered plugin module import should be recognized: %#v", diag)
+		}
+	}
+}
+
 func TestStdModuleHoverExplainsPurpose(t *testing.T) {
 	src := `import "std/math" as math;
 print math.median([1, 2, 3]);`
