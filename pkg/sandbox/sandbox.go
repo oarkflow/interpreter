@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -94,7 +95,7 @@ type SandboxConfig struct {
 // on trusted scripts should set ExecOptions.Timeout or SandboxConfig.Timeout
 // explicitly (e.g. via --timeout on the CLI).
 func DefaultExecSandboxConfig() SandboxConfig {
-	return SandboxConfig{
+	cfg := SandboxConfig{
 		Enabled:       ParseBoolEnvDefaultFn("SPL_SANDBOX", true),
 		StrictMode:    false,
 		ProtectHost:   false,
@@ -103,6 +104,34 @@ func DefaultExecSandboxConfig() SandboxConfig {
 		MaxSteps:      2_000_000,
 		MaxHeapMB:     256,
 		Timeout:       0,
+	}
+	applyEnvSecurityHardening(&cfg)
+	return cfg
+}
+
+// applyEnvSecurityHardening layers SPL_SECURITY_MODE/SPL_PROTECT_HOST (and,
+// once either is set, a default-deny SPL_ALLOW_ENV_WRITE) on top of cfg's
+// defaults. This is the fix for a previously-documented gap: a default
+// trusted-profile run (no explicit Profile, no explicit ExecOptions.Security)
+// used to hardcode StrictMode/ProtectHost/AllowEnvWrite regardless of these
+// env vars, since DefaultExecSandboxConfig fed straight into
+// sandboxSecurityPolicy without ever consulting them - so an operator setting
+// SPL_PROTECT_HOST=1 on a default run had no effect. It mirrors (without
+// importing, to avoid a package cycle) the same two env vars
+// pkg/security.LoadSecurityPolicyFromEnv reads. An explicit
+// ExecOptions.Security or SandboxConfig passed by the embedder is applied
+// after this and is never overridden by it.
+func applyEnvSecurityHardening(cfg *SandboxConfig) {
+	strict := strings.EqualFold(strings.TrimSpace(os.Getenv("SPL_SECURITY_MODE")), "strict")
+	protectHost := ParseBoolEnvDefaultFn("SPL_PROTECT_HOST", false)
+	if strict {
+		cfg.StrictMode = true
+	}
+	if protectHost {
+		cfg.ProtectHost = true
+	}
+	if strict || protectHost {
+		cfg.AllowEnvWrite = ParseBoolEnvDefaultFn("SPL_ALLOW_ENV_WRITE", false)
 	}
 }
 

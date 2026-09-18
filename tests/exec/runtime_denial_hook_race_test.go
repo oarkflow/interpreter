@@ -9,45 +9,44 @@ import (
 	"github.com/oarkflow/interpreter/pkg/security"
 )
 
-// TestDenialHookConcurrentSetAndTrigger is a regression guard for the data
-// race that used to exist on security's process-wide denial hook: it was
-// previously a bare `var DenialHook func(category, detail string)` written
-// directly from Runtime construction (see NewRuntime in runtime.go) and read
-// from every Check*Allowed denial path (security.notifyDenial), with no
-// synchronization between the two. Under `go test -race` that produced a
-// genuine data race (reproduced during development of this fix).
+// TestDenialHookConcurrentSetAndTrigger is a regression guard covering two
+// generations of the same underlying state:
 //
-// The fix (security.SetDenialHook / security.GetDenialHook, backed by an
-// atomic.Pointer) does not change the documented "last write wins,
-// process-wide" semantics: many goroutines may still race to decide *which*
-// hook is active, and that race is fine/expected. What must never happen is
-// a *data* race on the underlying storage, or a panic from a torn/partial
-// read. This test spawns many goroutines concurrently calling
-// SetDenialHook with distinct hooks (exercised via constructing distinct
-// Runtimes with distinct Observability.OnPolicyDenied callbacks, the real
-// call path) alongside many goroutines concurrently triggering policy
-// denials that read the current hook (via ExecWithOptions with a
-// StrictMode policy that denies exec), and asserts the race detector finds
-// nothing and nothing panics.
+//  1. Originally, security's denial hook was a bare
+//     `var DenialHook func(category, detail string)` written directly from
+//     Runtime construction (see NewRuntime in runtime.go) and read from
+//     every Check*Allowed denial path (security.notifyDenial), with no
+//     synchronization between the two - a genuine data race under
+//     `go test -race`. That was fixed with security.SetDenialHook/
+//     GetDenialHook, backed by an atomic.Pointer.
+//  2. NewRuntime no longer installs a process-wide hook at all: each
+//     Runtime's Observability.OnPolicyDenied is now threaded per-call
+//     through security.WithDenialHookOverride (see withDenialHookOverride
+//     in interpreter.go), scoped to that Runtime's own Exec/ExecFile calls,
+//     so concurrently-executing Runtimes with distinct hooks each reliably
+//     observe only their own denials instead of colliding on "last write
+//     wins" process-wide state (see
+//     TestConcurrentExecWithDistinctDenialHooksDoNotCrossFire for the
+//     dedicated isolation test).
+//
+// This test spawns many goroutines concurrently constructing distinct
+// Runtimes with distinct Observability.OnPolicyDenied callbacks and calling
+// rt.Exec with a StrictMode policy that denies exec, asserting the race
+// detector finds nothing, nothing panics, and every Runtime's own hook
+// fires for its own denials.
 func TestDenialHookConcurrentSetAndTrigger(t *testing.T) {
-	t.Cleanup(func() { security.SetDenialHook(nil) })
-
-	const setters = 25
-	const triggers = 25
+	const runtimes = 25
 	const itersPerGoroutine = 20
 
 	var wg sync.WaitGroup
 	var hooksFired int64
 
-	// Goroutines that concurrently construct Runtimes with distinct denial
-	// hooks, each installing itself as the process-wide hook via
-	// security.SetDenialHook (through NewRuntime's real code path).
-	for i := 0; i < setters; i++ {
+	for i := 0; i < runtimes; i++ {
 		wg.Add(1)
 		go func(id int) {
 			defer wg.Done()
 			for j := 0; j < itersPerGoroutine; j++ {
-				_, err := NewRuntime(RuntimeOptions{
+				rt, err := NewRuntime(RuntimeOptions{
 					Profile: "trusted",
 					Security: &SecurityPolicy{
 						StrictMode: true,
@@ -62,32 +61,16 @@ func TestDenialHookConcurrentSetAndTrigger(t *testing.T) {
 					t.Errorf("NewRuntime failed: %v", err)
 					return
 				}
+				_, _ = rt.Exec(`exec("echo", "hi")`, nil)
 			}
 		}(i)
 	}
 
-	// Goroutines that concurrently trigger policy denials (which read the
-	// current process-wide hook via security.notifyDenial internally).
-	for i := 0; i < triggers; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for j := 0; j < itersPerGoroutine; j++ {
-				_, _ = ExecWithOptions(`exec("echo", "hi")`, nil, ExecOptions{
-					Security: &SecurityPolicy{StrictMode: true},
-				})
-			}
-		}()
-	}
-
 	wg.Wait()
 
-	// No strict assertion on the exact count (which hook "wins" any given
-	// race is unspecified/last-write-wins by design), just that triggering
-	// denials concurrently with hook swaps didn't panic and at least some
-	// hook invocations were observed.
-	if atomic.LoadInt64(&hooksFired) == 0 {
-		t.Fatalf("expected at least one denial hook invocation, got 0")
+	want := int64(runtimes * itersPerGoroutine)
+	if got := atomic.LoadInt64(&hooksFired); got != want {
+		t.Fatalf("expected every Runtime's own denial hook to fire exactly once per Exec call (got %d, want %d) - each Runtime's hook must be isolated to its own calls, not colliding with concurrent Runtimes", got, want)
 	}
 }
 

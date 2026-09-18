@@ -15,15 +15,10 @@ This table will be updated once tagged releases begin.
 
 ## Reporting a Vulnerability
 
-**Placeholder — maintainer to fill in a real contact before publishing this
-policy externally.** Until then, please report suspected vulnerabilities
-using one of the following:
-
-- Open a [GitHub Security Advisory](https://github.com/oarkflow/interpreter/security/advisories/new)
-  on this repository (preferred — keeps the report private until a fix is
-  available).
-- Or email **security@REPLACE-ME.example** (placeholder address — replace
-  with a monitored maintainer/security contact before relying on this).
+Please report suspected vulnerabilities privately by opening a
+[GitHub Security Advisory](https://github.com/oarkflow/interpreter/security/advisories/new)
+on this repository — this keeps the report private until a fix is available
+and is the preferred and currently only reporting channel for this project.
 
 Please do not open a public GitHub issue for suspected vulnerabilities.
 

@@ -669,9 +669,32 @@ func evalClassStatement(node *ast.ClassStatement, env *object.Environment) objec
 		if !ok {
 			return object.NewError("%s is not an interface", ifaceIdent.Name)
 		}
-		for methodName := range iface.Methods {
-			if _, ok := classObj.GetMethod(methodName); !ok {
+		for methodName, ifaceMethod := range iface.Methods {
+			method, ok := classObj.GetMethod(methodName)
+			if !ok {
 				return object.NewError("class %s does not implement method '%s' required by interface %s", classObj.Name, methodName, ifaceIdent.Name)
+			}
+			if len(method.Parameters) != len(ifaceMethod.Parameters) {
+				return object.NewError("class %s method '%s' has %d parameter(s), interface %s requires %d", classObj.Name, methodName, len(method.Parameters), ifaceIdent.Name, len(ifaceMethod.Parameters))
+			}
+			for i, wantRef := range ifaceMethod.ParamTypeRefs {
+				var haveRef *ast.TypeRef
+				if i < len(method.ParamTypes) {
+					haveRef = ast.ParseTypeRef(method.ParamTypes[i])
+				}
+				if !typeRefsCompatible(wantRef, haveRef) {
+					wantType := ""
+					if i < len(ifaceMethod.ParamTypes) {
+						wantType = ifaceMethod.ParamTypes[i]
+					}
+					return object.NewError("class %s method '%s' parameter %d type mismatch: interface %s requires %s", classObj.Name, methodName, i+1, ifaceIdent.Name, wantType)
+				}
+			}
+			if ifaceMethod.ReturnTypeRef != nil {
+				haveRef := ast.ParseTypeRef(method.ReturnType)
+				if !typeRefsCompatible(ifaceMethod.ReturnTypeRef, haveRef) {
+					return object.NewError("class %s method '%s' return type mismatch: interface %s requires %s", classObj.Name, methodName, ifaceIdent.Name, ifaceMethod.ReturnType)
+				}
 			}
 		}
 	}
@@ -965,6 +988,14 @@ func evalCallExpression(node *ast.CallExpression, env *object.Environment) objec
 	return finalizeCallResult(ApplyFunction(function, args, env, node), node, env)
 }
 
+// FinalizeCallResult is the exported form of finalizeCallResult, used by the
+// bytecode VM's OpCall handler so a call compiled through it accumulates
+// call-stack frames on error exactly like the tree walker's evalCallExpression
+// does (see the bytecode.FinalizeCallResultFn wiring in interpreter.go).
+func FinalizeCallResult(result object.Object, node *ast.CallExpression, env *object.Environment) object.Object {
+	return finalizeCallResult(result, node, env)
+}
+
 func finalizeCallResult(result object.Object, node *ast.CallExpression, env *object.Environment) object.Object {
 	if runtimeErr, ok := result.(*object.Error); ok {
 		frame := callFrameFromExpression(node.Function, env, node.Line, node.Column)
@@ -1058,8 +1089,16 @@ func runProgramStatement(statement ast.Statement, env *object.Environment) objec
 		return BytecodeRunFn(entry.compiled, env)
 	}
 
+	// LetStatement/PrintStatement are excluded here deliberately: the tree
+	// walker already has dedicated fast paths for them, so there is little
+	// to gain from bytecode compilation and every miss would cost a
+	// pointless compile attempt. ExpressionStatement is NOT excluded - it is
+	// the only node type through which the VM's OpCall/OpJump* support
+	// (call expressions, `if` expressions, short-circuit `&&`/`||`) is ever
+	// reachable from a real program, since those all parse as
+	// ExpressionStatement at the top level.
 	switch statement.(type) {
-	case *ast.LetStatement, *ast.ExpressionStatement, *ast.PrintStatement:
+	case *ast.LetStatement, *ast.PrintStatement:
 		return Eval(statement, env)
 	}
 
@@ -1653,8 +1692,16 @@ func evalIndexExpression(left, index object.Object) object.Object {
 }
 
 func evalArrayIndexExpression(array, index object.Object) object.Object {
-	arrayObject := array.(*object.Array)
-	idx := index.(*object.Integer).Value
+	array = unwrapComparable(array)
+	arrayObject, ok := array.(*object.Array)
+	if !ok {
+		return object.NewError("index operator not supported: %s", array.Type())
+	}
+	idxObj, ok := index.(*object.Integer)
+	if !ok {
+		return object.NewError("array index must be an integer, got %s", index.Type())
+	}
+	idx := idxObj.Value
 	max := int64(len(arrayObject.Elements) - 1)
 	if idx < 0 || idx > max {
 		return object.NULL
@@ -1701,7 +1748,11 @@ func evalHashLiteral(node *ast.HashLiteral, env *object.Environment) object.Obje
 }
 
 func evalHashIndexExpression(hash, index object.Object) object.Object {
-	hashObject := hash.(*object.Hash)
+	hash = unwrapComparable(hash)
+	hashObject, ok := hash.(*object.Hash)
+	if !ok {
+		return object.NewError("index operator not supported: %s", hash.Type())
+	}
 	key, ok := index.(object.Hashable)
 	if !ok {
 		return object.NewError("unusable as hash key: %s", index.Type())

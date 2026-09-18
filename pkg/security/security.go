@@ -111,6 +111,39 @@ func WithSecurityPolicyOverride(policy *SecurityPolicy, fn func() (any, error)) 
 // scoped (non-global) mechanism.
 var denialHook atomic.Pointer[func(category, detail string)]
 
+// denialHookOverride is a per-call scoped denial hook, threaded through
+// WithDenialHookOverride exactly like policyOverride is threaded through
+// WithSecurityPolicyOverride above. Unlike the process-wide denialHook
+// (SetDenialHook/GetDenialHook), a value installed here is only observed by
+// denials that occur during the WithDenialHookOverride call that installed
+// it, so multiple concurrently-executing Runtimes with distinct
+// Observability.OnPolicyDenied hooks each reliably see only their own
+// denials instead of colliding on "last write wins" process-wide state.
+var denialHookOverride struct {
+	mu      sync.Mutex
+	current atomic.Pointer[func(category, detail string)]
+}
+
+// WithDenialHookOverride temporarily installs hook as the active
+// per-call denial hook for the duration of fn(), then restores whatever was
+// active before (mirroring WithSecurityPolicyOverride's mutex-serialized
+// swap-and-restore shape). If hook is nil, fn runs with no change - denials
+// during fn() then fall back to the process-wide hook installed via
+// SetDenialHook, if any.
+func WithDenialHookOverride(hook func(category, detail string), fn func() (any, error)) (any, error) {
+	if hook == nil {
+		return fn()
+	}
+	denialHookOverride.mu.Lock()
+	defer denialHookOverride.mu.Unlock()
+
+	prev := denialHookOverride.current.Load()
+	denialHookOverride.current.Store(&hook)
+	defer denialHookOverride.current.Store(prev)
+
+	return fn()
+}
+
 // SetDenialHook installs fn as the process-wide denial hook, invoked whenever
 // a Check*Allowed function (or ExitAllowed/EnvWriteAllowed/EnvReadAllowed)
 // denies an operation. category is one of the Capability* constants (or a
@@ -143,6 +176,10 @@ func GetDenialHook() func(category, detail string) {
 }
 
 func notifyDenial(category, detail string) {
+	if p := denialHookOverride.current.Load(); p != nil {
+		(*p)(category, detail)
+		return
+	}
 	if hook := GetDenialHook(); hook != nil {
 		hook(category, detail)
 	}

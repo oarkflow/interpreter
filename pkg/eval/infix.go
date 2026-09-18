@@ -418,6 +418,24 @@ func valueMatchesTypeName(val object.Object, typeName string) bool {
 	return valueMatchesTypeRef(val, ast.ParseTypeRef(typeName))
 }
 
+// typeRefsCompatible reports whether an implementing method's declared type
+// (have) satisfies an interface method's declared type (want), used to
+// enforce interface signature conformance (see evalClassStatement). It is
+// intentionally permissive when either side has no annotation, since most
+// SPL code is untyped and this check must not reject previously-valid
+// classes just for omitting annotations the interface didn't require them to
+// have.
+func typeRefsCompatible(want, have *ast.TypeRef) bool {
+	if want == nil || have == nil {
+		return true
+	}
+	wantName := strings.ToLower(strings.TrimSpace(want.Name))
+	if wantName == "any" || wantName == "object" {
+		return true
+	}
+	return strings.EqualFold(want.String(), have.String())
+}
+
 func valueMatchesTypeRef(val object.Object, ref *ast.TypeRef) bool {
 	if ref == nil {
 		return true

@@ -223,6 +223,15 @@ func (p *Parser) parseStatement() ast.Statement {
 			return p.parseFunctionDeclaration()
 		}
 		return p.parseExpressionStatement()
+	case token.ASYNC:
+		// Named async function declaration: async function foo(...) { ... }
+		// Must bind foo the same way a plain `function foo(){}` declaration
+		// does; without this, evaluating a bare FunctionLiteral never calls
+		// env.Set, so the name silently never enters scope.
+		if p.peekTokenIs(token.FUNCTION) {
+			return p.parseAsyncFunctionDeclaration()
+		}
+		return p.parseExpressionStatement()
 	case token.INIT:
 		return p.parseInitStatement()
 	case token.ABSTRACT:
@@ -2203,6 +2212,32 @@ func (p *Parser) parseFunctionDeclaration() ast.Statement {
 
 	fn := &ast.FunctionLiteral{Name: name, Parameters: params, ParamTypes: paramTypes, ParamTypeRefs: parseTypeRefs(paramTypes), Defaults: defaults, HasRest: hasRest, ReturnType: returnType, ReturnTypeRef: ast.ParseTypeRef(returnType), Body: body}
 	return &ast.LetStatement{Name: name, Names: []*ast.Identifier{name}, Value: fn}
+}
+
+// parseAsyncFunctionDeclaration parses `async function foo(...) { ... }` as a
+// statement. curToken is token.ASYNC, peekToken is token.FUNCTION.
+func (p *Parser) parseAsyncFunctionDeclaration() ast.Statement {
+	p.nextToken() // advance to FUNCTION
+
+	if !p.peekTokenIs(token.IDENT) {
+		// Anonymous async function used as a statement, e.g.
+		// `async function() { ... }` with no name to bind.
+		lit := p.parseFunctionLiteral()
+		if fl, ok := lit.(*ast.FunctionLiteral); ok {
+			fl.IsAsync = true
+		}
+		return &ast.ExpressionStatement{Expression: lit}
+	}
+
+	stmt := p.parseFunctionDeclaration()
+	letStmt, ok := stmt.(*ast.LetStatement)
+	if !ok {
+		return stmt
+	}
+	if fn, ok := letStmt.Value.(*ast.FunctionLiteral); ok {
+		fn.IsAsync = true
+	}
+	return letStmt
 }
 
 func (p *Parser) parseTypeName() string {

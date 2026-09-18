@@ -37,15 +37,8 @@ import (
 )
 
 // ---------------------------------------------------------------------------
-// ImmutableValue / GeneratorValue
+// GeneratorValue
 // ---------------------------------------------------------------------------
-
-type ImmutableValue struct {
-	inner object.Object
-}
-
-func (i *ImmutableValue) Type() object.ObjectType { return i.inner.Type() }
-func (i *ImmutableValue) Inspect() string         { return i.inner.Inspect() }
 
 type GeneratorValue struct {
 	elements []object.Object
@@ -106,6 +99,13 @@ var telemetryState = struct {
 // Helper functions
 // ---------------------------------------------------------------------------
 
+// deepImmutableClone recursively wraps arrays/hashes (and only arrays/
+// hashes) in object.ImmutableValue so every nesting level's *mutation* path
+// is guarded. Scalar leaves are returned unwrapped: they're already
+// immutable by value in this language, and wrapping them would break the
+// documented "reads transparently proxy to the wrapped value" contract
+// (docs/features/18-ownership-and-immutability.md) for `frozen.a`/`frozen[i]`
+// style reads, which look up the raw pair/element value directly.
 func deepImmutableClone(obj object.Object) object.Object {
 	switch v := obj.(type) {
 	case *object.Array:
@@ -113,15 +113,15 @@ func deepImmutableClone(obj object.Object) object.Object {
 		for i, el := range v.Elements {
 			elements[i] = deepImmutableClone(el)
 		}
-		return &ImmutableValue{inner: &object.Array{Elements: elements}}
+		return &object.ImmutableValue{Inner: &object.Array{Elements: elements}}
 	case *object.Hash:
 		pairs := make(map[object.HashKey]object.HashPair, len(v.Pairs))
 		for k, pair := range v.Pairs {
 			pairs[k] = object.HashPair{Key: pair.Key, Value: deepImmutableClone(pair.Value)}
 		}
-		return &ImmutableValue{inner: &object.Hash{Pairs: pairs}}
+		return &object.ImmutableValue{Inner: &object.Hash{Pairs: pairs}}
 	default:
-		return &ImmutableValue{inner: v}
+		return v
 	}
 }
 
@@ -2306,10 +2306,11 @@ func init() {
 				// with the main goroutine.
 				goEnv := object.NewEnclosedEnvironment(env)
 				goEnv.RuntimeLimits = env.RuntimeLimits.CloneForConcurrentExecution()
+				ch := make(chan object.Object, 1)
 				go func() {
-					eval.ApplyFn(fn, fnArgs, goEnv, nil)
+					ch <- eval.ApplyFn(fn, fnArgs, goEnv, nil)
 				}()
-				return object.NULL
+				return &object.Future{Ch: ch}
 			},
 		},
 

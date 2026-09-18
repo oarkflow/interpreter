@@ -81,7 +81,7 @@ abstract class Shape {
 An `abstract` class cannot be instantiated directly; an `abstract` method
 declares a required override without providing an implementation.
 
-## Interfaces (runtime metadata)
+## Interfaces (enforced at class-declaration time)
 
 ```spl
 interface Greetable {
@@ -93,9 +93,19 @@ class Person implements Greetable {
 }
 ```
 
-Interfaces are **not enforced** by the runtime — `implements` records
-metadata (useful for tooling/documentation and reflection) but a class that
-omits a required method is not statically or dynamically rejected.
+`implements` is checked when the class is declared, not just recorded as
+metadata: a class missing a required method is rejected immediately with a
+runtime error (`class X does not implement method 'greet' required by
+interface Greetable`). If the interface method declares parameter/return
+types and the implementing method also declares types, those are checked for
+a match too (parameter count and type mismatches, return type mismatches);
+an untyped implementation of a typed interface method is still accepted,
+since most SPL code has no type annotations and this check must not reject
+previously-valid classes just for omitting them. See
+`TestInterfaceEnforcementChecksSignatures` in
+`pkg/eval/language_gaps_test.go` for the exact rules. This is a
+declaration-time check only — it does not re-validate if methods are later
+mutated on the class object after declaration.
 
 ## `private` fields
 

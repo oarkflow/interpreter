@@ -289,6 +289,17 @@ func CapabilityPreset(name string, moduleDir string) (*SecurityPolicy, SandboxCo
 
 	switch name {
 	case "trusted":
+		// Sync policy with cfg's already-applied env hardening (see
+		// sandbox.applyEnvSecurityHardening, invoked inside
+		// DefaultExecSandboxConfig above): a default trusted-profile run
+		// used to hardcode StrictMode=false/ProtectHost=false regardless of
+		// SPL_SECURITY_MODE/SPL_PROTECT_HOST, since this policy value (not
+		// cfg) is what capability checks actually enforce. An explicit
+		// ExecOptions.Security passed by the embedder bypasses
+		// CapabilityPreset entirely and is unaffected by this.
+		policy.StrictMode = cfg.StrictMode
+		policy.ProtectHost = cfg.ProtectHost
+		policy.AllowEnvWrite = cfg.AllowEnvWrite
 		return policy, cfg, nil
 	case "untrusted", "readonly":
 		cfg.StrictMode = true

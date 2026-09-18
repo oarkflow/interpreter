@@ -121,9 +121,12 @@ spltool files dedupe ./photos
 spltool files move|copy <src> <dst> [--apply]
 spltool files remove <path> [--recursive] [--apply]
 spltool archive compress ./docs backup.zip --format zip --apply
+spltool archive compress ./docs secret.zip --format zip --password 'hunter2' --apply
 spltool archive extract backup.zip ./restore --apply
+spltool archive extract secret.zip ./restore --password 'hunter2' --apply
 spltool archive list backup.zip
 spltool image convert ./photos ./web --to png --apply
+spltool image convert ./photos ./web --to webp --apply  # lossless only, no lossy encoder
 spltool image resize ./photo.jpg ./photo-small.jpg --width 1200 --apply
 spltool image crop|thumbnail|info ...
 spltool secrets generate --length 24 [--token]

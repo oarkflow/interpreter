@@ -21,9 +21,20 @@ var EvalPrefixExpressionFn func(operator string, right object.Object) object.Obj
 // running the bytecode VM.
 var EvalInfixExpressionFn func(operator string, left, right object.Object) object.Object
 
-// ApplyFunctionFn calls a function object with arguments. Must be set before
-// running the bytecode VM.
-var ApplyFunctionFn func(fn object.Object, args []object.Object, env *object.Environment) object.Object
+// ApplyFunctionFn calls a function object with arguments. call is the
+// originating *ast.CallExpression (nil if the caller has none), forwarded so
+// call-stack frames can be built the same way the tree walker builds them.
+// Must be set before running the bytecode VM.
+var ApplyFunctionFn func(fn object.Object, args []object.Object, env *object.Environment, call *ast.CallExpression) object.Object
+
+// FinalizeCallResultFn wraps a call's result the same way the tree walker's
+// evalCallExpression does via finalizeCallResult: if the result is an error,
+// it appends a call-stack frame for `call` (deduplicating a frame
+// ApplyFunctionFn may already have added for a validation failure). Without
+// this, a bytecode-compiled call loses one level of stack-trace detail
+// compared to the same call evaluated by the tree walker. May be nil, in
+// which case OpCall skips this step.
+var FinalizeCallResultFn func(result object.Object, call *ast.CallExpression, env *object.Environment) object.Object
 
 // BuiltinLookupFn looks up a builtin by name. Returns (builtin, ok).
 var BuiltinLookupFn func(name string, env *object.Environment) (object.Object, bool)
@@ -48,6 +59,19 @@ const (
 	OpReturn
 	OpNull
 	OpPrint
+	// OpJump unconditionally sets ip to Arg (an instruction index).
+	OpJump
+	// OpJumpIfFalse pops the top of stack and, if it is falsy (per
+	// object.IsTruthy), sets ip to Arg; otherwise falls through. Used to
+	// compile `if` expressions and short-circuiting `&&`/`||`.
+	OpJumpIfFalse
+	// OpJumpIfTrue pops the top of stack and, if it is truthy, sets ip to
+	// Arg; otherwise falls through. Used for `||`'s short-circuit path.
+	OpJumpIfTrue
+	// OpToBool pops the top of stack and pushes object.TRUE/object.FALSE per
+	// object.IsTruthy, matching the boolean-coercing (not value-returning)
+	// semantics of SPL's `&&`/`||` (see pkg/eval/infix.go).
+	OpToBool
 )
 
 // ---------------------------------------------------------------------------
@@ -58,6 +82,13 @@ type Instruction struct {
 	Op  OpCode
 	Arg int
 	S   string
+	// Call carries the original *ast.CallExpression for OpCall instructions,
+	// so ApplyFunctionFn can build the same call-stack frame the tree walker
+	// would (see extendFunctionEnv/callFrameFromExpression in
+	// pkg/eval/apply.go) - without it, errors from a bytecode-compiled call
+	// silently lose one level of stack-trace detail. Unused by every other
+	// opcode.
+	Call *ast.CallExpression
 }
 
 type BytecodeProgram struct {
@@ -104,6 +135,40 @@ func (c *Compiler) addConstant(obj object.Object) int {
 	idx := len(c.program.Constants)
 	c.program.Constants = append(c.program.Constants, obj)
 	return idx
+}
+
+// emitJump emits a jump instruction (op must be OpJump, OpJumpIfFalse, or
+// OpJumpIfTrue) with a placeholder target, returning its index so the
+// target can be filled in later via patchJump once the jump destination is
+// known.
+func (c *Compiler) emitJump(op OpCode) int {
+	pos := len(c.program.Instructions)
+	c.emit(op, -1, "")
+	return pos
+}
+
+// patchJump sets the jump instruction at pos to target the next instruction
+// that will be emitted (i.e. "jump to here").
+func (c *Compiler) patchJump(pos int) {
+	c.program.Instructions[pos].Arg = len(c.program.Instructions)
+}
+
+// compileBlockAsExpr compiles a block's statements so that exactly one
+// value is left on the stack: the value of its last statement (an empty
+// block evaluates to null), mirroring the tree-walker's evalBlockStatement.
+// Used to compile `if` expression branches.
+func (c *Compiler) compileBlockAsExpr(block *ast.BlockStatement) error {
+	if block == nil || len(block.Statements) == 0 {
+		c.emit(OpNull, 0, "")
+		return nil
+	}
+	for i, stmt := range block.Statements {
+		allowPop := i != len(block.Statements)-1
+		if err := c.compileStatement(stmt, allowPop); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (c *Compiler) compileStatement(stmt ast.Statement, allowPop bool) error {
@@ -187,7 +252,7 @@ func (c *Compiler) compileExpression(exp ast.Expression) error {
 		return nil
 	case *ast.InfixExpression:
 		if node.Operator == "&&" || node.Operator == "||" {
-			return &ErrUnsupportedNode{Node: "short-circuit infix"}
+			return c.compileShortCircuitInfix(node)
 		}
 		if err := c.compileExpression(node.Left); err != nil {
 			return err
@@ -198,10 +263,70 @@ func (c *Compiler) compileExpression(exp ast.Expression) error {
 		c.emit(OpBinary, 0, node.Operator)
 		return nil
 	case *ast.CallExpression:
-		return &ErrUnsupportedNode{Node: "call expression"}
+		if err := c.compileExpression(node.Function); err != nil {
+			return err
+		}
+		for _, arg := range node.Arguments {
+			if err := c.compileExpression(arg); err != nil {
+				return err
+			}
+		}
+		c.program.Instructions = append(c.program.Instructions, Instruction{Op: OpCall, Arg: len(node.Arguments), Call: node})
+		return nil
+	case *ast.IfExpression:
+		if err := c.compileExpression(node.Condition); err != nil {
+			return err
+		}
+		jumpToElse := c.emitJump(OpJumpIfFalse)
+		if err := c.compileBlockAsExpr(node.Consequence); err != nil {
+			return err
+		}
+		jumpToEnd := c.emitJump(OpJump)
+		c.patchJump(jumpToElse)
+		if node.Alternative != nil {
+			if err := c.compileBlockAsExpr(node.Alternative); err != nil {
+				return err
+			}
+		} else {
+			c.emit(OpNull, 0, "")
+		}
+		c.patchJump(jumpToEnd)
+		return nil
 	default:
 		return &ErrUnsupportedNode{Node: fmt.Sprintf("%T", exp)}
 	}
+}
+
+// compileShortCircuitInfix compiles `&&`/`||`, matching the boolean-coercing
+// short-circuit semantics of evalInfixExpression in pkg/eval/infix.go: `a &&
+// b` is FALSE without evaluating b if a is falsy, else IsTruthy(b); `a || b`
+// is TRUE without evaluating b if a is truthy, else IsTruthy(b). Neither
+// operator ever returns a raw operand value (unlike e.g. `??`).
+func (c *Compiler) compileShortCircuitInfix(node *ast.InfixExpression) error {
+	if err := c.compileExpression(node.Left); err != nil {
+		return err
+	}
+	var shortCircuitJump int
+	if node.Operator == "&&" {
+		shortCircuitJump = c.emitJump(OpJumpIfFalse)
+	} else {
+		shortCircuitJump = c.emitJump(OpJumpIfTrue)
+	}
+	if err := c.compileExpression(node.Right); err != nil {
+		return err
+	}
+	c.emit(OpToBool, 0, "")
+	jumpToEnd := c.emitJump(OpJump)
+	c.patchJump(shortCircuitJump)
+	if node.Operator == "&&" {
+		idx := c.addConstant(object.FALSE)
+		c.emit(OpConstant, idx, "")
+	} else {
+		idx := c.addConstant(object.TRUE)
+		c.emit(OpConstant, idx, "")
+	}
+	c.patchJump(jumpToEnd)
+	return nil
 }
 
 // ---------------------------------------------------------------------------
@@ -259,11 +384,24 @@ func (v *VM) Run() object.Object {
 			}
 			v.push(v.program.Constants[ins.Arg])
 		case OpGetVar:
-			if obj, ok := v.vmLookup(ins.S); ok {
-				v.push(obj)
-			} else {
+			obj, ok := v.vmLookup(ins.S)
+			if !ok {
 				return object.NewError("identifier not found: %s", ins.S)
 			}
+			// Mirror evalIdentifier's unwrap behavior exactly (pkg/eval/eval.go)
+			// - env.Get alone does not force lazy values or unwrap/validate
+			// OwnedValue, so skipping this here silently changed behavior for
+			// `let x = move(...)`/`lazy` values once ExpressionStatement
+			// started reaching the VM.
+			if lazy, ok := obj.(*object.LazyValue); ok {
+				obj = lazy.Force()
+			} else if owned, ok := obj.(*object.OwnedValue); ok {
+				if v.env != nil && owned.OwnerID != "" && !v.env.HasOwner(owned.OwnerID) {
+					return object.NewError("ownership violation: value moved to another scope")
+				}
+				obj = owned.Inner
+			}
+			v.push(obj)
 		case OpSetVar:
 			val, ok := v.pop()
 			if !ok {
@@ -316,7 +454,10 @@ func (v *VM) Run() object.Object {
 			if ApplyFunctionFn == nil {
 				return object.NewError("vm: ApplyFunctionFn not set")
 			}
-			res := ApplyFunctionFn(fn, args, v.env)
+			res := ApplyFunctionFn(fn, args, v.env, ins.Call)
+			if ins.Call != nil && FinalizeCallResultFn != nil {
+				res = FinalizeCallResultFn(res, ins.Call, v.env)
+			}
 			if isError(res) {
 				return res
 			}
@@ -329,6 +470,30 @@ func (v *VM) Run() object.Object {
 			return ret
 		case OpNull:
 			v.push(object.NULL)
+		case OpJump:
+			v.ip = ins.Arg - 1
+		case OpJumpIfFalse:
+			val, ok := v.pop()
+			if !ok {
+				return object.NewError("vm stack underflow on conditional jump")
+			}
+			if !object.IsTruthy(val) {
+				v.ip = ins.Arg - 1
+			}
+		case OpJumpIfTrue:
+			val, ok := v.pop()
+			if !ok {
+				return object.NewError("vm stack underflow on conditional jump")
+			}
+			if object.IsTruthy(val) {
+				v.ip = ins.Arg - 1
+			}
+		case OpToBool:
+			val, ok := v.pop()
+			if !ok {
+				return object.NewError("vm stack underflow on bool conversion")
+			}
+			v.push(object.NativeBoolToBooleanObject(object.IsTruthy(val)))
 		case OpPrint:
 			val, ok := v.pop()
 			if !ok {

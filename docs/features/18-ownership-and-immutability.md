@@ -16,7 +16,7 @@ let result = try {
 } catch (e) {
     e;
 };
-print result; // cannot set property on HASH
+print result; // cannot mutate immutable value
 ```
 
 Wrapping a hash/array with `immutable(...)` makes subsequent **mutation**
@@ -24,14 +24,13 @@ attempts raise a catchable runtime error instead of silently succeeding —
 useful for defensively freezing shared configuration or constant data
 structures passed into other scopes.
 
-> **Caveat observed while verifying this feature**: reading a property back
-> out of a frozen value (`frozen.a`, `frozen["a"]`, `frozen.keys()`) is
-> unreliable in the current build — it may return `null`/an error, or panic
-> with an internal type-assertion mismatch, rather than transparently
-> proxying the read to the wrapped value. Treat `immutable(...)` as a
-> write-guard for values you pass onward and then don't need to read back
-> through the wrapper yourself (read the original hash/array before
-> freezing it, or take a defensive copy first) until this is hardened.
+Reading through a frozen value works transparently: `frozen.a`, `frozen["a"]`,
+and iteration all proxy to the wrapped value, and nested arrays/hashes stay
+individually frozen (mutating `frozen.nested.x` fails the same way mutating
+`frozen.a` does). A prior build had a bug here — an internal duplicate of the
+`ImmutableValue` type meant reads could panic with a type-assertion mismatch
+or return the wrong error — this has been fixed and is covered by
+`TestImmutableValuesDoNotPanicAndAreGuarded` in `pkg/eval/language_gaps_test.go`.
 
 ## `move(value)` — ownership marker
 

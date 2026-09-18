@@ -37,6 +37,9 @@ import (
 	"golang.org/x/crypto/scrypt"
 	xdraw "golang.org/x/image/draw"
 	_ "golang.org/x/image/webp"
+
+	"github.com/HugoSmits86/nativewebp"
+	ezip "github.com/yeka/zip"
 )
 
 // scrypt parameters for file_encrypt/file_decrypt key derivation.
@@ -740,8 +743,9 @@ func FileChecksum(path string, h Hooks) (map[string]any, error) {
 func Compress(src, dst string, opts map[string]any, h Hooks) Operation {
 	format := strings.ToLower(stringOpt(opts, "format", strings.TrimPrefix(filepath.Ext(dst), ".")))
 	apply := boolOpt(opts, "apply")
-	if strings.TrimSpace(stringOpt(opts, "password", "")) != "" {
-		return Operation{Status: "failed", Op: "compress", Src: src, Dst: dst, Error: "password-protected archives are not supported by the Go-native v1 tools"}
+	password := strings.TrimSpace(stringOpt(opts, "password", ""))
+	if password != "" && format != "zip" {
+		return Operation{Status: "failed", Op: "compress", Src: src, Dst: dst, Error: fmt.Sprintf("password-protected archives are only supported for format \"zip\", got %q", format)}
 	}
 	op := Operation{Status: "planned", Op: "compress", Src: src, Dst: dst}
 	srcPath, err := cleanPath(h, src, false)
@@ -764,7 +768,11 @@ func Compress(src, dst string, opts map[string]any, h Hooks) Operation {
 	}
 	switch format {
 	case "zip":
-		err = writeZip(srcPath, dstPath)
+		if password != "" {
+			err = writeZipEncrypted(srcPath, dstPath, password)
+		} else {
+			err = writeZip(srcPath, dstPath)
+		}
 	case "tar":
 		err = writeTar(srcPath, dstPath)
 	case "gz", "gzip":
@@ -808,6 +816,44 @@ func writeZip(src, dst string) error {
 			return err
 		}
 		w, err := zw.Create(filepath.ToSlash(rel))
+		if err != nil {
+			return err
+		}
+		in, err := os.Open(path)
+		if err != nil {
+			return err
+		}
+		defer in.Close()
+		_, err = io.Copy(w, in)
+		return err
+	})
+}
+
+// writeZipEncrypted mirrors writeZip but encrypts each entry with password
+// using AES-256 (github.com/yeka/zip, a fork of archive/zip that adds
+// WinZip/7-Zip-compatible ZipCrypto/AES encryption - the stdlib archive/zip
+// has no encryption support at all).
+func writeZipEncrypted(src, dst, password string) error {
+	out, err := os.Create(dst)
+	if err != nil {
+		return err
+	}
+	defer out.Close()
+	zw := ezip.NewWriter(out)
+	defer zw.Close()
+	base := filepath.Dir(src)
+	return filepath.WalkDir(src, func(path string, d fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if d.IsDir() {
+			return nil
+		}
+		rel, err := filepath.Rel(base, path)
+		if err != nil {
+			return err
+		}
+		w, err := zw.Encrypt(filepath.ToSlash(rel), password, ezip.AES256Encryption)
 		if err != nil {
 			return err
 		}
@@ -937,6 +983,7 @@ func ArchiveList(path string, h Hooks) ([]FileInfo, error) {
 
 func Extract(src, dst string, opts map[string]any, h Hooks) Operation {
 	apply := boolOpt(opts, "apply")
+	password := strings.TrimSpace(stringOpt(opts, "password", ""))
 	op := Operation{Status: "planned", Op: "extract", Src: src, Dst: dst}
 	srcPath, err := cleanPath(h, src, false)
 	if err != nil {
@@ -954,47 +1001,15 @@ func Extract(src, dst string, opts map[string]any, h Hooks) Operation {
 	}
 	switch archiveFormat(srcPath) {
 	case "zip":
-		zr, err := zip.OpenReader(srcPath)
-		if err != nil {
-			op.Status, op.Error = "failed", err.Error()
-			return op
+		var extractErr error
+		if password != "" {
+			extractErr = extractEncryptedZip(srcPath, dstPath, password)
+		} else {
+			extractErr = extractZip(srcPath, dstPath)
 		}
-		defer zr.Close()
-		for _, f := range zr.File {
-			target := filepath.Clean(filepath.Join(dstPath, f.Name))
-			if target != dstPath && !strings.HasPrefix(target, dstPath+string(os.PathSeparator)) {
-				op.Status, op.Error = "failed", "archive contains unsafe path"
-				return op
-			}
-			if f.FileInfo().IsDir() {
-				if err := os.MkdirAll(target, f.Mode()); err != nil {
-					op.Status, op.Error = "failed", err.Error()
-					return op
-				}
-				continue
-			}
-			if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
-				op.Status, op.Error = "failed", err.Error()
-				return op
-			}
-			rc, err := f.Open()
-			if err != nil {
-				op.Status, op.Error = "failed", err.Error()
-				return op
-			}
-			out, err := os.OpenFile(target, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, f.Mode())
-			if err != nil {
-				rc.Close()
-				op.Status, op.Error = "failed", err.Error()
-				return op
-			}
-			_, err = io.Copy(out, rc)
-			rc.Close()
-			out.Close()
-			if err != nil {
-				op.Status, op.Error = "failed", err.Error()
-				return op
-			}
+		if extractErr != nil {
+			op.Status, op.Error = "failed", extractErr.Error()
+			return op
 		}
 		op.Status = "applied"
 		return op
@@ -1040,6 +1055,72 @@ func safeArchiveTarget(root, name string) (string, error) {
 		return "", fmt.Errorf("archive contains unsafe path")
 	}
 	return target, nil
+}
+
+func extractZip(src, dst string) error {
+	zr, err := zip.OpenReader(src)
+	if err != nil {
+		return err
+	}
+	defer zr.Close()
+	for _, f := range zr.File {
+		if err := extractZipFile(dst, f.Name, f.FileInfo(), func() (io.ReadCloser, error) { return f.Open() }); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// extractEncryptedZip mirrors extractZip for password-protected archives
+// (github.com/yeka/zip - see writeZipEncrypted for why stdlib archive/zip
+// can't do this). Each entry is decrypted with password regardless of
+// whether that particular entry was actually encrypted (SetPassword is a
+// no-op for unencrypted entries).
+func extractEncryptedZip(src, dst, password string) error {
+	zr, err := ezip.OpenReader(src)
+	if err != nil {
+		return err
+	}
+	defer zr.Close()
+	for _, f := range zr.File {
+		f.SetPassword(password)
+		if err := extractZipFile(dst, f.Name, f.FileInfo(), func() (io.ReadCloser, error) { return f.Open() }); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// extractZipFile writes one zip entry (name/info from either archive/zip or
+// github.com/yeka/zip, whose *File types share this shape but aren't a
+// common interface) to dst, guarding against zip-slip path traversal the
+// same way extractTar does via safeArchiveTarget.
+func extractZipFile(dst, name string, info fs.FileInfo, open func() (io.ReadCloser, error)) error {
+	target, err := safeArchiveTarget(dst, name)
+	if err != nil {
+		return err
+	}
+	if info.IsDir() {
+		return os.MkdirAll(target, info.Mode())
+	}
+	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+		return err
+	}
+	rc, err := open()
+	if err != nil {
+		return err
+	}
+	defer rc.Close()
+	out, err := os.OpenFile(target, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, info.Mode())
+	if err != nil {
+		return err
+	}
+	_, copyErr := io.Copy(out, rc)
+	closeErr := out.Close()
+	if copyErr != nil {
+		return copyErr
+	}
+	return closeErr
 }
 
 func extractTar(src, dst string) error {
@@ -1193,7 +1274,12 @@ func ConvertImageFile(src, dst, format string, quality int) error {
 	case "gif":
 		return gif.Encode(out, img, nil)
 	case "webp":
-		return fmt.Errorf("webp encode is unsupported by the Go-native v1 tools")
+		// Lossless only: github.com/HugoSmits86/nativewebp is a pure-Go
+		// encoder with no lossy mode (no pure-Go lossy WebP encoder exists;
+		// a real lossy encoder needs cgo + libwebp, which this project
+		// avoids). Good enough for "convert a PNG/lossless source to WebP";
+		// not a substitute for cwebp-quality lossy compression.
+		return nativewebp.Encode(out, img, nil)
 	default:
 		return fmt.Errorf("unsupported image format %q", format)
 	}
@@ -1313,7 +1399,12 @@ func writeImage(dst string, img image.Image, format string, quality int) error {
 	case "gif":
 		return gif.Encode(out, img, nil)
 	case "webp":
-		return fmt.Errorf("webp encode is unsupported by the Go-native v1 tools")
+		// Lossless only: github.com/HugoSmits86/nativewebp is a pure-Go
+		// encoder with no lossy mode (no pure-Go lossy WebP encoder exists;
+		// a real lossy encoder needs cgo + libwebp, which this project
+		// avoids). Good enough for "convert a PNG/lossless source to WebP";
+		// not a substitute for cwebp-quality lossy compression.
+		return nativewebp.Encode(out, img, nil)
 	default:
 		return fmt.Errorf("unsupported image format %q", format)
 	}

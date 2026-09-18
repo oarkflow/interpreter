@@ -271,28 +271,30 @@ func runArchive(args []string, stdout, stderr io.Writer) int {
 		format := fs.String("format", "", "zip, tar, or gzip")
 		apply := fs.Bool("apply", false, "apply changes")
 		jsonOut := fs.Bool("json", false, "emit JSON")
-		if err := fs.Parse(normalizeToolArgs(args[1:], "format")); err != nil {
+		password := fs.String("password", "", "password-protect the archive (zip only, AES-256)")
+		if err := fs.Parse(normalizeToolArgs(args[1:], "format", "password")); err != nil {
 			return 2
 		}
 		if len(fs.Args()) != 2 {
-			fmt.Fprintln(stderr, "usage: spltool archive compress <src> <dst> [--format zip] [--apply]")
+			fmt.Fprintln(stderr, "usage: spltool archive compress <src> <dst> [--format zip] [--password secret] [--apply]")
 			return 2
 		}
-		op := tools.Compress(fs.Args()[0], fs.Args()[1], map[string]any{"format": *format, "apply": *apply}, tools.Hooks{})
+		op := tools.Compress(fs.Args()[0], fs.Args()[1], map[string]any{"format": *format, "apply": *apply, "password": *password}, tools.Hooks{})
 		return printOperations(stdout, stderr, []tools.Operation{op}, *jsonOut)
 	case "extract":
 		fs := flag.NewFlagSet("archive extract", flag.ContinueOnError)
 		fs.SetOutput(stderr)
 		apply := fs.Bool("apply", false, "apply changes")
 		jsonOut := fs.Bool("json", false, "emit JSON")
-		if err := fs.Parse(normalizeToolArgs(args[1:])); err != nil {
+		password := fs.String("password", "", "password for a password-protected zip archive")
+		if err := fs.Parse(normalizeToolArgs(args[1:], "password")); err != nil {
 			return 2
 		}
 		if len(fs.Args()) != 2 {
-			fmt.Fprintln(stderr, "usage: spltool archive extract <src.zip> <dst> [--apply]")
+			fmt.Fprintln(stderr, "usage: spltool archive extract <src.zip> <dst> [--password secret] [--apply]")
 			return 2
 		}
-		op := tools.Extract(fs.Args()[0], fs.Args()[1], map[string]any{"apply": *apply}, tools.Hooks{})
+		op := tools.Extract(fs.Args()[0], fs.Args()[1], map[string]any{"apply": *apply, "password": *password}, tools.Hooks{})
 		return printOperations(stdout, stderr, []tools.Operation{op}, *jsonOut)
 	case "list":
 		fs := flag.NewFlagSet("archive list", flag.ContinueOnError)

@@ -197,3 +197,134 @@ func TestConvertBackedTypeParsing(t *testing.T) {
 		t.Fatalf("unexpected string conversion: %q", got)
 	}
 }
+
+// TestImmutableValuesDoNotPanicAndAreGuarded is a regression test for the
+// duplicate builtins.ImmutableValue / object.ImmutableValue type bug: reads
+// through immutable()-wrapped arrays/hashes used to panic with an internal
+// type-assertion mismatch (since the evaluator's unwrap sites only recognized
+// object.ImmutableValue, but immutable() built the unexported builtins one),
+// and writes fell through to a misleading "cannot set property on HASH"
+// error instead of the intended "cannot mutate immutable value" guard.
+func TestImmutableValuesDoNotPanicAndAreGuarded(t *testing.T) {
+	arrResult := evalWithParserCheck(t, `let frozen = immutable([1, 2, 3]); frozen[1];`, object.NewEnvironment())
+	testIntegerObject(t, arrResult, 2)
+
+	hashReadResult := evalWithParserCheck(t, `let frozen = immutable({"a": 1}); frozen.a;`, object.NewEnvironment())
+	testIntegerObject(t, hashReadResult, 1)
+
+	hashIndexResult := evalWithParserCheck(t, `let frozen = immutable({"a": 1}); frozen["a"];`, object.NewEnvironment())
+	testIntegerObject(t, hashIndexResult, 1)
+
+	writeResult := evalWithParserCheck(t, `let frozen = immutable({"a": 1}); frozen.a = 2;`, object.NewEnvironment())
+	err, ok := writeResult.(*object.Error)
+	if !ok || !strings.Contains(err.Message, "cannot mutate immutable value") {
+		t.Fatalf("expected immutable mutation guard error, got %T (%v)", writeResult, writeResult)
+	}
+
+	outOfRange := evalWithParserCheck(t, `let frozen = immutable([1, 2, 3]); frozen[99];`, object.NewEnvironment())
+	testNullObject(t, outOfRange)
+}
+
+// TestAsyncFunctionDeclarationBindsName is a regression test: `async
+// function name(){}` used to parse as a bare ExpressionStatement (no
+// case for token.ASYNC in the statement-level switch), so the FunctionLiteral
+// it produced was evaluated and discarded without ever binding `name` into
+// the enclosing scope.
+func TestAsyncFunctionDeclarationBindsName(t *testing.T) {
+	result := evalWithParserCheck(t, `
+async function double(n) { return n * 2; }
+await double(21);
+`, object.NewEnvironment())
+	testIntegerObject(t, result, 42)
+}
+
+// TestGoAsyncReturnsAwaitableFuture is a regression test: go_async used to
+// discard its function's result and always return NULL, even though
+// docs/features/20-core-builtins.md already documents `let f1 = go_async(...)`
+// being awaited like a Future.
+func TestGoAsyncReturnsAwaitableFuture(t *testing.T) {
+	result := evalWithParserCheck(t, `
+let f = go_async(function() { return 41 + 1; });
+await f;
+`, object.NewEnvironment())
+	testIntegerObject(t, result, 42)
+}
+
+// TestInterfaceEnforcementChecksSignatures is a regression test extending
+// the existing method-existence check (present since the initial commit) to
+// also validate parameter/return types declared on the interface.
+func TestInterfaceEnforcementChecksSignatures(t *testing.T) {
+	// Matching signature: implements successfully.
+	ok := evalWithParserCheck(t, `
+interface Greeter {
+    greet(name: string): string;
+}
+class English implements Greeter {
+    greet(name: string): string { return "hello " + name; }
+}
+new English().greet("world");
+`, object.NewEnvironment())
+	str, isStr := ok.(*object.String)
+	if !isStr || str.Value != "hello world" {
+		t.Fatalf("expected successful interface implementation, got %T (%v)", ok, ok)
+	}
+
+	// Wrong parameter type: rejected at class-declaration time.
+	badParam := evalWithParserCheck(t, `
+interface Greeter {
+    greet(name: string): string;
+}
+class Bad implements Greeter {
+    greet(name: int): string { return "hi"; }
+}
+`, object.NewEnvironment())
+	err, isErr := badParam.(*object.Error)
+	if !isErr || !strings.Contains(err.Message, "parameter") {
+		t.Fatalf("expected parameter type mismatch error, got %T (%v)", badParam, badParam)
+	}
+
+	// Wrong return type: rejected at class-declaration time.
+	badReturn := evalWithParserCheck(t, `
+interface Greeter {
+    greet(name: string): string;
+}
+class Bad implements Greeter {
+    greet(name: string): int { return 1; }
+}
+`, object.NewEnvironment())
+	err2, isErr2 := badReturn.(*object.Error)
+	if !isErr2 || !strings.Contains(err2.Message, "return type") {
+		t.Fatalf("expected return type mismatch error, got %T (%v)", badReturn, badReturn)
+	}
+
+	// Wrong parameter count: rejected at class-declaration time.
+	badArity := evalWithParserCheck(t, `
+interface Greeter {
+    greet(name: string): string;
+}
+class Bad implements Greeter {
+    greet(name: string, extra: string): string { return "hi"; }
+}
+`, object.NewEnvironment())
+	err3, isErr3 := badArity.(*object.Error)
+	if !isErr3 || !strings.Contains(err3.Message, "parameter(s)") {
+		t.Fatalf("expected parameter count mismatch error, got %T (%v)", badArity, badArity)
+	}
+
+	// Untyped implementation of a typed interface method stays permissive
+	// (most SPL code has no annotations; requiring them would break
+	// previously-valid classes).
+	untyped := evalWithParserCheck(t, `
+interface Greeter {
+    greet(name: string): string;
+}
+class Loose implements Greeter {
+    greet(name) { return "hi " + name; }
+}
+new Loose().greet("there");
+`, object.NewEnvironment())
+	str2, isStr2 := untyped.(*object.String)
+	if !isStr2 || str2.Value != "hi there" {
+		t.Fatalf("expected untyped implementation to still be accepted, got %T (%v)", untyped, untyped)
+	}
+}

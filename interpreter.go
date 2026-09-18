@@ -490,6 +490,27 @@ func withSecurityPolicyOverride(policy *SecurityPolicy, fn func() (Object, error
 	return fn()
 }
 
+// withDenialHookOverride scopes opts.Observability.OnPolicyDenied, if set, to
+// the duration of fn() via security.WithDenialHookOverride, so that
+// concurrently-executing Runtimes with distinct hooks each reliably observe
+// only their own denials instead of colliding on the process-wide
+// security.SetDenialHook/GetDenialHook state (see runtime.go's NewRuntime
+// comment for the history here).
+func withDenialHookOverride(opts ExecOptions, fn func() (Object, error)) (Object, error) {
+	var hook func(category, detail string)
+	if opts.Observability != nil {
+		hook = opts.Observability.OnPolicyDenied
+	}
+	if hook == nil {
+		return fn()
+	}
+	result, err := security.WithDenialHookOverride(hook, func() (any, error) {
+		return fn()
+	})
+	obj, _ := result.(Object)
+	return obj, err
+}
+
 func activeSandboxBaseDir() string {
 	return sandbox.ActiveSandboxBaseDir()
 }
@@ -739,66 +760,68 @@ func checkHardcodedSecrets(policy *SecurityPolicy, script, path string) *ExecErr
 
 func execTrustedWithOptions(script string, data map[string]interface{}, opts ExecOptions) (Object, *Environment, error) {
 	var observedEnv *Environment
-	obj, err := withSecurityPolicyOverride(opts.Security, func() (retObj Object, retErr error) {
-		defer func() {
-			if r := recover(); r != nil {
-				retObj = nil
-				retErr = &ExecError{Kind: ExecErrorRuntime, Message: fmt.Sprintf("panic recovered: %v", r)}
+	obj, err := withDenialHookOverride(opts, func() (Object, error) {
+		return withSecurityPolicyOverride(opts.Security, func() (retObj Object, retErr error) {
+			defer func() {
+				if r := recover(); r != nil {
+					retObj = nil
+					retErr = &ExecError{Kind: ExecErrorRuntime, Message: fmt.Sprintf("panic recovered: %v", r)}
+				}
+			}()
+
+			moduleDir := opts.ModuleDir
+			if moduleDir == "" {
+				moduleDir = "."
 			}
-		}()
-
-		moduleDir := opts.ModuleDir
-		if moduleDir == "" {
-			moduleDir = "."
-		}
-		sb := DefaultExecSandboxConfig()
-		if opts.Sandbox != nil {
-			sb = *opts.Sandbox
-		}
-		vm, vmErr := NewSandboxVM([]string{}, "<memory>", moduleDir, sb)
-		if vmErr != nil {
-			return nil, &ExecError{Kind: ExecErrorValidation, Message: vmErr.Error()}
-		}
-		env := vm.Environment()
-		observedEnv = env
-		defer env.RunCleanup()
-		if len(opts.Args) > 0 {
-			env.Set("ARGS", toObject(opts.Args))
-		}
-		if opts.Output != nil {
-			env.Output = opts.Output
-		}
-		env.SourcePath = "<memory>"
-		applyExecRuntimeOptions(env, opts)
-		injectData(env, data)
-
-		effectivePolicy := vm.Policy()
-		if opts.Security != nil {
-			effectivePolicy = opts.Security
-		}
-		if execErr := checkHardcodedSecrets(effectivePolicy, script, "<memory>"); execErr != nil {
-			return nil, execErr
-		}
-
-		l := NewLexer(script)
-		p := NewParser(l)
-		program := p.ParseProgram()
-
-		if len(p.Errors()) != 0 {
-			return nil, &ExecError{
-				Kind:                  ExecErrorParser,
-				Message:               fmt.Sprintf("parser errors: %v", p.Errors()),
-				Diagnostics:           append([]string(nil), p.Errors()...),
-				StructuredDiagnostics: diagnosticsFromParserErrors("<memory>", script, p.Errors()),
+			sb := DefaultExecSandboxConfig()
+			if opts.Sandbox != nil {
+				sb = *opts.Sandbox
 			}
-		}
-		result := runProgramSandboxed(program, env, effectivePolicy)
+			vm, vmErr := NewSandboxVM([]string{}, "<memory>", moduleDir, sb)
+			if vmErr != nil {
+				return nil, &ExecError{Kind: ExecErrorValidation, Message: vmErr.Error()}
+			}
+			env := vm.Environment()
+			observedEnv = env
+			defer env.RunCleanup()
+			if len(opts.Args) > 0 {
+				env.Set("ARGS", toObject(opts.Args))
+			}
+			if opts.Output != nil {
+				env.Output = opts.Output
+			}
+			env.SourcePath = "<memory>"
+			applyExecRuntimeOptions(env, opts)
+			injectData(env, data)
 
-		if isError(result) {
-			return nil, runtimeExecError("<memory>", result, env.ModuleDir)
-		}
+			effectivePolicy := vm.Policy()
+			if opts.Security != nil {
+				effectivePolicy = opts.Security
+			}
+			if execErr := checkHardcodedSecrets(effectivePolicy, script, "<memory>"); execErr != nil {
+				return nil, execErr
+			}
 
-		return result, nil
+			l := NewLexer(script)
+			p := NewParser(l)
+			program := p.ParseProgram()
+
+			if len(p.Errors()) != 0 {
+				return nil, &ExecError{
+					Kind:                  ExecErrorParser,
+					Message:               fmt.Sprintf("parser errors: %v", p.Errors()),
+					Diagnostics:           append([]string(nil), p.Errors()...),
+					StructuredDiagnostics: diagnosticsFromParserErrors("<memory>", script, p.Errors()),
+				}
+			}
+			result := runProgramSandboxed(program, env, effectivePolicy)
+
+			if isError(result) {
+				return nil, runtimeExecError("<memory>", result, env.ModuleDir)
+			}
+
+			return result, nil
+		})
 	})
 	return obj, observedEnv, err
 }
@@ -831,72 +854,74 @@ func ExecFileWithOptions(filename string, data map[string]interface{}, opts Exec
 
 func execFileTrustedWithOptions(filename string, data map[string]interface{}, opts ExecOptions) (Object, *Environment, error) {
 	var observedEnv *Environment
-	obj, err := withSecurityPolicyOverride(opts.Security, func() (retObj Object, retErr error) {
-		defer func() {
-			if r := recover(); r != nil {
-				retObj = nil
-				retErr = &ExecError{Kind: ExecErrorRuntime, Message: fmt.Sprintf("panic recovered: %v", r), Path: filename}
+	obj, err := withDenialHookOverride(opts, func() (Object, error) {
+		return withSecurityPolicyOverride(opts.Security, func() (retObj Object, retErr error) {
+			defer func() {
+				if r := recover(); r != nil {
+					retObj = nil
+					retErr = &ExecError{Kind: ExecErrorRuntime, Message: fmt.Sprintf("panic recovered: %v", r), Path: filename}
+				}
+			}()
+
+			content, err := os.ReadFile(filename)
+			if err != nil {
+				return nil, &ExecError{Kind: ExecErrorIO, Message: err.Error(), Path: filename}
 			}
-		}()
 
-		content, err := os.ReadFile(filename)
-		if err != nil {
-			return nil, &ExecError{Kind: ExecErrorIO, Message: err.Error(), Path: filename}
-		}
-
-		moduleDir := opts.ModuleDir
-		if moduleDir == "" {
-			moduleDir = filepath.Dir(filename)
-		}
-		sb := DefaultExecSandboxConfig()
-		if opts.Sandbox != nil {
-			sb = *opts.Sandbox
-		}
-		vm, vmErr := NewSandboxVM([]string{}, filename, moduleDir, sb)
-		if vmErr != nil {
-			return nil, &ExecError{Kind: ExecErrorValidation, Message: vmErr.Error(), Path: filename}
-		}
-		env := vm.Environment()
-		observedEnv = env
-		defer env.RunCleanup()
-		if len(opts.Args) > 0 {
-			env.Set("ARGS", toObject(opts.Args))
-		}
-		if opts.Output != nil {
-			env.Output = opts.Output
-		}
-		env.SourcePath = filename
-		applyExecRuntimeOptions(env, opts)
-		injectData(env, data)
-
-		effectivePolicy := vm.Policy()
-		if opts.Security != nil {
-			effectivePolicy = opts.Security
-		}
-		if execErr := checkHardcodedSecrets(effectivePolicy, string(content), filename); execErr != nil {
-			return nil, execErr
-		}
-
-		l := NewLexer(string(content))
-		p := NewParser(l)
-		program := p.ParseProgram()
-
-		if len(p.Errors()) != 0 {
-			return nil, &ExecError{
-				Kind:                  ExecErrorParser,
-				Message:               fmt.Sprintf("parser errors: %v", p.Errors()),
-				Path:                  filename,
-				Diagnostics:           append([]string(nil), p.Errors()...),
-				StructuredDiagnostics: diagnosticsFromParserErrors(filename, string(content), p.Errors()),
+			moduleDir := opts.ModuleDir
+			if moduleDir == "" {
+				moduleDir = filepath.Dir(filename)
 			}
-		}
+			sb := DefaultExecSandboxConfig()
+			if opts.Sandbox != nil {
+				sb = *opts.Sandbox
+			}
+			vm, vmErr := NewSandboxVM([]string{}, filename, moduleDir, sb)
+			if vmErr != nil {
+				return nil, &ExecError{Kind: ExecErrorValidation, Message: vmErr.Error(), Path: filename}
+			}
+			env := vm.Environment()
+			observedEnv = env
+			defer env.RunCleanup()
+			if len(opts.Args) > 0 {
+				env.Set("ARGS", toObject(opts.Args))
+			}
+			if opts.Output != nil {
+				env.Output = opts.Output
+			}
+			env.SourcePath = filename
+			applyExecRuntimeOptions(env, opts)
+			injectData(env, data)
 
-		result := runProgramSandboxed(program, env, effectivePolicy)
-		if isError(result) {
-			return nil, runtimeExecError(filename, result, env.ModuleDir)
-		}
+			effectivePolicy := vm.Policy()
+			if opts.Security != nil {
+				effectivePolicy = opts.Security
+			}
+			if execErr := checkHardcodedSecrets(effectivePolicy, string(content), filename); execErr != nil {
+				return nil, execErr
+			}
 
-		return result, nil
+			l := NewLexer(string(content))
+			p := NewParser(l)
+			program := p.ParseProgram()
+
+			if len(p.Errors()) != 0 {
+				return nil, &ExecError{
+					Kind:                  ExecErrorParser,
+					Message:               fmt.Sprintf("parser errors: %v", p.Errors()),
+					Path:                  filename,
+					Diagnostics:           append([]string(nil), p.Errors()...),
+					StructuredDiagnostics: diagnosticsFromParserErrors(filename, string(content), p.Errors()),
+				}
+			}
+
+			result := runProgramSandboxed(program, env, effectivePolicy)
+			if isError(result) {
+				return nil, runtimeExecError(filename, result, env.ModuleDir)
+			}
+
+			return result, nil
+		})
 	})
 	return obj, observedEnv, err
 }
@@ -1414,6 +1439,28 @@ func init() {
 	bytecode.EvalProgramFn = sandbox.EvalProgramFn
 	bytecode.EvalPrefixExpressionFn = eval.EvalPrefixExpression
 	bytecode.EvalInfixExpressionFn = eval.EvalInfixExpression
+	// Mirrors object.ApplyFunctionFn (wired above) so OpCall can actually
+	// invoke functions/builtins - previously unwired, so any bytecode-
+	// compiled call expression failed with "vm: ApplyFunctionFn not set".
+	// Unlike object.ApplyFunctionFn, this forwards the originating
+	// *ast.CallExpression so call-stack frames match what the tree walker
+	// would produce for the same call.
+	bytecode.ApplyFunctionFn = func(fn object.Object, args []object.Object, env *object.Environment, call *ast.CallExpression) object.Object {
+		return eval.ApplyFunction(fn, args, env, call)
+	}
+	bytecode.FinalizeCallResultFn = eval.FinalizeCallResult
+	// Mirrors evalIdentifier's builtin fallback (pkg/eval/eval.go) exactly,
+	// so an identifier that resolves to a builtin (exec, printf, image, ...)
+	// behaves the same whether OpGetVar runs via the bytecode VM or the tree
+	// walker. Without this, any bytecode-compiled expression statement that
+	// references a builtin fails with "identifier not found", since
+	// BuiltinLookupFn was previously never wired up at all.
+	bytecode.BuiltinLookupFn = func(name string, env *object.Environment) (object.Object, bool) {
+		if builtin, ok := eval.Builtins[name]; ok {
+			return builtin.BindEnv(env), true
+		}
+		return nil, false
+	}
 
 	// Wire eval bytecode fast-path hooks
 	eval.BytecodeCompileFn = func(program *ast.Program) (any, error) {

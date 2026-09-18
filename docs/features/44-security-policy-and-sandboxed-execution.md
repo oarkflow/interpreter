@@ -114,21 +114,24 @@ error, not a silent downgrade to no isolation.
 `security.ActiveSecurityPolicy()` has **no active process-wide override**
 in effect for the current call.
 
-> **Verified caveat**: a normal script run (`spl-interpreter script.spl`,
-> default `trusted` profile, no `--profile` flag) always constructs its own
-> sandbox `SecurityPolicy` override (permissive by default —
-> `AllowEnvWrite: true`, no `ProtectHost`) before evaluating. Because that
-> override is active, bare env vars like `SPL_PROTECT_HOST=1` or
-> `SPL_SECURITY_MODE=strict` were **not observed to restrict execution**
-> under the default trusted CLI path in this build (`exec(...)` still
-> succeeded with `SPL_PROTECT_HOST=1` set, and `http_get(...)` still
-> succeeded with `SPL_SECURITY_MODE=strict` set, in isolated-environment
-> tests). For guaranteed enforcement, use `--profile untrusted` (verified
-> above) or pass an explicit `ExecOptions.Security`/`SecurityPolicy` from
-> Go (doc 42) rather than relying on ambient env vars alone under the
-> trusted profile. If your deployment depends specifically on the
-> env-var-only mechanism, verify the exact enforcement behavior against
-> your integration path before relying on it in production.
+> **Fixed, verified**: a normal script run (`spl-interpreter script.spl`,
+> default `trusted` profile, no `--profile` flag) now honors
+> `SPL_SECURITY_MODE=strict` and `SPL_PROTECT_HOST=1` — setting
+> `SPL_PROTECT_HOST=1` denies `exec(...)` under the default trusted CLI
+> path. This previously did not work: `DefaultExecSandboxConfig`
+> (`pkg/sandbox/sandbox.go`) and `CapabilityPreset`'s `"trusted"` branch
+> (`presets_plugins.go`) hardcoded a permissive policy
+> (`AllowEnvWrite: true`, no `ProtectHost`) without ever consulting these
+> env vars; they now apply the same hardening
+> `security.LoadSecurityPolicyFromEnv` reads (see
+> `applyEnvSecurityHardening` in `pkg/sandbox/sandbox.go`). See
+> `TestSPLProtectHostEnvVarRestrictsDefaultTrustedExec` and
+> `TestCapabilityPresetTrustedSyncsPolicyWithEnvHardening` in
+> `tests/exec/env_security_hardening_test.go`. An explicit
+> `ExecOptions.Security`/`SecurityPolicy` passed by the embedder (doc 42)
+> still takes precedence over ambient env vars, unchanged — `--profile
+> untrusted` (verified above) remains the strongest guarantee for
+> genuinely hostile input.
 
 ## `permissions(policyHash)` builtin (in-script)
 

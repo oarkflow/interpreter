@@ -144,11 +144,8 @@ func TestPDFProtectAndDecryptDefaultAlgorithm(t *testing.T) {
 	decrypted := filepath.Join(dir, "decrypted.pdf")
 	requireOK(t, fnQuick(str("Sensitive content"), str(plain)))
 
-	// No algorithm argument -> defaults to AES-128, which
-	// github.com/oarkflow/pdf@v0.0.2 supports end-to-end. AES-256 is
-	// accepted by some lower-level paths in that library version but
-	// Protect() itself rejects it ("is not supported yet") - regression
-	// test for that default choice.
+	// No algorithm argument -> defaults to AES-128 for backward
+	// compatibility with existing callers.
 	requireOK(t, fnProtect(str(plain), str(protected), str("user-pw"), str("owner-pw")))
 
 	info := fnInfo(str(protected), str("user-pw"))
@@ -165,6 +162,36 @@ func TestPDFProtectAndDecryptDefaultAlgorithm(t *testing.T) {
 	decHash := decInfo.(*object.Hash)
 	if b, ok := decHash.Pairs[encKey].Value.(*object.Boolean); !ok || b.Value {
 		t.Fatalf("expected decrypted.pdf to report encrypted=false, got %s", decHash.Inspect())
+	}
+}
+
+// TestPDFProtectAndDecryptAES256 is a regression test: pdf_protect(...,
+// "aes-256") used to fail with "AES-256 ... is not supported yet" from
+// github.com/oarkflow/pdf's Protect(); AES-256 (Standard Security Handler
+// revision 5) is now implemented end-to-end in that library (v0.0.4+).
+func TestPDFProtectAndDecryptAES256(t *testing.T) {
+	dir := chdirTemp(t)
+	plain := filepath.Join(dir, "plain256.pdf")
+	protected := filepath.Join(dir, "protected256.pdf")
+	decrypted := filepath.Join(dir, "decrypted256.pdf")
+	requireOK(t, fnQuick(str("Sensitive AES-256 content"), str(plain)))
+
+	requireOK(t, fnProtect(str(plain), str(protected), str("user-pw-256"), str("owner-pw-256"), str("aes-256")))
+
+	info := fnInfo(str(protected), str("user-pw-256"))
+	requireOK(t, info)
+	hash := info.(*object.Hash)
+	encKey := (&object.String{Value: "encrypted"}).HashKey()
+	if b, ok := hash.Pairs[encKey].Value.(*object.Boolean); !ok || !b.Value {
+		t.Fatalf("expected protected256.pdf to report encrypted=true, got %s", hash.Inspect())
+	}
+
+	requireOK(t, fnDecrypt(str(protected), str(decrypted), str("user-pw-256")))
+	decInfo := fnInfo(str(decrypted))
+	requireOK(t, decInfo)
+	decHash := decInfo.(*object.Hash)
+	if b, ok := decHash.Pairs[encKey].Value.(*object.Boolean); !ok || b.Value {
+		t.Fatalf("expected decrypted256.pdf to report encrypted=false, got %s", decHash.Inspect())
 	}
 }
 

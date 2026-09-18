@@ -13,3 +13,6 @@
 /bin/
 /examples/pdf_demo/
 .secretr-data
+/cmd/interpreter/interpreter
+/cmd/spltool-full/spltool-full
+/examples/app/app

@@ -6,7 +6,6 @@ import (
 	"io"
 	"time"
 
-	"github.com/oarkflow/interpreter/pkg/security"
 	sessionpkg "github.com/oarkflow/interpreter/pkg/session"
 )
 
@@ -65,39 +64,15 @@ func NewRuntime(opts RuntimeOptions) (*Runtime, error) {
 			return nil, fmt.Errorf("register plugin %q: %w", plugin.Name(), err)
 		}
 	}
-	// PROCESS-WIDE GLOBAL STATE: security.SetDenialHook installs into a
-	// single process-wide variable (see its doc comment in
-	// pkg/security/security.go, next to the underlying storage, for the
-	// synchronization guarantees). Concurrent in-process evaluations
-	// serialize/collide on this hook exactly as described below. See
-	// docs/PRODUCTION_CHECKLIST.md for the planned per-execution-context
-	// refactor that will replace this with a properly scoped (non-global)
-	// mechanism.
-	//
-	// There is no
-	// existing per-execution scoping mechanism that threads a value from
-	// Runtime.Exec/ExecFile down to the security package (unlike security
-	// policies, which flow through
-	// WithSecurityPolicyOverride/sandbox.RunProgramSandboxed on every call).
-	// Building one just for this hook would be disproportionate to the
-	// feature, so we take the simple approach: the most recently constructed
-	// Runtime with a non-nil Observability.OnPolicyDenied "wins"
-	// process-wide. If multiple Runtime instances with different denial
-	// hooks are constructed concurrently in the same process, only the last
-	// one's hook will fire for ALL of them - that race over *which hook is
-	// active* is an accepted, documented semantic (last write wins); it is
-	// distinct from (and unrelated to) the former data race over *how* the
-	// hook value itself was read/written, which security.SetDenialHook now
-	// prevents via atomic storage. Callers that need per-Runtime (or
-	// per-request) denial observability should either avoid constructing
-	// multiple Runtimes with distinct hooks concurrently, or call
-	// security.SetDenialHook themselves with whatever scoping they need.
-	if opts.Observability != nil && opts.Observability.OnPolicyDenied != nil {
-		hook := opts.Observability.OnPolicyDenied
-		security.SetDenialHook(func(category, detail string) {
-			hook(category, detail)
-		})
-	}
+	// opts.Observability.OnPolicyDenied is no longer installed here as a
+	// process-wide hook. It is instead threaded per-call through
+	// security.WithDenialHookOverride by withDenialHookOverride in
+	// interpreter.go, exactly the same way opts.Security is threaded through
+	// WithSecurityPolicyOverride - so multiple concurrently-executing
+	// Runtimes with distinct hooks each reliably observe only their own
+	// denials instead of colliding on "last write wins" process-wide state.
+	// security.SetDenialHook/GetDenialHook still exist as a process-wide
+	// fallback for callers that bypass Runtime.Exec/ExecFile entirely.
 	return rt, nil
 }
 

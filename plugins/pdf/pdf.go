@@ -445,12 +445,11 @@ func fnCompress(args ...object.Object) object.Object {
 	return okOrError(pdflib.CompressPDF(safeIn, safeOut, optString(args, 2, "")))
 }
 
-// encryptionAlgorithm defaults to AES-128 (fully supported end-to-end by
-// github.com/oarkflow/pdf@v0.0.2 as of this writing) rather than AES-256,
-// which that library version accepts for some operations but rejects
-// during Protect() with "AES-256 ... is not supported yet". Callers can
-// still opt into "aes-256" explicitly if a future library version supports
-// it end-to-end.
+// encryptionAlgorithm defaults to AES-128 for backward compatibility with
+// existing callers that don't pass an explicit algorithm; "aes-256" is also
+// fully supported end-to-end (Standard Security Handler revision 5 - see
+// core.ComputeAES256SecurityHandler in github.com/oarkflow/pdf, which
+// implements it as of v0.0.4).
 func encryptionAlgorithm(name string) core.EncryptionAlgorithm {
 	switch strings.ToLower(strings.TrimSpace(name)) {
 	case "rc4-128", "rc4_128", "rc4":

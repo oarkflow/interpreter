@@ -17,12 +17,15 @@ print await futureVal; // 42
 
 let asyncSquare = async (x) => x * x;
 print await asyncSquare(7); // 49
+
+async function asyncTriple(x) { return x * 3; }
+print await asyncTriple(7); // 21
 ```
 
-> Prefer `let name = async function(...) {...};` or `async (...) => ...`
-> over a bare `async function name() {...}` statement — the named-statement
-> form does not currently bind `name` into the enclosing scope the way a
-> plain `function name() {}` declaration does.
+The named-statement form (`async function name() {...}`) binds `name` into
+the enclosing scope exactly like a plain `function name() {}` declaration —
+see `TestAsyncFunctionDeclarationBindsName` in
+`pkg/eval/language_gaps_test.go`.
 
 Calling an `async` function returns a `Future` immediately; `await` blocks
 until it resolves (or re-throws if the async body threw):
@@ -52,14 +55,17 @@ print await producer; // sent
 `go` runs `fn` on a new goroutine and returns a `Future` for its return
 value, just like calling an `async function` does.
 
-## `go_async(fn, ...args)` — fire-and-forget
+## `go_async(fn, ...args)`
 
 ```spl
-go_async(function() { print "background work"; });
+let bg = go_async(function() { print "background work"; return 1; });
+print await bg; // 1
 ```
 
-Like `go`, but discards the resulting `Future` — no way to `await` its
-result; useful for side-effecting background work.
+Behaves like `go`: runs `fn` on a new goroutine and returns an awaitable
+`Future` for its result. Use it interchangeably with `go` — it exists
+separately mainly to mirror the `async`/`await` naming style; if you don't
+need the result, simply don't `await` the returned `Future`.
 
 ## `await_all` / `await_race`
 
