@@ -1,6 +1,6 @@
 module github.com/oarkflow/interpreter/plugins
 
-go 1.26.5
+go 1.27.0
 
 require (
 	github.com/disintegration/imaging v1.6.2
@@ -20,13 +20,13 @@ require (
 	github.com/oarkflow/securetoken v0.0.2
 	github.com/oarkflow/shamir v0.0.3
 	github.com/oarkflow/spl v0.0.8
-	github.com/oarkflow/squealx v0.0.78
+	github.com/oarkflow/squealx v0.0.79
 	github.com/oarkflow/tcpguard v0.0.16
 	github.com/oarkflow/wuid v0.0.1
 	github.com/oarkflow/xql v0.0.0
 	github.com/pkg/sftp v1.13.11
-	golang.org/x/crypto v0.57.0
-	golang.org/x/image v0.46.0
+	golang.org/x/crypto v0.58.0
+	golang.org/x/image v0.47.0
 	gopkg.in/yaml.v3 v3.0.1
 )
 
@@ -34,28 +34,13 @@ require (
 	filippo.io/edwards25519 v1.2.0 // indirect
 	github.com/PuerkitoBio/goquery v1.13.0 // indirect
 	github.com/andybalholm/cascadia v1.3.5 // indirect
-	github.com/aws/aws-sdk-go-v2 v1.41.5 // indirect
-	github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream v1.7.20 // indirect
-	github.com/aws/aws-sdk-go-v2/config v1.28.6 // indirect
-	github.com/aws/aws-sdk-go-v2/credentials v1.17.47 // indirect
-	github.com/aws/aws-sdk-go-v2/feature/ec2/imds v1.16.21 // indirect
-	github.com/aws/aws-sdk-go-v2/internal/configsources v1.4.21 // indirect
-	github.com/aws/aws-sdk-go-v2/internal/endpoints/v2 v2.7.21 // indirect
-	github.com/aws/aws-sdk-go-v2/internal/ini v1.8.1 // indirect
-	github.com/aws/aws-sdk-go-v2/internal/v4a v1.4.22 // indirect
-	github.com/aws/aws-sdk-go-v2/service/internal/accept-encoding v1.13.7 // indirect
-	github.com/aws/aws-sdk-go-v2/service/internal/checksum v1.9.13 // indirect
-	github.com/aws/aws-sdk-go-v2/service/internal/presigned-url v1.13.21 // indirect
-	github.com/aws/aws-sdk-go-v2/service/internal/s3shared v1.19.21 // indirect
-	github.com/aws/aws-sdk-go-v2/service/s3 v1.97.3 // indirect
-	github.com/aws/aws-sdk-go-v2/service/sso v1.24.7 // indirect
-	github.com/aws/aws-sdk-go-v2/service/ssooidc v1.28.6 // indirect
-	github.com/aws/aws-sdk-go-v2/service/sts v1.33.2 // indirect
-	github.com/aws/smithy-go v1.28.1 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/dlclark/regexp2/v2 v2.8.0 // indirect
 	github.com/dop251/goja v0.0.0-20260911104922-fabc3b8078ad // indirect
-	github.com/dustin/go-humanize v1.0.1 // indirect
+	github.com/dustin/go-humanize v1.1.0 // indirect
+	github.com/felixge/httpsnoop v1.1.0 // indirect
+	github.com/go-logr/logr v1.4.4 // indirect
+	github.com/go-logr/stdr v1.2.2 // indirect
 	github.com/go-sourcemap/sourcemap v2.1.4+incompatible // indirect
 	github.com/go-sql-driver/mysql v1.10.1 // indirect
 	github.com/go-text/typesetting v0.3.5 // indirect
@@ -71,43 +56,44 @@ require (
 	github.com/kr/fs v0.1.0 // indirect
 	github.com/mattn/go-isatty v0.0.24 // indirect
 	github.com/miekg/pkcs11 v1.1.2 // indirect
-	github.com/ncruces/go-strftime v1.0.0 // indirect
+	github.com/ncruces/go-strftime v1.1.0 // indirect
 	github.com/oarkflow/authz v0.0.6 // indirect
-	github.com/oarkflow/bcl v0.0.31 // indirect
+	github.com/oarkflow/bcl v0.0.36 // indirect
 	github.com/oarkflow/convert v0.0.6 // indirect
-	github.com/oarkflow/errors v0.0.6 // indirect
 	github.com/oarkflow/expr v0.0.11 // indirect
 	github.com/oarkflow/fasttpl v0.0.3 // indirect
 	github.com/oarkflow/jet v0.0.4 // indirect
 	github.com/oarkflow/json v0.0.28 // indirect
 	github.com/oarkflow/licensing v0.0.34 // indirect
-	github.com/oarkflow/log v1.0.84 // indirect
 	github.com/oarkflow/pkg v0.1.47 // indirect
 	github.com/oarkflow/previewer v0.0.7 // indirect
-	github.com/oarkflow/smpp v0.0.0-20250417104228-617852c4b611 // indirect
 	github.com/oarkflow/spb v0.0.2 // indirect
 	github.com/oarkflow/velocity v0.0.27 // indirect
-	github.com/oarkflow/xid v1.2.9 // indirect
-	github.com/oarkflow/xsync v0.0.5 // indirect
-	github.com/redis/go-redis/v9 v9.22.0 // indirect
+	github.com/oarkflow/xql/sdk v0.0.0 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
-	github.com/xdg-go/pbkdf2 v1.0.0 // indirect
-	github.com/xdg-go/scram v1.2.0 // indirect
-	github.com/xdg-go/stringprep v1.0.4 // indirect
-	github.com/youmark/pkcs8 v0.0.0-20240726163527-a2c0da244d78 // indirect
-	go.mongodb.org/mongo-driver/v2 v2.9.1 // indirect
-	go.uber.org/atomic v1.11.0 // indirect
-	golang.org/x/net v0.59.0 // indirect
-	golang.org/x/sync v0.23.0 // indirect
-	golang.org/x/sys v0.48.0 // indirect
-	golang.org/x/term v0.46.0 // indirect
-	golang.org/x/text v0.42.0 // indirect
+	github.com/richardlehane/mscfb v1.0.7 // indirect
+	github.com/richardlehane/msoleps v1.0.6 // indirect
+	github.com/tiendc/go-deepcopy v1.7.2 // indirect
+	github.com/xuri/efp v0.0.1 // indirect
+	github.com/xuri/excelize/v2 v2.11.0 // indirect
+	github.com/xuri/nfp v0.0.2-0.20250530014748-2ddeb826f9a9 // indirect
+	go.opentelemetry.io/auto/sdk v1.2.1 // indirect
+	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.71.0 // indirect
+	go.opentelemetry.io/otel v1.46.0 // indirect
+	go.opentelemetry.io/otel/metric v1.46.0 // indirect
+	go.opentelemetry.io/otel/sdk v1.46.0 // indirect
+	go.opentelemetry.io/otel/trace v1.46.0 // indirect
+	golang.org/x/net v0.60.0 // indirect
+	golang.org/x/sync v0.24.0 // indirect
+	golang.org/x/sys v0.49.0 // indirect
+	golang.org/x/term v0.47.0 // indirect
+	golang.org/x/text v0.43.0 // indirect
 	golang.org/x/time v0.16.0 // indirect
 	google.golang.org/protobuf v1.36.12 // indirect
-	modernc.org/libc v1.75.7 // indirect
+	modernc.org/libc v1.77.1 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.12.1 // indirect
-	modernc.org/sqlite v1.58.0 // indirect
+	modernc.org/sqlite v1.60.1 // indirect
 )
 
 replace github.com/oarkflow/interpreter => ../
@@ -115,3 +101,5 @@ replace github.com/oarkflow/interpreter => ../
 replace github.com/oarkflow/secretr => ../../secretr
 
 replace github.com/oarkflow/xql => ../../xql
+
+replace github.com/oarkflow/xql/sdk => ../../xql/sdk

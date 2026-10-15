@@ -76,7 +76,6 @@ func registerCommonProviders(reg *xqlengine.IntegrationRegistry) {
 		{"database", func() xqlengine.Integration { return providers.NewDatabaseIntegration("database") }},
 		{"webcrawler", func() xqlengine.Integration { return providers.NewWebCrawlerIntegration("webcrawler") }},
 		{"smtp", func() xqlengine.Integration { return providers.NewSMTPEmailIntegration("smtp") }},
-		{"smpp", func() xqlengine.Integration { return providers.NewSMPPSMSIntegration("smpp") }},
 		{"email_http", func() xqlengine.Integration { return providers.NewHTTPEmailIntegration("email_http") }},
 		{"sms_http", func() xqlengine.Integration { return providers.NewHTTPSMSIntegration("sms_http") }},
 		{"temp_file", func() xqlengine.Integration { return providers.NewTempFileIntegration("temp_file") }},
@@ -84,7 +83,7 @@ func registerCommonProviders(reg *xqlengine.IntegrationRegistry) {
 	for _, d := range defs {
 		reg.Register(d.key, d.factory)
 	}
-	for _, t := range []string{"ftp", "sftp", "kafka", "mqtt", "grpc", "soap", "customtcp", "push", "voip"} {
+	for _, t := range []string{"ftp", "sftp", "kafka", "mqtt", "grpc", "soap", "customtcp", "push", "voip", "smpp"} {
 		t := t
 		reg.Register(t, func() xqlengine.Integration { return providers.NewCatalogOnlyIntegration(t) })
 	}
