@@ -42,6 +42,7 @@ require (
 	github.com/oarkflow/bcl v0.0.36 // indirect
 	github.com/oarkflow/convert v0.0.6 // indirect
 	github.com/oarkflow/date v0.0.4 // indirect
+	github.com/oarkflow/errors v0.0.6 // indirect
 	github.com/oarkflow/ev v0.0.1 // indirect
 	github.com/oarkflow/expr v0.0.11 // indirect
 	github.com/oarkflow/fasttpl v0.0.3 // indirect
@@ -60,14 +61,19 @@ require (
 	github.com/oarkflow/secretr v0.0.0 // indirect
 	github.com/oarkflow/securetoken v0.0.2 // indirect
 	github.com/oarkflow/shamir v0.0.3 // indirect
+	github.com/oarkflow/smpp v0.0.1 // indirect
 	github.com/oarkflow/spb v0.0.2 // indirect
 	github.com/oarkflow/spl v0.0.8 // indirect
 	github.com/oarkflow/squealx v0.0.79 // indirect
 	github.com/oarkflow/tcpguard v0.0.16 // indirect
 	github.com/oarkflow/velocity v0.0.27 // indirect
 	github.com/oarkflow/wuid v0.0.1 // indirect
+	github.com/oarkflow/xid v1.2.9 // indirect
 	github.com/oarkflow/xql v0.0.0 // indirect
+	github.com/oarkflow/xql/plugins/integration-smpp v0.0.0-00010101000000-000000000000 // indirect
 	github.com/oarkflow/xql/sdk v0.0.0 // indirect
+	github.com/oarkflow/xsync v0.0.5 // indirect
+	github.com/oarkflow/zlog v0.0.3 // indirect
 	github.com/pkg/sftp v1.13.11 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
 	github.com/richardlehane/mscfb v1.0.7 // indirect
@@ -108,3 +114,5 @@ replace github.com/oarkflow/xql => ../../../xql
 replace github.com/oarkflow/secretr => ../../../secretr
 
 replace github.com/oarkflow/xql/sdk => ../../../xql/sdk
+
+replace github.com/oarkflow/xql/plugins/integration-smpp => ../../../xql/plugins/integration-smpp

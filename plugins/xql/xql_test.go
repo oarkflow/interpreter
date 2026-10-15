@@ -1,6 +1,7 @@
 package xql
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -8,6 +9,8 @@ import (
 
 	"github.com/oarkflow/interpreter"
 	"github.com/oarkflow/interpreter/pkg/object"
+	smppplugin "github.com/oarkflow/xql/plugins/integration-smpp"
+	xqlengine "github.com/oarkflow/xql/pkg/xql"
 )
 
 func TestTaggedXQLBlockReturnsResponseErrTuple(t *testing.T) {
@@ -103,3 +106,23 @@ call %s {
 		t.Fatalf("expected title hello, got %s", first.Inspect())
 	}
 }
+
+func TestSMPPIntegrationIsRegistered(t *testing.T) {
+	reg := xqlengine.NewIntegrationRegistry()
+	registerCommonProviders(reg)
+	inst, err := reg.Create("smpp")
+	if err != nil {
+		t.Fatalf("expected smpp to be created: %v", err)
+	}
+	if inst.Name() != "smpp" {
+		t.Fatalf("expected smpp integration name, got %s", inst.Name())
+	}
+	if _, ok := inst.(interface{ Close(context.Context) error }); !ok {
+		t.Fatalf("expected smpp to implement Close")
+	}
+	// Verify it's the real SMPP integration from smppplugin, not a catalog dummy
+	if _, ok := inst.(*smppplugin.SMPPSMSIntegration); !ok {
+		t.Fatalf("expected *smppplugin.SMPPSMSIntegration, got %T", inst)
+	}
+}
+

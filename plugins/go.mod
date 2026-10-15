@@ -24,6 +24,7 @@ require (
 	github.com/oarkflow/tcpguard v0.0.16
 	github.com/oarkflow/wuid v0.0.1
 	github.com/oarkflow/xql v0.0.0
+	github.com/oarkflow/xql/plugins/integration-smpp v0.0.0-00010101000000-000000000000
 	github.com/pkg/sftp v1.13.11
 	golang.org/x/crypto v0.58.0
 	golang.org/x/image v0.47.0
@@ -60,6 +61,7 @@ require (
 	github.com/oarkflow/authz v0.0.6 // indirect
 	github.com/oarkflow/bcl v0.0.36 // indirect
 	github.com/oarkflow/convert v0.0.6 // indirect
+	github.com/oarkflow/errors v0.0.6 // indirect
 	github.com/oarkflow/expr v0.0.11 // indirect
 	github.com/oarkflow/fasttpl v0.0.3 // indirect
 	github.com/oarkflow/jet v0.0.4 // indirect
@@ -67,9 +69,13 @@ require (
 	github.com/oarkflow/licensing v0.0.34 // indirect
 	github.com/oarkflow/pkg v0.1.47 // indirect
 	github.com/oarkflow/previewer v0.0.7 // indirect
+	github.com/oarkflow/smpp v0.0.1 // indirect
 	github.com/oarkflow/spb v0.0.2 // indirect
 	github.com/oarkflow/velocity v0.0.27 // indirect
+	github.com/oarkflow/xid v1.2.9 // indirect
 	github.com/oarkflow/xql/sdk v0.0.0 // indirect
+	github.com/oarkflow/xsync v0.0.5 // indirect
+	github.com/oarkflow/zlog v0.0.3 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
 	github.com/richardlehane/mscfb v1.0.7 // indirect
 	github.com/richardlehane/msoleps v1.0.6 // indirect
@@ -103,3 +109,5 @@ replace github.com/oarkflow/secretr => ../../secretr
 replace github.com/oarkflow/xql => ../../xql
 
 replace github.com/oarkflow/xql/sdk => ../../xql/sdk
+
+replace github.com/oarkflow/xql/plugins/integration-smpp => ../../xql/plugins/integration-smpp
